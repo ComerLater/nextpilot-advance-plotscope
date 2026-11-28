@@ -22,7 +22,8 @@ QUICK=0
 
 # Qt 路径：优先环境变量 PS_QT_DIR，否则用 setup 脚本的统一下载位置。
 QT_PREFIX="${PS_QT_DIR:-${PS_DEPS_ROOT:-$HOME/.ps-deps}/toolchain/qt/6.8.3/gcc_64}"
-CMAKE_ARGS=(-S . -B "${WORK}" -DPS_BUILD_TESTS=OFF -DCMAKE_PREFIX_PATH="${QT_PREFIX}")
+rm -rf "${WORK}"
+CMAKE_ARGS=(-S . -B "${WORK}" -G Ninja -DPS_BUILD_TESTS=OFF -DCMAKE_PREFIX_PATH="${QT_PREFIX}")
 
 cd "${ROOT}"
 echo "=== [1/3] configure 期守卫（含三条铁律源码级检查）==="
@@ -34,7 +35,9 @@ echo "OK: configure + 守卫通过"
 echo "=== [2/3] ps_shell_bare 独立构建 + 冒烟 ==="
 cmake --build "${WORK}" -j4 --target ps_shell_bare > /tmp/ps_arch_bare.log 2>&1 || {
     echo "FAIL: ps_shell_bare 构建失败"; tail -30 /tmp/ps_arch_bare.log; exit 1; }
-QT_QPA_PLATFORM=offscreen timeout 15 "${WORK}/src/application/bare/ps_shell_bare" --smoke \
+BARE_BIN="${WORK}/src/application/bare/ps_shell_bare"
+[[ -x "${BARE_BIN}.exe" ]] && BARE_BIN="${BARE_BIN}.exe"
+QT_QPA_PLATFORM=offscreen PATH="${QT_PREFIX}/bin:${PATH}" timeout 15 "${BARE_BIN}" --smoke \
     > /tmp/ps_arch_bare_run.log 2>&1 || {
     echo "FAIL: ps_shell_bare 运行失败"; tail -20 /tmp/ps_arch_bare_run.log; exit 1; }
 echo "OK: ps_shell_bare 独立 build + run"

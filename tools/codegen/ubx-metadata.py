@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate ubx_database.json from pyubx2 payload dictionaries.
 
-Run: python3 tools/ubx-metadata.py
+Run: python3 tools/codegen/ubx-metadata.py
 """
 
 import json

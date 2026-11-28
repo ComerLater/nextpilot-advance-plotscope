@@ -55,27 +55,29 @@ plotscope --mcp-bridge        # MCP server（stdio JSON-RPC，供 AI 代理驱�
 
 ### 构建代码
 
-依赖 CMake ≥ 3.24、Qt 6（Core/Widgets/Gui/Svg）、C++17 编译器、Rust 工具链：
+依赖 CMake ≥ 3.24、Qt 6（Core/Widgets/Gui/Svg）、C++17 编译器、Rust 工具链。
+
+Linux：
 
 ```bash
-cmake --preset default                   # configure 会跑 python3 tools/ps-setup.py prepare，缺件自动补装
-cmake --build --preset default -j        # 变量/hook/ccache 缺失也自动补齐；不用 source 任何东西
+python3 tools/ps-setup.py bootstrap        # apt 补 git，pbs 托管 Python 与 cmake 装进 ~/.ps-deps
+cmake --preset default                     # configure 会跑 ps-setup.py prepare，缺件自动补装
+cmake --build --preset default -j          # 不用 source 任何东西
 ctest --test-dir build --output-on-failure
 ```
 
-全新机器（连 cmake 都没有或版本 < 3.24）先跑一次引导，再回到上面两条命令：
-
-```bash
-python3 tools/ps-setup.py bootstrap        # apt 补 git，pbs 托管 Python 与 cmake 装进 ~/.ps-deps，不碰系统 Python
-```
+Windows（PowerShell）：
 
 ```powershell
-tools\ps-setup.bat bootstrap               # Windows：同一个内核，Python 走 pbs，不碰系统 Python
+tools\ps-setup.bat bootstrap               # 一次性装齐 git、Python、CMake、Ninja、ccache、MSVC、Qt、Rust
+cmake --preset default                     # 装完重开终端即可，环境已自动注册
+cmake --build --preset default -j
+ctest --test-dir build --output-on-failure
 ```
 
-手动装也可以：`python3 tools/ps-setup.py install`（生成 `~/.ps-deps/env.sh`）。环境根目录默认 `~/.ps-deps`，`-DPS_DEPS_ROOT=<path>` 优先、其次环境变量 `PS_DEPS_ROOT`。
+`bootstrap` 结束时会生成 `%USERPROFILE%\.ps-deps\env.ps1`，并注册到 PowerShell profile、Windows Terminal 和 VSCode 默认终端；新开终端（或 VSCode 里新开终端）会自动加载，不需要 source，也不需要开 VS 开发者命令行。要手动兜底时用 `%USERPROFILE%\.ps-deps\env.bat`。
 
-依赖细节、Windows/MSVC 与离线 Qt 部署见[编译与构建](docs/develop/building.md)。
+日常只记原生 CMake 命令，没有第二套构建入口。只体检用 `tools\ps-setup.bat doctor`；手动构建与环境变量的完整优先级见[编译与构建](docs/develop/building.md)。
 
 ### 代码地图
 

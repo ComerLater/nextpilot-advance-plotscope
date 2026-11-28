@@ -1,4 +1,4 @@
-# ps-setup.ps1 — Windows 薄壳，由 gen-shell 生成，勿手改。
+﻿# ps-setup.ps1 — Windows 薄壳，由 gen-shell 生成，勿手改。
 # 找到 Python 就把参数原样交给 ps-setup.py。
 # ExecutionPolicy 拦 .ps1 时：powershell -ExecutionPolicy Bypass -File tools\ps-setup.ps1
 # 或直接用 tools\ps-setup.bat。

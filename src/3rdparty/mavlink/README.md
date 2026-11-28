@@ -8,7 +8,7 @@ metadata sidecar are kept so offline builds do not need Python.
 - generated dialect: `ardupilotmega` (includes `common`, `standard`, `minimal`)
 - wire protocol: MAVLink 2.0
 - language: **C++11**
-- generator command: `tools/mavlink-gen.sh`
+- generator command: `tools/codegen/mavlink-gen.sh`
 - generated metadata: `generated/mavlink_metadata.json`
 
 Entry points:

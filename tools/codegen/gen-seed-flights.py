@@ -4,7 +4,7 @@
 5 架次，50 Hz，列 t,roll,pitch,yaw,alt,vz；roll 幅值各不同，
 便于用 A/√2 校验 RMS、用 0.3 Hz 校验 FFT 峰值。
 
-用法：python3 tools/gen-seed-flights.py /tmp/ps_seed
+用法：python3 tools/codegen/gen-seed-flights.py /tmp/ps_seed
 """
 
 import csv

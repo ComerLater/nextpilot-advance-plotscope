@@ -1,6 +1,6 @@
 -- 无人值守用例：逐架次读入 → 取 roll → 统计与频谱 → 汇总表 → 关闭源
 -- 跑法：plotscope_app --run docs/examples/batch_flight_summary.lua
--- 数据：python3 tools/gen-seed-flights.py /tmp/ps_seed
+-- 数据：python3 tools/codegen/gen-seed-flights.py /tmp/ps_seed
 local dir = "/tmp/ps_seed/"
 print("flight,points,rms,min,max,peak_freq_hz,peak_mag")
 for i = 1, 5 do

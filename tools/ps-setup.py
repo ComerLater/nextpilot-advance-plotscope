@@ -2035,7 +2035,8 @@ class CommandRunner:
         print(cls.render_table(rows))
         if fails or not ok:
             raise RuntimeError(f"完成，但有 {fails or '体检未过'} 项失败：按上方提示补齐后重跑 install")
-        log("完成。新终端生效；非交互终端用：. $PS_DEPS_ROOT/env.sh")
+        EntryPointMounter.mount_all(root)
+        log("完成。新开终端 / VSCode / Windows Terminal 即已就绪，可直接 cmake --preset default")
 
     @classmethod
     def bootstrap(cls, root: Path | None = None) -> None:
@@ -2083,6 +2084,94 @@ class EnvFileWriter:
         self.root = root
         self.p = EnvPathLayout(root)
 
+    @staticmethod
+    def _msvc_env() -> dict[str, str]:
+        """Windows：运行 vcvars64 并取回它设置的完整环境（PATH / INCLUDE / LIB / LIBPATH 等）。
+        Linux 没有 MSVC，返回空；找不到 VS 也返回空，由 check 报缺，不在生成 env 时抛异常。"""
+        if not PLATFORM.is_windows:
+            return {}
+        for vs in _win_vs_installs():
+            vcvars = vs / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
+            if not vcvars.is_file():
+                continue
+            try:
+                # 直接给 cmd /c 传带引号的长命令会被 /s 的引号规则吃掉；落一个临时 .bat
+                # 再执行，路径里有空格或括号也稳。
+                with tempfile.NamedTemporaryFile(
+                    "w", suffix=".bat", delete=False, encoding="mbcs", errors="replace"
+                ) as fh:
+                    fh.write("@echo off\n")
+                    fh.write(f'call "{vcvars}" >nul 2>&1\n')
+                    fh.write("if errorlevel 1 exit /b 1\n")
+                    fh.write("set\n")
+                    bat = fh.name
+                try:
+                    r = subprocess.run(
+                        [os.environ.get("ComSpec", "cmd.exe"), "/d", "/c", bat],
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                    )
+                finally:
+                    Path(bat).unlink(missing_ok=True)
+            except (OSError, UnicodeError, subprocess.TimeoutExpired):
+                continue
+            if r.returncode != 0:
+                continue
+            env: dict[str, str] = {}
+            for line in r.stdout.splitlines():
+                if "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                if k and not k.startswith("="):
+                    env[k] = v
+            # vcvars 的 `set` 会把当前进程的整份环境都吐出来（CUA_*、PSModulePath 等）。
+            # 只留编译器/链接器真正需要的键，避免 env 文件被无关变量污染。
+            keep = {
+                "PATH",
+                "INCLUDE",
+                "LIB",
+                "LIBPATH",
+                "VCINSTALLDIR",
+                "VCTOOLSINSTALLDIR",
+                "VCTOOLSVERSION",
+                "VSINSTALLDIR",
+                "WINDOWSSDKDIR",
+                "WINDOWSSDKVERSION",
+                "UCRTCONTENTROOT",
+                "UNIVERSALCRTSDKDIR",
+                "WINDOWSSDKBINPATH",
+                "VSCMD_ARG_TGT_ARCH",
+                "VSCMD_ARG_HOST_ARCH",
+                "VSCMD_VER",
+            }
+            env = {k: v for k, v in env.items() if k.upper() in keep}
+            path_key = next((k for k in env if k.lower() == "path"), "")
+            if path_key:
+                orig = [d for d in os.environ.get("PATH", "").split(os.pathsep) if d]
+                parts = [d for d in env[path_key].split(os.pathsep) if d]
+                # vcvars 是在现有 PATH 前面插入自己的一组目录；尾部若是原始 PATH，
+                # 就去掉，避免 env 文件里再抄一遍整条系统 PATH。
+                if orig and len(parts) > len(orig):
+                    tail = [d.lower() for d in parts[-len(orig) :]]
+                    if tail == [d.lower() for d in orig]:
+                        parts = parts[: -len(orig)]
+                env[path_key] = os.pathsep.join(parts)
+            if path_key:
+                return env
+        return {}
+
+    @staticmethod
+    def _ps_quote(value: str) -> str:
+        """PowerShell 单引号字面量：内部单引号写两遍。"""
+        return "'" + value.replace("'", "''") + "'"
+
+    def _qt_dir(self) -> Path | None:
+        """受管或外部 Qt 前缀（get_qt_dir 只管受管目录，外部安装会漏）。
+        生成 env 与 IDE 配置必须用 resolve_prefix，和 prepare 同一口径。"""
+        hit = QtTool(self.m, self.root).resolve_prefix()
+        return hit[0] if hit else None
+
     def build_rust_lines(self) -> list[str]:
         """只有受管 cargo 才覆盖 RUSTUP_HOME/CARGO_HOME，
         否则用系统 ~/.cargo（覆盖成空目录会让 rustup shim 找不到 toolchain）。"""
@@ -2103,7 +2192,7 @@ class EnvFileWriter:
         p, root = self.p, self.root
         lines = [f'export PS_DEPS_ROOT="{root}"']
         lines.append(f'export PATH="{p.bin}:{p.venv_bin}:{p.ccache_bin_dir}:$PATH"')
-        qt = QtTool(self.m, root).get_qt_dir()
+        qt = self._qt_dir()
         if qt:
             lines.append(f'export PS_QT_DIR="{qt}"')
             lines.append('export CMAKE_PREFIX_PATH="$PS_QT_DIR${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"')
@@ -2129,18 +2218,27 @@ class EnvFileWriter:
         return f
 
     def write_ps1(self) -> Path:
-        """生成 Windows PowerShell 版 env，结构与 env.sh 一致。"""
+        """生成 Windows PowerShell 版 env，结构与 env.sh 一致。
+        除受管工具链外，把 vcvars64 的编译器环境也一并落进来：project() 在
+        DevEnvCheck 之前就要探测编译器，只准备 PATH/Qt 会在 configure 第一步失败。"""
         p, root = self.p, self.root
-        qt = QtTool(self.m, root).get_qt_dir()
+        qt = self._qt_dir()
+        msvc = self._msvc_env()
+        msvc_path = next((v for k, v in msvc.items() if k.lower() == "path"), "")
         f = root / "env.ps1"
         root.mkdir(parents=True, exist_ok=True)
+        base_path = f"{p.bin};{p.venv_bin};{p.ccache_bin_dir}"
         lines = [
             "# 由 tools/ps-setup.py 生成；PowerShell 用 . <路径> 引入。",
             "# 同一个会话里重复加载只生效一次，不层层追加 PATH。",
             "if (-not $env:PS_DEPS_ENV_LOADED) {",
             f'  $env:PS_DEPS_ROOT = "{root}"',
-            f'  $env:PATH = "{p.bin};{p.venv_bin};{p.ccache_bin_dir};$env:PATH"',
+            f"  $env:PATH = {self._ps_quote(base_path + (';' + msvc_path if msvc_path else ''))} + ';' + $env:PATH",
         ]
+        for key, value in msvc.items():
+            if key.lower() in ("path", "ps_deps_env_loaded"):
+                continue
+            lines.append(f"  $env:{key} = {self._ps_quote(value)}")
         if qt:
             lines += [
                 f'  $env:PS_QT_DIR = "{qt}"',
@@ -2153,17 +2251,29 @@ class EnvFileWriter:
             '  $env:PS_DEPS_ENV_LOADED = "1"',
             "}",
         ]
-        f.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        f.write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
         return f
 
     def write_bat(self) -> Path:
-        """生成 cmd 版 env，给双击/批处理用。"""
+        """生成 cmd 版 env，给双击/批处理用。先 call vcvars64，再叠加受管 PATH；
+        调用方在同一 cmd 里 call 本文件，之后直接跑 cmake。"""
         p, root = self.p, self.root
-        qt = QtTool(self.m, root).get_qt_dir()
+        qt = self._qt_dir()
+        vcvars = ""
+        if PLATFORM.is_windows:
+            for vs in _win_vs_installs():
+                candidate = vs / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
+                if candidate.is_file():
+                    vcvars = str(candidate)
+                    break
         lines = [
             "@echo off",
             "rem 由 tools/ps-setup.py 生成；cmd 用 call 引入。",
             "if defined PS_DEPS_ENV_LOADED goto :eof",
+        ]
+        if vcvars:
+            lines.append(f'call "{vcvars}" >nul 2>&1')
+        lines += [
             f'set "PS_DEPS_ROOT={root}"',
             f'set "PATH={p.bin};{p.venv_bin};{p.ccache_bin_dir};%PATH%"',
         ]
@@ -2280,6 +2390,32 @@ class EntryPointMounter:
         f = root / "env.ps1"
         return f'{MARK_BEGIN}\nif (Test-Path "{f}") {{ . "{f}" }}\n{MARK_END}\n'
 
+    @staticmethod
+    def _powershell_profiles() -> list[Path]:
+        """Windows PowerShell 与 pwsh 的 $PROFILE。不能只读进程里的 PROFILE：
+        ps-setup 常由 cmd / 薄壳拉起，那里没有 PROFILE 变量。"""
+        found: list[Path] = []
+        if os.environ.get("PROFILE"):
+            found.append(Path(os.environ["PROFILE"]))
+        for exe in ("powershell.exe", "pwsh.exe"):
+            path = shutil.which(exe)
+            if not path:
+                continue
+            out = capture([path, "-NoProfile", "-Command", "$PROFILE"])
+            if out:
+                found.append(Path(out))
+        if PLATFORM.is_windows and not found:
+            # 兜底：Windows PowerShell 5.1 的固定位置（OneDrive 文档目录除外）。
+            found.append(Path.home() / "Documents" / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1")
+        seen: set[str] = set()
+        out_list: list[Path] = []
+        for f in found:
+            key = str(f).lower()
+            if key not in seen:
+                seen.add(key)
+                out_list.append(f)
+        return out_list
+
     @classmethod
     def mount_profile(cls, posix: bool | None = None, root: Path | None = None) -> list[str]:
         """往 shell 启动文件追加标记块（Linux .bashrc / Windows $PROFILE），重复调用不会叠加。
@@ -2291,10 +2427,7 @@ class EntryPointMounter:
             block = cls.build_marker_block(True, root)
             begin = MARK_BEGIN
         else:
-            profile = os.environ.get("PROFILE")
-            if not profile:
-                raise RuntimeError("找不到 PowerShell $PROFILE（需在 PowerShell 会话内运行）")
-            targets = [Path(profile)]
+            targets = cls._powershell_profiles()
             block = cls.build_marker_block(False, root)
             begin = "# >>> ps-setup env >>>"
         done = []
@@ -2312,44 +2445,111 @@ class EntryPointMounter:
         return done
 
     @staticmethod
+    def _wt_settings_paths() -> list[Path]:
+        """Windows Terminal 的 settings.json：Store 版与 unpackaged 版都可能存在。"""
+        base = Path(os.environ.get("LOCALAPPDATA", ""))
+        return [
+            p
+            for p in (
+                base / "Packages" / "Microsoft.WindowsTerminal_8wekyb3d8bbwe" / "LocalState" / "settings.json",
+                base / "Microsoft" / "Windows Terminal" / "settings.json",
+            )
+            if p.is_file()
+        ]
+
+    @staticmethod
+    def mount_wt_default(guid: str) -> None:
+        """把 WT 的 defaultProfile 指到 PlotScope Dev，新开窗口直接进已备好环境的终端。
+        只改这一个键，保留用户其它配置；解析失败就跳过，不覆盖整个 settings.json。"""
+        for f in EntryPointMounter._wt_settings_paths():
+            try:
+                text = f.read_text(encoding="utf-8")
+            except OSError as e:
+                log(f"读 {f} 失败（{e}），跳过 WT 默认终端")
+                continue
+            if re.search(rf'"defaultProfile"\s*:\s*"{re.escape(guid)}"', text):
+                log(f"WT 默认终端已是 PlotScope Dev：{f}")
+                continue
+            if '"defaultProfile"' in text:
+                new, n = re.subn(
+                    r'("defaultProfile"\s*:\s*")[^"]+(")',
+                    rf"\g<1>{guid}\g<2>",
+                    text,
+                    count=1,
+                )
+            else:
+                new, n = re.subn(r"\{", '{\n    "defaultProfile": "' + guid + '",', text, count=1)
+            if n != 1:
+                log(f"{f} 未找到可替换的 defaultProfile，跳过")
+                continue
+            try:
+                f.write_text(new, encoding="utf-8")
+            except OSError as e:
+                log(f"写 {f} 失败（{e}），跳过 WT 默认终端，可在设置里手动选 PlotScope Dev")
+                continue
+            log(f"WT 新窗口默认进入 PlotScope Dev：{f}")
+
+    @staticmethod
     def mount_wt_fragment() -> str | None:
-        """Windows Terminal fragments（官方挂载点，不碰用户 settings.json；未装 WT 静默降级）。"""
+        """Windows Terminal fragments（官方挂载点，不碰用户 settings.json；未装 WT 静默降级）。
+        profile 的 commandline 直接加载 env.ps1，不依赖用户是否启用了 PowerShell profile。"""
         if not PLATFORM.is_windows:
             return None  # Linux 无对应物，$PROFILE 已覆盖
         base = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Windows Terminal" / "Fragments" / "PlotScope"
-        if not base.parent.parent.is_dir():
+        # Store 版 WT 的 settings.json 在 Packages 下，unpackaged 版才在 Microsoft\Windows Terminal；
+        # 不能只看后者目录是否存在，否则 Store 版会被误判成“未安装”。
+        if not EntryPointMounter._wt_settings_paths() and shutil.which("wt.exe") is None:
             log("未检测到 Windows Terminal，跳过 fragment（$PROFILE 已覆盖 WT 标签页）")
             return None
         base.mkdir(parents=True, exist_ok=True)
         frag = base / "fragment.json"
+        guid = "{3a6f2d4c-9b1e-5c7a-8d2f-0e4b6c8a1d3f}"
+        env_ps1 = get_deps_root() / "env.ps1"
         profile = {
+            "guid": guid,
             "name": "PlotScope Dev",
-            "commandline": "powershell.exe -NoLogo",
+            "commandline": f'powershell.exe -NoLogo -NoExit -Command ". {EnvFileWriter._ps_quote(str(env_ps1))}"',
             "startingDirectory": str(REPO.root),
         }
         logo = REPO.logo
         if logo.is_file():  # 无图标资源就不写该键，别留 icon:null
             profile["icon"] = str(logo)
-        frag.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
+        frag.write_text(json.dumps({"profiles": [profile]}, ensure_ascii=False, indent=2), encoding="utf-8")
         log(f"Windows Terminal fragment：{frag}")
+        EntryPointMounter.mount_wt_default(guid)
         return str(frag)
 
     @staticmethod
-    def mount_vscode() -> str:
-        """把受管工具链键结构化合并进 .vscode/settings.json：只覆盖自己管理的键，
-        保留用户已有的 presets 等配置；结果幂等，可反复 mount。"""
-        p = EnvPathLayout(get_deps_root())
-        f = REPO.settings
-        qt_dir = QtTool(DepsManifest(), p.root).get_qt_dir()
-        env = {
-            "PS_DEPS_ROOT": str(p.root),
-            "PS_QT_DIR": str(qt_dir) if qt_dir else "",
-        }
-        managed = {
-            "python.defaultInterpreterPath": str(p.venv_bin / f"python{p.exe}"),
-            "cmake.cmakePath": str(p.bin / f"cmake{p.exe}"),
-            "terminal.integrated.env.windows" if PLATFORM.is_windows else "terminal.integrated.env.linux": env,
-        }
+    def _vscode_user_settings() -> Path:
+        """VSCode 用户级 settings.json。写这里而不是仓库 .vscode/settings.json：
+        后者是受版本控制的团队配置，不能塞进本机绝对路径和临时环境变量。"""
+        if PLATFORM.is_windows:
+            return Path(os.environ.get("APPDATA", "")) / "Code" / "User" / "settings.json"
+        return Path.home() / ".config" / "Code" / "User" / "settings.json"
+
+    @classmethod
+    def mount_vscode(cls) -> str:
+        """在 VSCode 用户设置里注册一个默认终端 profile，打开终端即加载 env.ps1。
+
+        只改受管键，幂等；不碰仓库里的 .vscode/settings.json。CMake Tools 由用户在
+        已备好环境的终端里启动，或直接用终端跑 cmake；不再往用户设置里灌 MSVC
+        全量环境，避免影响其它工作区。
+        """
+        f = cls._vscode_user_settings()
+        profile_key = (
+            "terminal.integrated.profiles.windows" if PLATFORM.is_windows else "terminal.integrated.profiles.linux"
+        )
+        default_key = (
+            "terminal.integrated.defaultProfile.windows"
+            if PLATFORM.is_windows
+            else "terminal.integrated.defaultProfile.linux"
+        )
+        if PLATFORM.is_windows:
+            # $env:USERPROFILE 由 PowerShell 自己展开，profile 里不写死绝对路径。
+            command = "$p = Join-Path $env:USERPROFILE '.ps-deps\\env.ps1'; if (Test-Path $p) { . $p }"
+            profile = {"path": "powershell.exe", "args": ["-NoLogo", "-NoExit", "-Command", command]}
+        else:
+            profile = {"path": "bash", "args": ["-l"]}
         cur: dict = {}
         if f.is_file():
             try:
@@ -2357,14 +2557,20 @@ class EntryPointMounter:
                 if not isinstance(cur, dict):
                     raise ValueError("顶层非对象")
             except (OSError, ValueError) as e:
-                log(f"{f} 解析失败（{e}），为避免破坏已有配置跳过合并，请手动补：{managed}")
+                log(f"{f} 解析失败（{e}），跳过 VSCode 终端注册，请手动加 profile: PlotScope Dev")
                 return str(f)
-        cur.update(managed)  # 仅覆盖受管键，其余原样保留
+        profiles = cur.get(profile_key)
+        if not isinstance(profiles, dict):
+            profiles = {}
+        profiles["PlotScope Dev"] = profile
+        cur[profile_key] = profiles
+        if not cur.get(default_key):
+            cur[default_key] = "PlotScope Dev"
         f.parent.mkdir(parents=True, exist_ok=True)
         text = json.dumps(cur, ensure_ascii=False, indent=2) + "\n"
         if not f.is_file() or f.read_text(encoding="utf-8") != text:
             f.write_text(text, encoding="utf-8")
-            log(f"已写入 {f}")
+            log(f"VSCode 默认终端已注册：{f}")
         else:
             log(f"VSCode 配置已就位，跳过：{f}")
         return str(f)
@@ -2554,7 +2760,9 @@ class ShellGenerator:
         written = []
         for name, body in targets:
             f = d / name
-            f.write_text(body, encoding="utf-8")
+            # Windows PowerShell 5.1 只有带 BOM 才按 UTF-8 读 .ps1。
+            enc = "utf-8-sig" if name.endswith(".ps1") else "utf-8"
+            f.write_text(body, encoding=enc)
             if name.endswith(".sh"):
                 f.chmod(0o755)
             log(f"已生成 {f}")

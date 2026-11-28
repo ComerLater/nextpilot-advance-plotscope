@@ -63,14 +63,23 @@ cmake --preset debug                            # Debug + 断言，落 build-deb
 
 三个 preset 都用 Ninja。若旧目录是别的生成器建的（Makefiles 等），删掉 `build/` 重建——CMake 不允许在生成器不同的目录上 configure。
 
+Windows 上 Ninja 还要求 PATH 中有 `cl.exe`。`tools\ps-setup.bat bootstrap` 会把 MSVC 环境写进 `env.ps1` 并注册到终端，重开终端后直接 configure 即可；临时排查也可以 `call %USERPROFILE%\.ps-deps\env.bat` 后再跑 cmake。
+
 configure 会跑一次 `tools/ps-setup.py prepare` 做门禁：缺什么自动补装，装完复查，仍不过才终止并给出手动命令；只想体检不改机器就 `prepare --no-install`。
 
 ## Windows
 
 ```powershell
-tools\ps-setup.bat bootstrap       # 或：powershell -ExecutionPolicy Bypass -File tools\ps-setup.ps1 bootstrap
-tools\ps-setup.bat check
+tools\ps-setup.bat bootstrap   # 装齐并生成 %USERPROFILE%\.ps-deps\env.ps1
+# 关闭当前终端，重新开一个（或 VSCode 里新开终端）
+cmake --preset default
+cmake --build --preset default -j
+ctest --test-dir build --output-on-failure
 ```
+
+`bootstrap` 结束时会把环境注册到 PowerShell profile、Windows Terminal 的 `PlotScope Dev` 终端和 VSCode 默认终端，新开终端自动加载 `env.ps1`，不需要手动 source，也没有 `dev.bat build/test/run` 这类第二套命令。
+
+想体检就 `tools\ps-setup.bat check`；想手动兜底就在 cmd 里 `call %USERPROFILE%\.ps-deps\env.bat`，之后同样只用原生 cmake 命令。
 
 bat / ps1 薄壳只做一件事：找不到受管 Python 就下载一份独立的 python-build-standalone 到 `$PS_DEPS_ROOT\toolchain\python\`，然后把参数交给 `ps-setup.py`。系统 Python 不被改动。受管安装落 `$PS_DEPS_ROOT`，清单：
 

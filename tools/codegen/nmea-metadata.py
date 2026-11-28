@@ -2,7 +2,7 @@
 """Generate nmea_database.json from pynmea2 sentence classes.
 
 The generated file is committed; the application never runs Python at build time.
-Run: python3 tools/nmea-metadata.py
+Run: python3 tools/codegen/nmea-metadata.py
 """
 
 import json

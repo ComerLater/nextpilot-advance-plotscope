@@ -97,8 +97,23 @@ class WindowsPlatform(Platform):
             roots += [Path(la) / "Programs", Path(la) / "Microsoft" / "WinGet" / "Links"]
         return roots
 
+    @staticmethod
+    def _vs_toolset_key(vs: Path) -> tuple:
+        """按 VC/Tools/MSVC 的最高版本排序，避免 vswhere 先给 VS2019 而 Qt 6.12 要 VS2022。"""
+        msvc = vs / "VC" / "Tools" / "MSVC"
+        nums: list[tuple[int, ...]] = []
+        if msvc.is_dir():
+            for d in msvc.iterdir():
+                if d.is_dir():
+                    try:
+                        nums.append(tuple(int(x) for x in d.name.split(".")))
+                    except ValueError:
+                        continue
+        return max(nums) if nums else (0,)
+
     def vs_installs(self) -> list[Path]:
-        """vswhere 优先（Build Tools 也认）；没有 vswhere 就枚举 Program Files 下的年份/产品。"""
+        """vswhere 优先（Build Tools 也认）；没有 vswhere 就枚举 Program Files 下的年份/产品。
+        返回按工具集版本从新到旧排序的列表，调用方取第一个即最新 MSVC。"""
         vswhere = (
             Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"))
             / "Microsoft Visual Studio"
@@ -109,7 +124,7 @@ class WindowsPlatform(Platform):
             out = _capture([vswhere, "-all", "-prerelease", "-property", "installationPath"])
             paths = [Path(line.strip()) for line in out.splitlines() if line.strip()]
             if paths:
-                return paths
+                return sorted(paths, key=self._vs_toolset_key, reverse=True)
         hits = []
         for var in ("ProgramFiles", "ProgramFiles(x86)"):
             base = os.environ.get(var)
@@ -118,7 +133,7 @@ class WindowsPlatform(Platform):
             for vs in sorted((Path(base) / "Microsoft Visual Studio").glob("*/*"), reverse=True):
                 if (vs / "Common7").is_dir():
                     hits.append(vs)
-        return hits
+        return sorted(hits, key=self._vs_toolset_key, reverse=True)
 
     def qt_abi_default(self) -> str:
         # 与 MSVC 配套的官方预编译包；MinGW 那套暂不作为默认（见 docs/develop/building.md）
