@@ -39,7 +39,7 @@ if [ -z "$QT_DIR" ]; then
   fi
 fi
 if [ -z "$QT_DIR" ] || [ ! -x "$QT_DIR/bin/qmake" ]; then
-  for c in "$ROOT/deps/Qt/6.2.4/gcc_64" "${PS_DEPS_PREFIX:-}/usr"; do
+  for c in "$ROOT/deps/Qt/6.8.3/gcc_64" "${PS_DEPS_PREFIX:-}/usr"; do
     [ -x "$c/bin/qmake" ] && QT_DIR="$c" && break
   done
 fi

@@ -3,16 +3,110 @@ include_guard(GLOBAL)
 include(FetchContent)
 include(GNUInstallDirs)
 
-# deps-version.json → CMake 变量：唯一版本源，本文件不再存版本常量
-include("${CMAKE_CURRENT_LIST_DIR}/DepsVersion.cmake")
+# ---------------- 三方库版本与源码镜像：本文件是唯一源 ----------------
+#
+# 版本、镜像 URL、sha256 全部写在这里。仓库不再有外部版本清单文件
+# （原 deps-version.json 的 packages 段已并进来，toolchains 段归 tools/ps-setup.py）。
+#
+# 每行 "<url>|<sha256>"：gitee 归档 zip 与 GitHub tar.gz 内容不同、哈希不同，
+# 而 CMake 的 URL_HASH 只接受单值，所以用 _ps_pick_mirror() 逐个探测下载 +
+# 各自校验，选第一个通过的交给 FetchContent（选中文件缓存在 build 目录，
+# 重复 configure 不再联网）。系统或 vcpkg 已有该库时完全不触发网络。
+
+set(PS_VER_ZLIB "1.3.1")
+set(PS_MIRRORS_ZLIB
+    "https://gitee.com/nphelper/zlib/repository/archive/v1.3.1.zip|7c31009abc4e76ddc32e1448b6051bafe5f606aac158bb36166100a21ec170c6"
+    "https://github.com/madler/zlib/archive/refs/tags/v1.3.1.tar.gz|17e88863f3600672ab49182f217281b6fc4d3c762bde361935e436a95214d05c")
+
+set(PS_VER_ZSTD "1.5.7")
+set(PS_MIRRORS_ZSTD
+    "https://gitee.com/nphelper/zstd/repository/archive/v1.5.7.zip|847e3897fe0e3b42139f5c93218b5209bb9e7c513231869d7746ed8c7906900c"
+    "https://github.com/facebook/zstd/archive/refs/tags/v1.5.7.tar.gz|37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3")
+
+set(PS_VER_LZ4 "1.10.0")
+set(PS_MIRRORS_LZ4
+    "https://gitee.com/nphelper/lz4/repository/archive/v1.10.0.zip|39899812e1ecbe5c126b3b360ca3e93e440493424c108c4db98d7502da0ebe43"
+    "https://github.com/lz4/lz4/archive/refs/tags/v1.10.0.tar.gz|537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b")
+
+set(PS_VER_NANOARROW "0.9.0")
+set(PS_TAG_NANOARROW "apache-arrow-nanoarrow-0.9.0")  # 上游 tag 与版本号不同名，保持一致
+set(PS_MIRRORS_NANOARROW
+    "https://gitee.com/nphelper/arrow-nanoarrow/repository/archive/apache-arrow-nanoarrow-0.9.0.zip|c38c77e982f41f8be2c5bf8c6194e5239be59d135ec8d743d137c4b89171f343"
+    "https://github.com/apache/arrow-nanoarrow/archive/refs/tags/apache-arrow-nanoarrow-0.9.0.tar.gz|22c3edeaa5cb384c6da091f32a4e1c937779f2d62f84d646028de658b03d4385")
+
+# _ps_pick_mirror <pkg> <out_file_var> <out_hash_var> <out_url_var>
+# 按 PS_MIRRORS_<PKG> 的顺序逐个试：缓存命中且哈希对 → 直接用；否则下载校验。
+# 全失败是致命错误（此时无法构建，含糊跳过只会得到更难查的链接错误）。
+function(_ps_pick_mirror pkg out_file out_hash out_url)
+    string(TOUPPER "${pkg}" _ps_pkg_upper)
+    set(_ps_mirrors "${PS_MIRRORS_${_ps_pkg_upper}}")
+    if(NOT _ps_mirrors)
+        message(FATAL_ERROR "${pkg}: 未配置源码镜像（PS_MIRRORS_${_ps_pkg_upper}）")
+    endif()
+
+    set(_cache_dir "${CMAKE_BINARY_DIR}/ps-deps-download-cache")
+    file(MAKE_DIRECTORY "${_cache_dir}")
+
+    set(_idx 0)
+    foreach(_entry IN LISTS _ps_mirrors)
+        string(REPLACE "|" ";" _parts "${_entry}")
+        list(LENGTH _parts _n)
+        if(NOT _n EQUAL 2)
+            message(FATAL_ERROR "${pkg}: 镜像条目格式应为 <url>|<sha256>，实际：${_entry}")
+        endif()
+        list(GET _parts 0 _u)
+        list(GET _parts 1 _h)
+
+        # 保留归档扩展名：ExternalProject 靠文件名后缀判断如何解压（.zip / .tar.gz）
+        set(_ext "")
+        if(_u MATCHES "\\.(tar\\.gz|tgz|tar\\.xz|tar\\.bz2|zip|tar)(\\?|$)")
+            set(_ext "${CMAKE_MATCH_1}")
+        endif()
+        if(_ext)
+            set(_dst "${_cache_dir}/${pkg}-${_idx}.${_ext}")
+        else()
+            set(_dst "${_cache_dir}/${pkg}-${_idx}")
+        endif()
+
+        set(_ok FALSE)
+        if(EXISTS "${_dst}")
+            file(SHA256 "${_dst}" _actual)
+            if(_actual STREQUAL _h)
+                set(_ok TRUE)
+            endif()
+        endif()
+        if(NOT _ok)
+            file(DOWNLOAD "${_u}" "${_dst}" STATUS _st TLS_VERIFY ON)
+            list(GET _st 0 _code)
+            if(NOT _code EQUAL 0)
+                message(STATUS "[deps] ${pkg} 镜像 ${_idx} 不可达，试下一个（${_u}）")
+                math(EXPR _idx "${_idx} + 1")
+                continue()
+            endif()
+            file(SHA256 "${_dst}" _actual)
+            if(NOT _actual STREQUAL _h)
+                message(STATUS "[deps] ${pkg} 镜像 ${_idx} 哈希不符，试下一个（${_u}）")
+                math(EXPR _idx "${_idx} + 1")
+                continue()
+            endif()
+        endif()
+
+        set(${out_file} "${_dst}" PARENT_SCOPE)
+        set(${out_hash} "${_h}" PARENT_SCOPE)
+        set(${out_url} "${_u}" PARENT_SCOPE)
+        return()
+    endforeach()
+    message(FATAL_ERROR "${pkg}: 所有源码镜像都不可达或哈希不匹配（见 cmake/Dependencies.cmake 的 PS_MIRRORS_${_ps_pkg_upper}）")
+endfunction()
 
 option(PS_DEPS_FETCH "缺少 zlib/sqlite3/zstd/lz4/nanoarrow 时自动拉源码构建" ON)
 option(PS_DEPS_PREFER_SYSTEM "优先使用系统或 vcpkg 已安装的库" ON)
 option(PS_DEPS_INSTALL "为源码构建的依赖生成 install 规则（component=ps_deps）" OFF)
 set(PS_DEPS_ROOT "" CACHE PATH "已安装 zlib/sqlite3/zstd/lz4 的前缀，含 include 和 lib")
-# 源码包镜像在 deps-version.json → packages.<pkg>.mirrors；走到 FetchContent 分支时才用
-# _ps_pick_mirror() 逐个探测下载+校验，选中文件交给 FetchContent（见各 ps_resolve_* 函数）。
-# 系统/vcpkg 已有库时完全不触发网络。
+# 注意重名：工具链根也叫 PS_DEPS_ROOT（见 cmake/DepsRoot.cmake），但那是环境根
+# （toolchain/ + env.*），和这里的 libs 前缀不是同一件事。命令行优先级最高：
+# `-DPS_DEPS_ROOT=<path>` 同时决定工具链根与 libs 前缀（两者同值）；只想让工具链根换
+# 地方、libs 用系统/vcpkg 时，用环境变量 PS_DEPS_ROOT 并显式 -DPS_DEPS_ROOT="" 。
 
 if(PS_DEPS_ROOT)
     list(APPEND CMAKE_PREFIX_PATH "${PS_DEPS_ROOT}")

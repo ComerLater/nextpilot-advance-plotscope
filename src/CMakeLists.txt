@@ -6,7 +6,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # 依赖前缀：用 PS_DEPS_PREFIX（可持久化的独立 Qt/Lua 安装，不被系统镜像恢复）。
 # 该前缀下是标准 usr/ 布局（include、lib、lib/cmake、lib/qt6/plugins），
-# 一次性铺好后重装系统也不用重新 apt install。前缀由 tools/ubuntu-setup.sh --install-qt 生成。
+# 一次性铺好后重装系统也不用重新 apt install。前缀由 python tools/ps-setup.py install qt 生成。
 if(DEFINED ENV{PS_DEPS_PREFIX} AND EXISTS "$ENV{PS_DEPS_PREFIX}")
   set(PS_DEPS_PREFIX "$ENV{PS_DEPS_PREFIX}")
 endif()
@@ -61,7 +61,7 @@ if(NOT DEFINED ENV{RUSTUP_TOOLCHAIN})
         "缺少 Rust 工具链 ${_ps_tc_channel}（由 src/kernel/rust-toolchain.toml 指定），"
         "构建时 rustup 会尝试联网下载 https://static.rust-lang.org，国内网络下常见长时间无响应。\n"
         "  先安装：rustup toolchain install ${_ps_tc_channel}\n"
-        "  或用工程脚本（自动选 deps-version.json 里的国内镜像）：bash tools/ubuntu-setup.sh --install-rust\n"
+        "  或用工程脚本（自动轮询代码里的国内镜像）：python tools/ps-setup.py install rust\n"
         "  若确定要用本机别的版本，显式设 RUSTUP_TOOLCHAIN 覆盖（本检查会跳过）。")
     endif()
     message(STATUS "[rust] 工具链 ${_ps_tc_channel} 已在 ${_ps_rustup_home} 安装，构建不会触发 rustup 联网")
@@ -73,8 +73,20 @@ if(WIN32)
 else()
   set(_ps_kernel_lib "${_ps_kernel_dir}/target/release/libps_abi.a")
 endif()
+# 构建期必须用"门禁解析出来的那套 rustup/cargo"，不能靠调用者 shell 里恰好有多少级环境：
+# cargo 是 rustup 的 shim，按 cwd 的 rust-toolchain.toml 解析 channel，而解析根是 RUSTUP_HOME。
+# 门禁（ps-setup.py prepare）已把受管 RUSTUP_HOME/CARGO_HOME 落进 configure 环境，
+# 这里显式带进自定义命令——否则 generate 完的 VS/ninja 规则在别的进程里跑，
+# 会回退到系统 ~/.rustup，出现"拒装/缺 manifest"这类只在构建期才炸的问题。
+set(_ps_cargo_env "")
+foreach(_ps_var RUSTUP_HOME CARGO_HOME)
+  if(DEFINED ENV{${_ps_var}} AND NOT "$ENV{${_ps_var}}" STREQUAL "")
+    list(APPEND _ps_cargo_env "${_ps_var}=$ENV{${_ps_var}}")
+  endif()
+endforeach()
 add_custom_target(ps_kernel_cargo ALL
-  COMMAND "${PS_CARGO}" build --manifest-path "${_ps_kernel_dir}/Cargo.toml" -p ps-abi --release
+  COMMAND "${CMAKE_COMMAND}" -E env ${_ps_cargo_env}
+          "${PS_CARGO}" build --manifest-path "${_ps_kernel_dir}/Cargo.toml" -p ps-abi --release
   WORKING_DIRECTORY "${_ps_kernel_dir}"
   BYPRODUCTS "${_ps_kernel_lib}")
 add_library(ps_kernel INTERFACE)

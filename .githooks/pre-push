@@ -18,9 +18,18 @@ set -u
 }
 
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-[ -x "$ROOT/tools/ci/local_preflight.sh" ] || exit 0
+[ -f "$ROOT/tools/ci/local_preflight.sh" ] || exit 0
 
-if ! (cd "$ROOT" && tools/ci/local_preflight.sh); then
+# 与 pre-commit 同理：Windows 无执行位时用 bash 兜底，别让门禁静默失效。
+. "$ROOT/tools/lib/ps-env.sh" 2>/dev/null || true
+
+if command -v ps_run_script >/dev/null 2>&1; then
+    RUN="ps_run_script tools/ci/local_preflight.sh"
+else
+    RUN="tools/ci/local_preflight.sh"
+fi
+
+if ! (cd "$ROOT" && $RUN); then
     echo "[pre-push] 门禁失败：修完再推。确需绕过用 SKIP_PREFLIGHT=1 git push（不建议）。"
     exit 1
 fi

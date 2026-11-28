@@ -162,5 +162,5 @@ cmake --preset default           # 现在落到 Ninja
 cmake --build --preset default -j"$(nproc)"
 ```
 
-`tools/ubuntu-setup.sh --warm-cache` 不用改：它通过 preset 驱动 configure + build，
+`cmake --preset default && cmake --build --preset default` 不用改：它通过 preset 驱动 configure + build，
 生成器随 preset 走。

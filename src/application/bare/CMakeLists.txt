@@ -26,5 +26,8 @@ if(PS_BUILD_BARE)
     # 这里防 libs 层某个 INTERFACE 把 ps_module_* 传递进来）。
     ps_guard_closure_has_no_business(ps_shell_bare)
 
+    # 裸壳同样是 Qt 可执行文件：只拷 ads.dll 不够，Qt DLL 缺一个就是 0xc0000135。
+    # 与完整产品走同一套部署，ctest 的 ps_shell_bare_smoke 才不依赖外部 PATH。
     ps_deploy_windows_runtime(ps_shell_bare)
+    ps_deploy_windows_qt(ps_shell_bare)
 endif()

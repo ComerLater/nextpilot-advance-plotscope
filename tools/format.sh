@@ -76,6 +76,12 @@ fi
 
 # ---------------------------------------------------------------- 工具解析
 
+# 平台与工具定位都在 ps-env.sh（Windows 的 PATH 约定与 Linux 不同，规则只有这一份）。
+. "$ROOT/tools/lib/ps-env.sh"
+
+PYTHON="$(ps_python || true)"
+DEPS_ROOT="$(ps_deps_root)"
+
 PRETTIER=()
 if command -v prettier >/dev/null 2>&1; then
   got="$(prettier --version 2>/dev/null || true)"
@@ -86,11 +92,34 @@ elif command -v npx >/dev/null 2>&1; then
   PRETTIER=(npx --yes "prettier@$PRETTIER_VERSION")
 fi
 
-RUFF="$(command -v ruff || true)"
-[ -z "$RUFF" ] && [ -x "$HOME/.local/bin/ruff" ] && RUFF="$HOME/.local/bin/ruff"
+# ruff 三种可能：PATH、受管依赖根里的 venv、以及 python -m ruff。
+RUFF=()
+_ruff="$(ps_ruff || true)"
+if [ -n "$_ruff" ]; then
+  RUFF=("$_ruff")
+elif [ -n "$PYTHON" ] && "$PYTHON" -m ruff --version >/dev/null 2>&1; then
+  RUFF=("$PYTHON" -m ruff)
+fi
 
-CF="$(command -v "${CLANG_FORMAT:-clang-format}" 2>/dev/null || true)"
-GCF="$(command -v "${GIT_CLANG_FORMAT:-git-clang-format}" 2>/dev/null || true)"
+# clang-format / git-clang-format 的候选路径在 ps-env.sh 里，preflight 用的是同一套判定。
+CF="$(ps_clang_format || true)"
+GCF="$(ps_git_clang_format || true)"
+
+# git-clang-format 是 python 脚本：Windows 上可能没有执行位，
+# 有执行位就直跑，否则交给 python——不能让"脚本跑不起来"变成静默跳过。
+gcf() {
+  if [ -x "$GCF" ]; then
+    "$GCF" "$@"
+    return
+  fi
+  if [ -n "$PYTHON" ]; then
+    "$PYTHON" "$GCF" "$@"
+    return
+  fi
+  echo "format: git-clang-format 无法执行（无执行位且找不到 python）" >&2
+  return 1
+}
+
 
 # staged 模式（hook）工具缺失只提示、不阻断提交；check 模式（CI）缺失即失败。
 missing() {
@@ -143,19 +172,23 @@ md_write() {
 md_check() {
   [ "${#MARKDOWN_FILES[@]}" -gt 0 ] || return 0
   echo "format: markdown ${#MARKDOWN_FILES[@]} 个文件"
-  "${PRETTIER[@]}" --check -- "${MARKDOWN_FILES[@]}"
+  # 仓库存 LF、Windows 检出成 CRLF（core.autocrlf=true）。--check 默认按
+  # endOfLine=lf 比，会把"只差行尾"的文件判红，而 Linux CI（检出就是 LF）
+  # 照样绿——同一份提交两台机器结论不同。这里只校验内容，行尾交给 git：
+  # --end-of-line auto 表示"保留该文件原本的换行风格"。
+  "${PRETTIER[@]}" --check --end-of-line auto -- "${MARKDOWN_FILES[@]}"
 }
 
 py_write() {
   [ "${#PYTHON_FILES[@]}" -gt 0 ] || return 0
   echo "format: python ${#PYTHON_FILES[@]} 个文件"
-  "$RUFF" format --quiet -- "${PYTHON_FILES[@]}" && "$RUFF" check --fix --quiet -- "${PYTHON_FILES[@]}"
+  "${RUFF[@]}" format --quiet -- "${PYTHON_FILES[@]}" && "${RUFF[@]}" check --fix --quiet -- "${PYTHON_FILES[@]}"
 }
 
 py_check() {
   [ "${#PYTHON_FILES[@]}" -gt 0 ] || return 0
   echo "format: python ${#PYTHON_FILES[@]} 个文件"
-  "$RUFF" format --check -- "${PYTHON_FILES[@]}"
+  "${RUFF[@]}" format --check -- "${PYTHON_FILES[@]}"
 }
 
 cpp_check() {
@@ -166,7 +199,7 @@ cpp_check() {
   [ -z "$files" ] && { echo "format: 本次改动没有 C/C++ 变更"; return 0; }
   echo "format: C/C++ 变更行（相对 $base）"
   # shellcheck disable=SC2086  # 逐文件列表按空白切分是有意的：路径不含空格。
-  "$GCF" --binary "$CF" --diff "$base" -- $files
+  gcf --binary "$CF" --diff "$base" -- $files
 }
 
 cpp_write_staged() {
@@ -176,7 +209,7 @@ cpp_write_staged() {
   [ -z "$files" ] && return 0
   # git clang-format 就地修改工作区，返回码 1 表示"有改动"，不是失败。
   # 不带文件列表：--staged 本身就只看暂存区，额外传路径在不同版本上行为不一致。
-  "$GCF" --binary "$CF" --staged >/dev/null 2>&1 || true
+  gcf --binary "$CF" --staged >/dev/null 2>&1 || true
   # shellcheck disable=SC2086
   git add -- $files
 }
@@ -209,7 +242,7 @@ case "$MODE" in
     fi
 
     if want py; then
-      if [ -z "$RUFF" ]; then
+      if [ ${#RUFF[@]} -eq 0 ]; then
         missing "ruff" "pip install 'ruff==0.14.6'" || RC=1
       else
         collect_py < <(git -c core.quotePath=false diff --cached --name-only -z --diff-filter=ACM)
@@ -246,7 +279,7 @@ case "$MODE" in
     fi
 
     if want py; then
-      if [ -z "$RUFF" ]; then
+      if [ ${#RUFF[@]} -eq 0 ]; then
         missing "ruff" "pip install 'ruff==0.14.6'" || RC=1
       else
         collect_py < <(git -c core.quotePath=false diff --name-only -z --diff-filter=d "${BASE}...HEAD" -- '*.py')
@@ -267,7 +300,7 @@ case "$MODE" in
     fi
 
     if want py; then
-      if [ -z "$RUFF" ]; then
+      if [ ${#RUFF[@]} -eq 0 ]; then
         missing "ruff" "pip install 'ruff==0.14.6'" || RC=1
       else
         collect_py < <(git -c core.quotePath=false ls-files -z '*.py')

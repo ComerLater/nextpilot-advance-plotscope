@@ -18,6 +18,14 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT" || exit 1
 
+# Windows 上 hook 跑在 Git for Windows 的 sh 里：没有 python3、没有 nproc、
+# 生成器也不是 Ninja（MSVC 需要 VS 生成器）。平台差异统一从 ps-env.sh 取。
+. "$ROOT/tools/lib/ps-env.sh"
+
+PYTHON="$(ps_python || true)"
+JOBS="$(ps_jobs)"
+TMP="$(ps_tmpdir)"
+
 MODE=quick
 BASE=origin/main
 while [ $# -gt 0 ]; do
@@ -54,21 +62,22 @@ else
 fi
 
 bold "1) 格式（C++ / Markdown / Python 的改动行）"
-if [ ! -x tools/format.sh ]; then
+if [ ! -f tools/format.sh ]; then
     skip "tools/format.sh 不存在"
 else
     CPP_FILES="$(changed '*.cpp' '*.h' '*.hpp' '*.cc')"
     MD_FILES="$(changed '*.md')"
     PY_FILES="$(changed '*.py')"
+    FMT="ps_run_script tools/format.sh"
     if [ -n "$CPP_FILES" ]; then
-        if have clang-format || have git-clang-format; then
-            tools/format.sh --check "$BASE" --only cpp && ok "C++ 改动行格式" || bad "C++ 改动行格式（跑 tools/format.sh --staged 修）"
+        if ps_clang_format >/dev/null 2>&1 && ps_git_clang_format >/dev/null 2>&1; then
+            $FMT --check "$BASE" --only cpp && ok "C++ 改动行格式" || bad "C++ 改动行格式（跑 tools/format.sh --staged 修）"
         else
             skip "clang-format 缺失，C++ 格式未查"
         fi
     fi
     if [ -n "$MD_FILES" ]; then
-        tools/format.sh --check "$BASE" --only md && ok "Markdown 改动行格式" || bad "Markdown 改动行格式"
+        $FMT --check "$BASE" --only md && ok "Markdown 改动行格式" || bad "Markdown 改动行格式"
         if have npx; then
             npx --yes markdownlint-cli2@0.19.1 $MD_FILES >/dev/null 2>&1 && ok "markdownlint" || bad "markdownlint（看具体文件行）"
         else
@@ -76,9 +85,9 @@ else
         fi
     fi
     if [ -n "$PY_FILES" ]; then
-        tools/format.sh --check "$BASE" --only py && ok "Python 改动行格式" || bad "Python 改动行格式"
-        if have python3 && python3 -c 'import mypy' >/dev/null 2>&1; then
-            python3 -m mypy --config-file mypy.ini $PY_FILES && ok "mypy" || bad "mypy（无存量豁免）"
+        $FMT --check "$BASE" --only py && ok "Python 改动行格式" || bad "Python 改动行格式"
+        if [ -n "$PYTHON" ] && "$PYTHON" -c 'import mypy' >/dev/null 2>&1; then
+            "$PYTHON" -m mypy --config-file mypy.ini $PY_FILES && ok "mypy" || bad "mypy（无存量豁免）"
         else
             skip "mypy 未安装，Python 类型未查"
         fi
@@ -108,7 +117,11 @@ if [ -n "$WF_FILES" ]; then
     else
         skip "actionlint 未安装"
     fi
-    python3 tools/check-workflow-outputs.py .github/workflows && ok "workflow 输出契约" || bad "workflow 输出契约"
+    if [ -n "$PYTHON" ]; then
+        "$PYTHON" tools/check-workflow-outputs.py .github/workflows && ok "workflow 输出契约" || bad "workflow 输出契约"
+    else
+        skip "python 缺失，workflow 输出契约未查"
+    fi
 else
     ok "无 workflow 改动"
 fi
@@ -131,24 +144,43 @@ fi
 
 if [ "$MODE" = "full" ]; then
     bold "4) 构建 + ctest（Release 与 Debug 都要）"
-    . "${PS_DEPS_ENV:-/home/user/.ps-deps/env.sh}" 2>/dev/null || true
+    # Linux 的 env.sh 由 ps-setup 生成；Windows 只有 env.ps1，配置里已 import，
+    # 这里只兜底：找不到就不 source（Qt 走 PS_QT_DIR / CMAKE_PREFIX_PATH）。
+    . "${PS_DEPS_ENV:-$(ps_deps_root)/env.sh}" 2>/dev/null || true
     export RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-stable}" CARGO_NET_OFFLINE="${CARGO_NET_OFFLINE:-true}"
+
+    # 生成器分档：Linux 一律 Ninja 单档；Windows 只有在 MSVC 环境（cl 在 PATH）里
+    # 才能用 Ninja，否则退回 VS 多档生成器（否则 configure 直接找不到编译器）。
+    NINJA_MODE=1
+    if ps_is_windows && ! have cl; then
+        NINJA_MODE=0
+    fi
+
     # Debug 不清 NDEBUG，assert 与 pure virtual 之类的崩溃只在这一档现形；只跑 Release 会漏。
     for CFG in Release Debug; do
         DIR="build-preflight-$CFG"
-        if ! cmake -S . -B "$DIR" -G Ninja -DCMAKE_BUILD_TYPE="$CFG" -DPS_BUILD_TESTS=ON \
-            >"/tmp/preflight-$CFG-cmake.log" 2>&1; then
-            bad "$CFG configure 失败（看 /tmp/preflight-$CFG-cmake.log）"
+        if [ "$NINJA_MODE" -eq 1 ]; then
+            CMAKE_ARGS=(-G Ninja "-DCMAKE_BUILD_TYPE=$CFG")
+            BUILD_ARGS=(--build "$DIR" -j "$JOBS")
+            CTEST_ARGS=(--test-dir "$DIR" -j "$JOBS")
+        else
+            CMAKE_ARGS=(-G "Visual Studio 17 2022" -A x64)
+            BUILD_ARGS=(--build "$DIR" --config "$CFG" -- "-j$JOBS")
+            CTEST_ARGS=(--test-dir "$DIR" -C "$CFG" -j "$JOBS")
+        fi
+        if ! cmake -S . -B "$DIR" "${CMAKE_ARGS[@]}" -DPS_BUILD_TESTS=ON \
+            >"$TMP/preflight-$CFG-cmake.log" 2>&1; then
+            bad "$CFG configure 失败（看 $TMP/preflight-$CFG-cmake.log）"
             continue
         fi
         ok "$CFG configure"
-        if ! cmake --build "$DIR" -j"$(nproc)" >"/tmp/preflight-$CFG-build.log" 2>&1; then
-            bad "$CFG build 失败（看 /tmp/preflight-$CFG-build.log）"
+        if ! cmake "${BUILD_ARGS[@]}" >"$TMP/preflight-$CFG-build.log" 2>&1; then
+            bad "$CFG build 失败（看 $TMP/preflight-$CFG-build.log）"
             continue
         fi
         ok "$CFG build"
-        ctest --test-dir "$DIR" -j"$(nproc)" --output-on-failure >"/tmp/preflight-$CFG-ctest.log" 2>&1 \
-            && ok "$CFG ctest 全绿" || bad "$CFG ctest 红（看 /tmp/preflight-$CFG-ctest.log）"
+        ctest "${CTEST_ARGS[@]}" --output-on-failure >"$TMP/preflight-$CFG-ctest.log" 2>&1 \
+            && ok "$CFG ctest 全绿" || bad "$CFG ctest 红（看 $TMP/preflight-$CFG-ctest.log）"
     done
 
     bold "5) clang-tidy 增量（只断新增行）"
@@ -157,23 +189,28 @@ if [ "$MODE" = "full" ]; then
         ok "无 .cpp 改动，tidy 跳过"
     elif ! have clang-tidy; then
         skip "clang-tidy 未安装"
+    elif ps_is_windows && [ "$NINJA_MODE" -eq 0 ]; then
+        # 需要 compile_commands.json，而 VS 生成器 + 不在 MSVC 环境里拿不到。
+        skip "Windows 无 MSVC 环境（cl 不在 PATH），tidy 未查"
     else
-        if cmake -S . -B build-tidy -G Ninja -DPS_BUILD_TESTS=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON >/tmp/tidy-cmake.log 2>&1; then
-            : >/tmp/tidy.log
+        if cmake -S . -B build-tidy -G Ninja -DPS_BUILD_TESTS=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            >"$TMP/tidy-cmake.log" 2>&1; then
+            : >"$TMP/tidy.log"
             for f in $CPP_LIST; do
-                echo "=== $f ===" >>/tmp/tidy.log
-                clang-tidy -p build-tidy "$f" >>/tmp/tidy.log 2>&1
+                echo "=== $f ===" >>"$TMP/tidy.log"
+                clang-tidy -p build-tidy "$f" >>"$TMP/tidy.log" 2>&1
             done
-            python3 tools/clang-tidy-diff-gate.py --log /tmp/tidy.log --base "$BASE" \
-                && ok "tidy 新增行 0" || bad "tidy 新增行有告警（看 /tmp/tidy.log）"
+            "$PYTHON" tools/clang-tidy-diff-gate.py --log "$TMP/tidy.log" --base "$BASE" \
+                && ok "tidy 新增行 0" || bad "tidy 新增行有告警（看 $TMP/tidy.log）"
         else
-            bad "tidy configure 失败（看 /tmp/tidy-cmake.log）"
+            bad "tidy configure 失败（看 $TMP/tidy-cmake.log）"
         fi
     fi
 
     bold "6) 架构反证"
-    if [ -x tools/ci/arch_guard.sh ]; then
-        tools/ci/arch_guard.sh --quick >/tmp/preflight-arch.log 2>&1 && ok "arch_guard --quick" || bad "arch_guard 红（看 /tmp/preflight-arch.log）"
+    if [ -f tools/ci/arch_guard.sh ]; then
+        ps_run_script tools/ci/arch_guard.sh --quick >"$TMP/preflight-arch.log" 2>&1 \
+            && ok "arch_guard --quick" || bad "arch_guard 红（看 $TMP/preflight-arch.log）"
     else
         skip "arch_guard.sh 缺失"
     fi

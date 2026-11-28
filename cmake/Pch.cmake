@@ -37,7 +37,7 @@ function(ps_enable_pch target)
     if(CMAKE_CXX_COMPILER_LAUNCHER MATCHES "ccache")
         # sloppiness 有两个来源，任一放行 pch_defines 即可：
         #   1. 环境变量 CCACHE_SLOPPINESS（传统/CI 直接 export 的方式）；
-        #   2. ccache.conf（环境脚本 tools/ubuntu-setup.sh 生成的分层配置，
+        #   2. ccache.conf（tools/ps-setup.py 生成的分层配置，
         #      conf 优先级虽低于环境变量，但对未 export 的入口一样生效）。
         # 只认环境变量会误报——合并 ccache 分层配置后 sloppiness 走 conf，
         # 环境变量里没有，但 ccache 实际已在放行状态。
@@ -60,7 +60,7 @@ function(ps_enable_pch target)
                 "       该组合下 ccache 会把全部编译判为不可缓存（实测 Hits 0/0），PCH 的代价\n"
                 "       白付、ccache 的收益全丢，属于净负收益。\n"
                 "       二选一：\n"
-                "         跑 tools/ubuntu-setup.sh --install 生成含 sloppiness 的 ccache.conf；\n"
+                "         跑 python tools/ps-setup.py install 生成含 sloppiness 的 ccache.conf；\n"
                 "         或 export CCACHE_SLOPPINESS=pch_defines,time_macros 后重新 configure；\n"
                 "         或 -DPS_USE_CCACHE=OFF 只留 PCH。\n"
                 "       实测数据见 docs/develop/build-performance.md。")

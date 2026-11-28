@@ -18,7 +18,7 @@ PlotScope 每个包都含**两个可执行文件**：`plotscope-gui`（GUI 主�
 tools/pack-appimage.sh build dist                      # Linux，第三参可指定 Qt 前缀
 tools/pack-deb.sh      build dist                      # Linux deb 安装包
 tools/pack-linux.sh    build dist                      # Linux 便携 tar.gz（兜底）
-powershell -File tools\pack-windows.ps1 -BuildDir build -QtDir C:\Qt\6.2.4\msvc2019_64 -OutDir dist
+powershell -File tools\pack-windows.ps1 -BuildDir build -QtDir C:\Qt\6.8.3\msvc2019_64 -OutDir dist
 tools/pack-macos.sh    build dist                      # 只在 macOS 上跑
 ```
 

@@ -2,200 +2,184 @@
 
 ## 依赖
 
-- CMake ≥ 3.24（3.22.x 处理 `URL_HASH` 会失败，版本门槛见 `deps-version.json`）
-- Qt 6（Core / Widgets / Gui / Svg）
-- C++17 编译器
-- Rust 工具链（`cargo` 在 `PATH`）
-- Python 3（仅部分 `tools/` 脚本需要）
+| 组件       | 要求                                                      |
+| ---------- | --------------------------------------------------------- |
+| CMake      | ≥ 3.24                                                    |
+| Qt         | ≥ 6.8.3（Core / Widgets / Gui / Svg）                     |
+| C++ 编译器 | C++17（Linux: GCC ≥ 9；Windows: MSVC 2022 x64）           |
+| Rust       | `cargo` 可用，channel 见 `src/kernel/rust-toolchain.toml` |
+| Python     | 3.10+（只有 `tools/` 下的脚本需要）                       |
 
-`deps-version.json` 分两段，每个条目把版本、镜像和附加配置写在一起：
+版本写在哪：
 
-- `toolchains`（gcc / cmake / ninja / ccache / python / rust / qt / apt）：由 `tools/ubuntu-setup.sh` 体检与获取。`version` 用带运算符的表达式表达要求（`">=3.24"` 最低版本、`"=6.2.4"` 精确版本）；`mirrors` 是该工具的下载镜像数组。
-- `packages`（zlib / zstd / lz4 / nanoarrow）：构建期由 `FetchContent` 拉源码。每个包自带 `mirrors` 数组，元素为 `{url, sha256}`，哈希与 URL 绑定。`cmake/DepsVersion.cmake` 只解析这一段。
+- 工具链（cmake / ninja / ccache / python / rust / qt）：`tools/ps-setup.py`，每个组件一个类，改版本、换镜像都只改这里。
+- 三方库（zlib / zstd / lz4 / nanoarrow）：`cmake/Dependencies.cmake` 顶部的 `PS_VER_*` 与 `PS_MIRRORS_*`。镜像按 `URL|SHA256` 排列，构建时按顺序探测，第一个可用的即用。
 
-升级依赖、换镜像都只改 `deps-version.json`，脚本与 CMake 不必同步改。
+默认安装到 `~/.ps-deps`（Windows 为 `%USERPROFILE%\.ps-deps`），改到别处按优先级取第一个有值的：`-DPS_DEPS_ROOT=<path>` → 环境变量 `PS_DEPS_ROOT` → 平台缺省。命令行最高：`-DPS_DEPS_ROOT` 同时决定工具链根与三方库前缀。
 
-Qt 可固定到用户目录 `~/.ps-deps`（在仓库与系统之外，不随提交走、不受仓库迁移影响），避免系统包被环境快照回退。
+## 环境组合速查
+
+configure 的固定顺序是"体检 → 用现成的 → 缺了才装"，所以同一套命令能吃下下面这些机器。"自动"= 不用加任何参数。
+
+| 机器现状                                          | Linux                                                                                                   | Windows                                                                                                      | 要你动手吗         |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------ |
+| 新系统，什么都没装                                | 受管 Python / CMake / Qt / Rust 装进 `$PS_DEPS_ROOT`；gcc、ninja、ccache 走 apt，缺了打印命令不代装     | 受管 Python / ninja / ccache / Qt 装进 `$PS_DEPS_ROOT`；MSVC 缺失时 `winget` 装 VS 2022 Build Tools 最小负载 | 自动，首次要下载   |
+| 发行版工具链齐全（CMake ≥3.24、Python ≥3.10）     | 直接用系统的，不装副本                                                                                  | 直接用系统的，不装副本                                                                                       | 自动               |
+| 版本低于下限（CMake 3.16 / Python 3.9 / Qt 6.5）  | 受管副本装进 `$PS_DEPS_ROOT`，PATH 与 Qt 前缀以受管优先                                                 | 同上                                                                                                         | 自动，旧版本不动   |
+| Qt 已装但不在 `PATH`（如 `D:\program\Qt\6.12.0`） | 扫 `~/Qt`、`/opt/Qt`；命中即用                                                                          | 扫 `C/D/E:\Qt`、各盘符下 `<任意目录>\Qt`、`Program Files\Qt`、vcpkg；多份取版本最高                          | 自动               |
+| Qt 版本低于 6.8.3                                 | 视为不可用，补装受管 6.8.3                                                                              | 同上                                                                                                         | 自动               |
+| Windows 只有 MinGW 版 Qt                          | —                                                                                                       | 该 Qt 被忽略（ABI 不配套，配 MSVC 会在链接期炸），改装 MSVC 版                                               | 自动，日志会说明   |
+| 没有免密 sudo                                     | 系统包不代装，打印 `sudo apt-get install …`；受管组件照常装进用户目录                                   | —                                                                                                            | 复制命令自己跑     |
+| 内网 / 外网不通                                   | 镜像按顺序轮询（USTC / 阿里 / 清华）；全不通时把装好的 `$PS_DEPS_ROOT` 整份拷过去，门禁只认磁盘上的文件 | 同左（GitHub Releases 走 npmmirror / gh-proxy 等镜像）                                                       | 首台机器联网装一次 |
+| 同一组件装了好几份                                | Qt 取版本最高；其余按 `PATH` 先后                                                                       | 同左                                                                                                         | 自动               |
+| 已有旧的 `build/` 目录                            | 换过生成器就删掉重建；只换 Qt 用 `-DPS_QT_DIR` 覆盖                                                     | 同左                                                                                                         | 视情况             |
+
+显式指定永远优先：`-D` > 环境变量（`PS_DEPS_ROOT` / `PS_QT_DIR` / `CCACHE_DIR`）> 缓存里的旧值 > 平台缺省。显式指定了低于下限的 Qt 也不会被放过，报错里会直接说是哪一项不满足。
 
 ## Linux / 云主机
 
-一条命令装齐工具链、Qt、Rust 与 Python venv，版本全部取自仓库根 `deps-version.json`：
-
 ```bash
-tools/ubuntu-setup.sh --check     # 体检：每项显示 实测 / 要求 / 来源(system|managed)
-tools/ubuntu-setup.sh --install   # 补齐缺项并写入 shell 变量
+tools/ps-setup.sh bootstrap        # 装齐 cmake / ninja / ccache / python / qt / rust
+tools/ps-setup.sh check            # 体检：实测 / 要求 / 来源
+tools/ps-setup.sh install qt       # 只补某一样
 ```
 
-装到 `~/.ps-deps`（仓库外、随用户目录留存，不受 apt 快照回滚影响）。系统自带且版本达标的工具不重复安装，只有不达标的才落进统一目录。
+新机器上系统 cmake 低于 3.24 时先跑 `bootstrap`：它会下载一份受管的 Python 与 cmake，装进 `$PS_DEPS_ROOT`，不碰系统包。
 
-**工具下载镜像**：每个会联网的工具（python/pip、rust、qt、apt）在自己的 `toolchains.<工具>.mirrors` 给一组 URL，国内在前、官方兜底；安装时**按顺序逐个轮询，第一个可达的即用**——避免国内网络下官方源超时卡死。
-
-```json
-"python": {
-  "version": ">=3.10",
-  "configuration": "tools/requirements.txt",
-  "mirrors": [ "https://mirrors.aliyun.com/pypi/simple/", "https://pypi.org/simple/" ]
-}
-```
-
-- 轮询用 6s 超时探测，某个源慢或不可达自动跳下一个；全部不可达时用第一个并报真实错误。
-- 换源/调优先级只需改 `deps-version.json` 的数组顺序，脚本无需改动；某工具未配 `mirrors` 时沿用原行为。
-- pip 若已在 `pip.conf` 显式配置了 index，脚本不覆盖用户配置；apt 仅对 Ubuntu 生成临时源，不改系统 `/etc/apt`。
-
-**源码包镜像**：`packages.<pkg>.mirrors` 每个元素自带 `{url, sha256}`（国内 gitee 归档在前、GitHub 官方 tar.gz 兜底）。由于 gitee 的 zip 与 GitHub 的 tar.gz 内容不同、哈希不同，CMake 的 `URL_HASH` 无法共用，构建期 `DepsVersion.cmake` 用 for 循环逐个探测下载并按各自哈希校验，选第一个通过的交给 `FetchContent`（下载结果缓存在 build 目录，重复 configure 不再联网）；系统已有该库时完全不触发网络。换源/加源只改 JSON 数组。
-
-之后构建不需要任何 `-D` 参数：
+装完后新开终端即可构建，不需要任何 `-D` 参数：
 
 ```bash
-cmake --preset default                          # Release
+cmake --preset default                          # Release，落 build/
 cmake --build --preset default -j"${PS_JOBS:-$(nproc)}"
-ctest --test-dir build --output-on-failure      # 无显示器环境自动走 offscreen
+ctest --test-dir build --output-on-failure      # 无显示器环境自动 offscreen
 
-cmake --preset fast                             # 关掉 37 个测试目标，改代码只编主程序
-cmake --preset debug                            # Debug + 断言，落在 build-debug/
+cmake --preset fast                             # 不编测试目标，改代码只编主程序
+cmake --preset debug                            # Debug + 断言，落 build-debug/
 ```
 
-并行度按本机核数自适应（`nproc`），不写死 `-j2`——小内存机器（如 2 核/2 GB 的 VM）临时收窄即可：
+并行度默认按本机核数；小内存机器收窄：`PS_JOBS=2 cmake --build --preset default`。
 
-```bash
-PS_JOBS=2 cmake --build --preset default
-```
+三个 preset 都用 Ninja。若旧目录是别的生成器建的（Makefiles 等），删掉 `build/` 重建——CMake 不允许在生成器不同的目录上 configure。
 
-> **生成器是 Ninja**（`CMakePresets.json` 里 `"generator": "Ninja"`）。从 Unix
-> Makefiles 切换过来时，旧的 `build/`、`build-debug/` 必须删掉重建：CMake 会拒绝
-> 在生成器不同的目录上 configure（报 `Generator ... does not match the generator
-used previously`）。缓存本身仍然有效，Ninja 下 ccache 增量命中实测 100%，
-> 数据与机制见 `build-performance.md` §9。
+configure 会自检环境，缺什么自动装什么（`python3 tools/ps-setup.py install <缺失项>`），装完复查；自动装失败才终止并给出手动命令。
 
-`~/.ps-deps` 不完整时 configure 会**自动补装**（Qt 走 `--install-qt`、工具链走 `--install-toolchain`），补完复查；自动化失败才报错并给出手动命令。
-
-环境根目录默认 `~/.ps-deps`，可用环境变量 `PS_DEPS_ROOT` 覆盖（`tools/ubuntu-setup.sh` 与 env.sh 遵守同一变量）。
-
-非交互 shell（agent、CI 里的一次性 `bash -c`、IDE 的外部工具）不读 `~/.bashrc`，所以 `PATH` 里常常没有 `$PS_DEPS_ROOT/toolchain/ccache/bin`——不需要手动 source：configure 会自动加载 `$PS_DEPS_ROOT/env.sh` 并导入变量（已 source 过的终端零噪音跳过）。`tools/ubuntu-setup.sh --check` 只检查工具实际安装路径是否存在、版本是否达标；它不判断当前 shell 的 PATH（`--check` 可能不在编译终端里），也不做编译验证。但 **`ubuntu-setup.sh --check` 通过不等于 CMake 这份环境能用 ccache**：configure 会独立检查当前进程里的 `CCACHE_DIR` 是否存在可写、`CCACHE_DISABLE` 是否被打开，并用 `CMAKE_C_COMPILER` 实编两次验证命中；Linux 本地任一不满足直接 `FATAL_ERROR`（`PS_REQUIRE_CCACHE` 默认 ON）。确认不用缓存时显式 `-DPS_USE_CCACHE=OFF`。判断缓存是否真的挂上，也可以看 configure 的 `[ccache] 当前 CMake 环境实测命中：…` 行。
-Lua 由仓库内 `src/3rdparty/lua-5.4` 源码编静态库，不依赖系统 Lua。
-
-## 格式化（C/C++ 变更行、Markdown、Python）
-
-三类口径一致：**首次已全量，之后只处理改动文件**。格式化只在开发机侧修复，CI 只检查、不改写——构建期自动改写会让门禁永远绿。
-
-统一入口是 `tools/format.sh`，三类一把过：
-
-```bash
-tools/format.sh --staged              # 修复暂存区改动（pre-commit hook 调的就是它）
-tools/format.sh --check origin/main   # 校验改动相对基线（CI 调它；不给 base 默认 HEAD~1）
-tools/format.sh --all                 # 全量：Markdown + Python
-tools/format.sh --all --cpp           # 全量再加 C/C++ 整树（慎用，见下）
-tools/format.sh --check HEAD~1 --only py   # 只查一类（CI 按类型拆 job 用）
-```
-
-### C/C++：只改变更行，不做整树重排
-
-`.clang-format` 只对**变更行**生效：整文件重排会改写约 15% 的行、毁掉 git blame，明确不在范围内（`--all` 默认跳过 C/C++，必须显式加 `--cpp` 才会整树重排）。三种用法：
-
-```bash
-# 1) 显式目标，默认以 origin/main 为基线
-cmake --build build --target format
-
-# 2) 换基线（整理历史提交的格式，例如 A1b 那批）
-cmake -S . -B build -DPS_FORMAT_BASE=dda1f8c9
-cmake --build build --target format
-
-# 3) 提交前自动，一次配置长期有效
-tools/ubuntu-setup.sh --install
-```
-
-`tools/ubuntu-setup.sh` 在仓库内发现 `.githooks` 时会注册 hook；如果脚本被单独下载运行、仓库里没有 `.githooks`，则自动跳过，不会改 Git 配置。只操作 hook 可用 `--install-hooks` / `--uninstall-hooks` / `--check-hooks`。
-
-CMake configure 阶段会执行 `tools/ubuntu-setup.sh --check`，未通过直接终止配置（CI 环境跳过）。
-
-hook 只格式暂存区的内容并把结果重新暂存（不会改动未暂存的文件），三类各管一段：C++ 变更行、Markdown、Python。CI 的 `lint.yml` 里对应 job **只检查、不修复**——构建期自动改写会让门禁永远绿，所以格式化始终是开发机侧的动作。
-
-### Markdown：prettier + markdownlint-cli2
-
-- **格式化** `prettier@3.10.1`，配置 `.prettierrc.json`：`proseWrap: preserve` 保留人工折行，表格按中文显示宽度对齐，`---` 分隔线原样保留（这就是没用 mdformat 的原因，它会把这 40 处 `---` 改写成下划线）。
-- **结构检查** `markdownlint-cli2@0.19.1`，配置 `.markdownlint-cli2.jsonc`。规则只留真会坏掉的东西：标题跳级、代码块缺语言、表格列数不匹配、空链接、重复标题。关掉 MD013（中文文档按 80 列判长纯噪音），MD060 固定 `leading_and_trailing`——这是 prettier 的输出风格，不固定两个工具会互相打架。
-- `src/3rdparty/**` 排除：上游文档保持原样。
-
-首次全量已在仓库落地；之后 CI 的 `markdown` job 只对改动的 `.md` 跑 `prettier --check` + `markdownlint`。
-
-### Python：ruff
-
-- `ruff@0.14.6` 一个工具做 format + check，不需要 black + flake8 + isort 三件套；配置在仓库根 `ruff.toml`。
-- 规则集 `E4/E7/E9`（pycodestyle 真错误）、`F`（pyflakes）、`I`（import 排序）、`UP`（过时写法）、`B`（bugbear 陷阱）。`line-length = 120` 与 C++ 的 `ColumnLimit` 对齐，避免同一仓库两套行宽。
-- 版本只在 `tools/requirements.txt` 写一次，CI 的 `python` job 直接读那里。
-
-四个容易踩的边界：
-
-- **版本必须对齐**：clang-format `23.1.5`、prettier `3.10.1`、markdownlint-cli2 `0.19.1`、ruff `0.14.6`。任何一个版本漂移，都会出现"本地已格式化、CI 仍报 diff"的来回拉扯。prettier/markdownlint 走 `npx` 固定版本，不引入 `package.json` 与 `node_modules`。
-- **临时绕过**：`git commit --no-verify` 只跳过这一次；要彻底关掉用 `git config --unset core.hooksPath`（恢复用 `tools/ubuntu-setup.sh --install-hooks`）。绕过不改变 CI 的判定——对应 job 照样会拦；注意 CMake configure 会自动重新注册 hook（卸载后再配置会被自动装回，除非删掉 `.githooks`）。
-- **hook 只看已暂存内容**：`git add` 之后又改了文件，hook 处理的是改之前的那版；提交前请重新 `add`，或直接跑一次 `--staged`。
-- **hook 不跑 clang-tidy**：tidy 只在 CI 的 `lint.yml` 里以 report-only 方式跑（见该 workflow 的 `tidy` job），本地想提前看结果需自行执行 `clang-tidy -p build <file>`。
-
-工具安装：`clang-format==23.1.5` 与 `ruff==0.14.6` 都在 `tools/requirements.txt`，`tools/ubuntu-setup.sh --install-python` 会装进 `$PS_DEPS_ROOT/toolchain/python/venv`，该 venv 的 `bin` 本来就在 shell 块 PATH 里（脚本不做 `source activate`，而是直接注入 PATH），因此 `clang-format`、`git-clang-format`、`clang-format-diff.py`、`ruff` 开箱可用。手动装：`$PS_DEPS_ROOT/toolchain/python/venv/bin/pip install -r tools/requirements.txt`。prettier 与 markdownlint 不需要安装，`tools/format.sh` 用 `npx --yes <pkg>@<version>` 现取。
-
-## 构建加速开关
-
-开关的作用与实测数据见 `build-performance.md`，这里只列默认值与适用场景。**三个开关的默认值都偏向"日常热迭代"**：缓存与增量优先，冷建优化留给 CI。
-
-| 开关                            | 默认       | 作用                                                             | 适用场景                                                                                                                                                                                                                   |
-| ------------------------------- | ---------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PS_USE_CCACHE`                 | `ON`       | 以 `CMAKE_CXX_COMPILER_LAUNCHER` 接入 ccache，命中即跳过整段编译 | 所有日常构建。PATH 里找不到 ccache 时只打印一行提示并直连编译器，不会失败                                                                                                                                                  |
-| `PS_USE_PCH` + `PS_PCH_TARGETS` | `OFF` / 空 | 给指定 target 挂 `cmake/pch.hpp` 预编译头（分号分隔 target 名）  | **只建议 CI 冷构建**。与 ccache 同开时，默认 sloppiness 下 ccache 会把全部调用判为不可缓存并整体旁路（实测 `Hits 0/0`），净负收益；确需同开必须放行 `CCACHE_SLOPPINESS=pch_defines,time_macros`，且热全量与"仅 ccache"打平 |
-| `PS_BUILD_TESTS`                | `ON`       | 是否构建测试目标                                                 | 只编主程序时用 `cmake --preset fast`（已设 OFF）                                                                                                                                                                           |
-
-PCH 与 ccache 互斥会被 configure 拦住：开了 `PS_USE_PCH` 而 `CCACHE_SLOPPINESS` 不含 `pch_defines` 时直接 `FATAL_ERROR`，并给出两条出路。CI 冷建通常不用缓存，关掉 ccache 最省事：
-
-```bash
-# CI 冷构建：开 PCH、关 ccache，避免二者互斥
-cmake --preset default -DPS_USE_PCH=ON -DPS_PCH_TARGETS="SARibbonBar;fastplot" -DPS_USE_CCACHE=OFF
-```
-
-本地要预热缓存用 `tools/ubuntu-setup.sh --warm-cache`（Release + Debug 各跑一次全量，幂等，已预热则跳过），机制见 `build-acceleration.md`。
-
-## 配置项全景
-
-configure 阶段可改的 cache 变量。三种改法：`-D<VAR>=<VALUE>` 一次性覆盖；直接编辑 `CMakePresets.json` 对应 preset 的 `cacheVariables` 长期生效；`cmake --preset <name> --fresh` 推倒重配。
-
-| 变量                            | 默认              | 取值                                   | 作用                                                                   |
-| ------------------------------- | ----------------- | -------------------------------------- | ---------------------------------------------------------------------- |
-| `CMAKE_BUILD_TYPE`              | `Release`         | `Release` / `Debug` / `RelWithDebInfo` | 优化与断言。Debug 才暴露纯虚调用、未初始化、UAF 一类问题               |
-| `PS_BUILD_TESTS`                | `ON`              | `ON` / `OFF`                           | 关掉测试目标只编主程序；`--preset fast` 已设 `OFF`                     |
-| `PS_USE_CCACHE`                 | `ON`              | `ON` / `OFF`                           | 接入 ccache，命中即跳过编译；探不到只告警并直连编译器                  |
-| `PS_REQUIRE_CCACHE`             | `OFF`             | `ON`                                   | 探不到 ccache 直接 `FATAL_ERROR`，验收机/CI 用，避免"以为开了其实没开" |
-| `PS_USE_PCH` / `PS_PCH_TARGETS` | `OFF` / 空        | `ON` / 分号分隔 target 名              | 预编译头，只建议 CI 冷构建；与 ccache 同开会被 configure 拦下          |
-| `PS_DEPS_FETCH`                 | `ON`              | `ON` / `OFF`                           | 系统与 `PS_DEPS_ROOT` 都缺 zlib/sqlite 时按固定 URL 拉源码编静态库     |
-| `CMAKE_PREFIX_PATH`             | `$env{PS_QT_DIR}` | Qt 安装路径                            | Qt 6.2.4 前缀；换 Qt 只改这一处                                        |
-| `PS_DEPS_ROOT`                  | `$HOME/.ps-deps`  | 路径                                   | 依赖与工具链根目录，未导出时按该默认位置探测                           |
-
-> preset 里已写死的键，`-D` 覆盖不动：`CMAKE_BUILD_TYPE`、`PS_DEPS_FETCH`、`CMAKE_PREFIX_PATH`（default/debug）、`PS_BUILD_TESTS`（fast）。要改这些就改 `CMakePresets.json` 本身，或者 `--fresh` 后按新值配。
-
-三个 preset 都用 Ninja，配完可以无参编：`cmake --build --preset <name>`。
-
-## Windows / MSVC
-
-用 Visual Studio 2022 + Qt 6（按本机安装路径改 `CMAKE_PREFIX_PATH`）：
+## Windows
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="<你的Qt路径>/msvc2022_64"
+tools\ps-setup.bat bootstrap       # 或：powershell -ExecutionPolicy Bypass -File tools\ps-setup.ps1 bootstrap
+tools\ps-setup.bat check
+```
+
+bat / ps1 薄壳只做一件事：找不到受管 Python 就下载一份独立的 python-build-standalone 到 `$PS_DEPS_ROOT\toolchain\python\`，然后把参数交给 `ps-setup.py`。系统 Python 不被改动。受管安装落 `$PS_DEPS_ROOT`，清单：
+
+| 项               | 说明                                                                                                                    |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Python           | python-build-standalone（钉版本 + sha256），系统自带 `tar.exe` 解压                                                     |
+| ninja / ccache   | GitHub Releases（钉版本 + sha256）                                                                                      |
+| MSVC             | 优先用机器上已装的 VS / Build Tools；都没有时 `winget` 装 VS 2022 Build Tools 最小负载（`VCTools`），不用去官网点安装器 |
+| Qt               | aqt `windows desktop`，ABI 跟随实际编译器（MSVC 环境取 `win64_msvc2022_64`，可用 `PS_QT_ABI` 覆盖）                     |
+| git              | 缺失时提示 `winget install --id Git.Git`，不静默安装                                                                    |
+| 环境文件         | `env.ps1` / `env.bat`                                                                                                   |
+| Shell / IDE 入口 | PowerShell `$PROFILE` 标记块、Windows Terminal fragment、`.vscode/settings.json`                                        |
+
+### 已装好的工具不必重装
+
+Windows 上软件常常不在统一目录，所以 configure 会先找现成的、找不到才装受管副本。
+
+查找分两步，都写在 `tools/ps-setup.py`：
+
+1. 先看 `PATH`（受管 `$PS_DEPS_ROOT\bin` 在最前，然后是系统）。
+2. 不在 `PATH` 的再扫已知落点：`Program Files`、`Program Files (x86)`、`%LOCALAPPDATA%\Programs`、WinGet 的 `Links`，以及 Visual Studio 实例目录（vswhere 优先）。VS 自带的 cmake / ninja、scoop 的 ccache、手工装 Python 都在这一层找到。
+
+`doctor` 的"来源"列会显示 `system` / `scan` / `managed`：`scan` 就是"装着但没进 PATH"，configure 会把它的目录前置进 `PATH`，后续不再重复安装。
+
+想用自己的 Qt，任选一种指定方式：
+
+```powershell
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DPS_QT_DIR=D:/program/Qt/6.12.0/msvc2022_64
+$env:PS_QT_DIR = "D:/program/Qt/6.12.0/msvc2022_64"      # 或者先设环境变量
+```
+
+不指定时按顺序查找，命中即止：
+
+1. `-DPS_QT_DIR` / `CMakeCache.txt` 里的旧值
+2. 环境变量 `PS_QT_DIR`、`QTDIR`、`CMAKE_PREFIX_PATH`
+3. 受管前缀 `$PS_DEPS_ROOT\toolchain\qt`
+4. 常见目录：`C:\Qt`、`D:\Qt`、`E:\Qt`、`%ProgramFiles%\Qt`、`%USERPROFILE%\Qt`、`%LOCALAPPDATA%\Programs\Qt`，以及各盘符下一层的 `<任意目录>\Qt`（例如 `D:\program\Qt`）
+5. vcpkg 的 `installed\<triplet>`
+
+判据是目录里含 `lib\cmake\Qt6\Qt6Config.cmake`；版本按 ≥ 6.8.3 判，装的是 6.12 也算通过。找到后路径记进 `CMakeCache.txt`，下次 configure 不再查找；要换就重新 `-DPS_QT_DIR=...`。
+
+想看清每个组件的落点和版本：
+
+```powershell
+python tools/ps-setup.py doctor        # 逐项：实测 / 要求 / 来源 / 路径 / 修法
+python tools/ps-setup.py resolve qt    # 只看某一项
+```
+
+### 构建与运行
+
+```powershell
 cmake --build build --config Release -j
-```
-
-### 运行与测试
-
-Qt 只有 DLL 在 `bin` 里，运行程序和跑 `ctest` 前必须把 Qt `bin` 加进 `PATH`，否则测试会以 `0xc0000135`（找不到 DLL）失败：
-
-```powershell
-$env:PATH = "<你的Qt路径>/msvc2022_64/bin;" + $env:PATH
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-Debug / Release 两种配置都要过。测试用 `assert` 驱动，多配置生成器下 Release 会定义 `NDEBUG`；`tests/CMakeLists.txt` 已对 MSVC 统一加 `/UNDEBUG`，保证 Release 跑的是真断言而不是空跑。副作用不要写进 `assert`——Release 会把整段编译掉，测试会静默空跑。
+Qt 的 DLL 在 `<Qt>\bin`，构建期已经处理：`PS_DEPLOY_QT=ON`（默认）时用 `windeployqt` 把 DLL 与插件拷到可执行文件旁边，双击即可运行；VS 里按 F5 也带好了 `PATH`。不想拷贝 DLL 就 `-DPS_DEPLOY_QT=OFF`，此时运行前需自己把 `<Qt>\bin` 加进 `PATH`。
 
-### 已知的 Windows 差异
+## 格式化
 
-- 文件删除：Windows 不允许删除仍有打开句柄的文件，读写文件后再 `std::filesystem::remove` 会抛 `filesystem_error`（Linux 无此限制）。
+统一入口 `tools/format.sh`，覆盖 C/C++ 变更行、Markdown、Python：
 
-## 构建产物
+```bash
+tools/format.sh --staged              # 修复暂存区（pre-commit 调的就是它）
+tools/format.sh --check origin/main   # 只检查改动（CI 调它）
+tools/format.sh --all                 # 全量 Markdown + Python
+tools/format.sh --check HEAD~1 --only py   # 只查一类
+```
+
+C/C++ 只格式化变更行（整树重排会毁 git blame，默认不做；确需整树才加 `--cpp`）。
+
+提交前自动格式化靠 Git hook：`python3 tools/ps-setup.py mount` 注册 `core.hooksPath=.githooks`（configure 也会自动补上）。临时绕过：`git commit --no-verify`；彻底关闭：`git config --unset core.hooksPath`。hook 只看已暂存内容，`git add` 之后又改文件请重新 add。
+
+工具版本固定在 `tools/requirements.txt`（`clang-format`、`ruff`），装法 `python3 tools/ps-setup.py install python`；prettier / markdownlint 由 `tools/format.sh` 用 `npx` 现取固定版本。本地与 CI 必须同版本，否则会出现"本地已格式化、CI 仍报 diff"。
+
+## 构建加速开关
+
+| 开关                            | 默认                       | 作用                                             |
+| ------------------------------- | -------------------------- | ------------------------------------------------ |
+| `PS_USE_CCACHE`                 | `ON`                       | 接入 ccache，命中即跳过编译                      |
+| `PS_REQUIRE_CCACHE`             | Linux `ON` / Windows `OFF` | 探不到 ccache 直接失败，验收机用                 |
+| `PS_BUILD_TESTS`                | `ON`                       | 是否构建测试目标（`--preset fast` 已设 OFF）     |
+| `PS_USE_PCH` + `PS_PCH_TARGETS` | `OFF` / 空                 | 预编译头，只建议 CI 冷构建；与 ccache 同开会被拦 |
+
+CI 冷构建示例：
+
+```bash
+cmake --preset default -DPS_USE_PCH=ON -DPS_PCH_TARGETS="SARibbonBar;fastplot" -DPS_USE_CCACHE=OFF
+```
+
+预热本机 ccache：`cmake --preset default && cmake --build --preset default`，Debug 用 `--preset debug`。要不要预热不影响正确性，只影响第一次构建耗时。
+
+## 配置项
+
+改法三选一：`-D<VAR>=<VALUE>` 一次性、改 `CMakePresets.json` 长期、`cmake --preset <name> --fresh` 推倒重配。
+
+| 变量                | 默认                          | 说明                                                                   |
+| ------------------- | ----------------------------- | ---------------------------------------------------------------------- |
+| `CMAKE_BUILD_TYPE`  | `Release`                     | `Release` / `Debug` / `RelWithDebInfo`；Debug 才暴露断言与未初始化问题 |
+| `PS_BUILD_TESTS`    | `ON`                          | 关掉只编主程序                                                         |
+| `PS_USE_CCACHE`     | `ON`                          | 编译缓存                                                               |
+| `PS_REQUIRE_CCACHE` | Linux `ON`，Windows `OFF`     | 缓存不可用即失败                                                       |
+| `PS_USE_PCH`        | `OFF`                         | 预编译头                                                               |
+| `PS_DEPS_FETCH`     | `ON`                          | 缺 zlib / sqlite3 / nanoarrow 时构建期拉源码编静态库                   |
+| `PS_DEPS_ROOT`      | `~/.ps-deps`                  | 工具链与依赖根；`-D` 优先，其次环境变量                                |
+| `CCACHE_DIR`        | `$PS_DEPS_ROOT/caches/ccache` | ccache 缓存目录；`-D` 优先，其次环境变量                               |
+| `PS_QT_DIR`         | 自动发现                      | Qt 前缀；指定后写入 `CMakeCache.txt`                                   |
+| `PS_DEPLOY_QT`      | `ON`                          | Windows：构建后 `windeployqt` 拷 DLL                                   |
+
+取值优先级：命令行 `-D` > `CMakePresets.json` 的 `cacheVariables` > 代码里的默认值。preset 只是"一组默认 -D"，`cmake --preset fast -DPS_BUILD_TESTS=ON` 仍然编测试；要连 preset 一起丢掉用 `--fresh`。
+
+## 产物与运行
 
 | 产物            | 路径                                           |
 | --------------- | ---------------------------------------------- |
@@ -203,32 +187,32 @@ Debug / Release 两种配置都要过。测试用 `assert` 驱动，多配置生
 | GUI             | `build/src/application/assembly/plotscope-gui` |
 | 测试            | `build/tests/ps_test_*`                        |
 
-## 出发布包
-
-推 `v*` tag 或手动触发 `.github/workflows/build-packages.yml`，三平台各自出包并上传 artifact；完整矩阵、体积与签名说明见 [packaging.md](packaging.md)。本地出包需先构建 `plotscope-gui plotscope` 两个目标：
-
-```bash
-tools/pack-appimage.sh build dist                    # Linux AppImage（首选）
-tools/pack-deb.sh      build dist                    # Linux deb 安装包
-tools/pack-linux.sh    build dist                    # Linux 便携 tar.gz（兜底）
-powershell -File tools\pack-windows.ps1 -BuildDir build -OutDir dist   # Windows
-tools/pack-macos.sh    build dist                    # macOS（需在 Mac 上）
-```
-
-## 运行
-
 ```bash
 ./build/src/application/assembly/plotscope-gui
 ./build/src/application/app/plotscope --info tests/fixture/demo_flight.csv
 ```
 
-无显示器环境用 Xvfb 做 GUI 冒烟：
+无显示器环境跑 GUI 冒烟：
 
 ```bash
 xvfb-run -a -s '-screen 0 1600x1000x24' \
   env QT_QPA_PLATFORM=xcb ./build/src/application/assembly/plotscope-gui
 ```
 
+测试用 `assert` 驱动，Release 会定义 `NDEBUG`；`tests/CMakeLists.txt` 对 MSVC 统一加 `/UNDEBUG`，保证 Release 也是真断言。副作用不要写进 `assert`——Release 会把整段编译掉。
+
+## 出发布包
+
+推 `v*` tag 或手动触发 `.github/workflows/build-packages.yml`，三平台各自出包；矩阵与体积说明见 [packaging.md](packaging.md)。本地出包需先构建 `plotscope-gui plotscope`：
+
+```bash
+tools/pack-appimage.sh build dist                    # Linux AppImage
+tools/pack-deb.sh      build dist                    # Linux deb
+tools/pack-linux.sh    build dist                    # Linux 便携 tar.gz
+powershell -File tools\pack-windows.ps1 -BuildDir build -OutDir dist
+tools/pack-macos.sh    build dist                    # macOS
+```
+
 ## 设置存储
 
-`App` 构造时接收 `settingsPath`：为空时设置只存内存（进程退出即失）；传入 JSON 路径则读写该文件。GUI 内可通过「导出设置」把当前设置导出为 `plotscope-settings.json`。CLI 的 `--record` / `--run` 等场景用 `data.workspace.save` 保存工作区配方。
+`App` 构造时接收 `settingsPath`：为空则设置只存内存，进程退出即失；传入 JSON 路径则读写该文件。GUI 内「导出设置」可导出 `plotscope-settings.json`；CLI 的 `--record` / `--run` 场景用 `data.workspace.save` 保存工作区配方。

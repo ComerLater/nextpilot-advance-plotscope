@@ -63,7 +63,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.93.0
 
-      - name: Install Qt 6.2.4
+      - name: Install Qt 6.8.3
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.PS_QT_VER }}
@@ -758,7 +758,7 @@ jobs:
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build all targets (compile-only gate)
-        # A bare "exit code 1" annotation cannot distinguish a Qt 6.2.4 / new-Xcode
+        # A bare "exit code 1" annotation cannot distinguish a Qt 6.8.3 / new-Xcode
         # incompatibility from a real error in our own code, and the Actions log
         # needs an authenticated download. Two channels are used on failure:
         #   1. the step summary (tail of the log), and

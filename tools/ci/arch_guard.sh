@@ -21,7 +21,7 @@ QUICK=0
 [[ "${1:-}" == "--quick" ]] && QUICK=1
 
 # Qt 路径：优先环境变量 PS_QT_DIR，否则用 setup 脚本的统一下载位置。
-QT_PREFIX="${PS_QT_DIR:-/root/.ps-dps/toolchain/qt/6.2.4/gcc_64}"
+QT_PREFIX="${PS_QT_DIR:-${PS_DEPS_ROOT:-$HOME/.ps-deps}/toolchain/qt/6.8.3/gcc_64}"
 CMAKE_ARGS=(-S . -B "${WORK}" -DPS_BUILD_TESTS=OFF -DCMAKE_PREFIX_PATH="${QT_PREFIX}")
 
 cd "${ROOT}"

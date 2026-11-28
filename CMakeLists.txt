@@ -5,6 +5,8 @@ project(PlotScope VERSION 0.1.0 LANGUAGES C CXX)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(Version)
 include(Warnings)
+# 环境根解析（PS_DEPS_ROOT 覆盖 + 按平台缺省）单点定义，ccache 提示等处直接复用。
+include(DepsRoot)
 include(DevEnvCheck)
 
 # 可复现路径前缀：把源码树与构建目录的绝对路径规整成稳定值。
@@ -44,8 +46,8 @@ include(Dependencies)
 # 默认要求 ccache 必须真的可用：装上但没进 PATH、CCACHE_DIR 不可写、被 CCACHE_DISABLE
 # 关掉，都会在 configure 阶段硬失败，而不是“以为开了、实际直连编译器”。
 # 完全不用缓存时显式 -DPS_USE_CCACHE=OFF。
-# 非交互 shell（agent/CI 的一次性 bash）不读 ~/.bashrc，先 `. "$PS_DEPS_ROOT/env.sh"`，
-# 或直接用 cmake --preset default（preset 会注入 PATH / CCACHE_DIR）。
+# 两条可用性结论（能不能找到 ccache、当前环境实测能否命中）由 DevEnvCheck 的
+# ps-setup.py prepare 给出，这里只按结论开关，不重复判定。
 option(PS_USE_CCACHE "探测 ccache 并启用编译缓存" ON)
 # Linux 本地默认硬门禁；Windows 走 sccache 或系统未装 ccache 时保持可配置，
 # 需要严格验收时显式 -DPS_REQUIRE_CCACHE=ON。
@@ -59,23 +61,32 @@ if(PS_USE_CCACHE)
     # 不写 cache：旧 build 目录里残留的绝对路径在换机/换 HOME 后失效，
     # 会让 launcher 指向不存在的文件（表现为 /bin/sh: ccache: not found）。
     find_program(CCACHE_PROGRAM ccache NO_CACHE)
-    # 提示里给出可核对的绝对路径；PS_DEPS_ROOT 未导出时退回默认位置。
-    set(_ps_ccache_root "$ENV{PS_DEPS_ROOT}")
-    if(NOT _ps_ccache_root)
-        set(_ps_ccache_root "$ENV{HOME}/.ps-deps")
-    endif()
+    # 提示里给出可核对的绝对路径；根目录解析统一走 DepsRoot.cmake
+    # （PS_DEPS_ROOT 可覆盖，缺省按平台，Windows 上没有 HOME）。
+    ps_deps_root(_ps_ccache_root)
     set(_ps_ccache_hint "${_ps_ccache_root}/toolchain/ccache/bin/ccache")
     if(CCACHE_PROGRAM)
-        set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
-        set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
-        if(PS_REQUIRE_CCACHE)
-            _ps_check_ccache_usable("${CCACHE_PROGRAM}")
+        # 构建期不继承 configure 的进程环境，而 ccache 的缓存目录与策略文件（ccache.conf）
+        # 都在 CCACHE_DIR 下。直接把 ccache 当启动器，换个 shell 编译就会回落到默认目录、
+        # 丢策略；所以用 `cmake -E env CCACHE_DIR=<dir> ccache` 当启动器，把目录钉进
+        # 生成器写出来的每条编译命令（-DCCACHE_DIR / 环境变量 / 门禁算出的值一律生效）。
+        if(DEFINED ENV{CCACHE_DIR} AND NOT "$ENV{CCACHE_DIR}" STREQUAL "")
+            set(_ps_ccache_launcher "${CMAKE_COMMAND}" -E env "CCACHE_DIR=$ENV{CCACHE_DIR}" "${CCACHE_PROGRAM}")
+        else()
+            set(_ps_ccache_launcher "${CCACHE_PROGRAM}")
+        endif()
+        set(CMAKE_CXX_COMPILER_LAUNCHER ${_ps_ccache_launcher})
+        set(CMAKE_C_COMPILER_LAUNCHER ${_ps_ccache_launcher})
+        if(PS_REQUIRE_CCACHE AND NOT _PS_CCACHE_OK)
+            message(FATAL_ERROR
+                "[ccache] 门禁实测未通过：${_PS_CCACHE_MSG}（CCACHE_DIR=$ENV{CCACHE_DIR}）；"
+                "修法：python3 tools/ps-setup.py doctor；不用缓存就 -DPS_USE_CCACHE=OFF。")
         endif()
         message(STATUS "[ccache] 已启用：${CCACHE_PROGRAM}")
     elseif(PS_REQUIRE_CCACHE)
         message(STATUS "[ccache] 期望的 ccache：${_ps_ccache_hint}")
         message(FATAL_ERROR
-            "[ccache] PS_REQUIRE_CCACHE=ON 但没有探到 ccache；装法 tools/ubuntu-setup.sh --install-toolchain，"
+            "[ccache] PS_REQUIRE_CCACHE=ON 但没有探到 ccache；装法 python3 tools/ps-setup.py install cmake ninja ccache，"
             "非交互 shell 先 source \"${_ps_ccache_root}/env.sh\"；不用缓存就 -DPS_USE_CCACHE=OFF。")
     else()
         message(WARNING
@@ -88,6 +99,11 @@ endif()
 # 测试目标开关：日常迭代只编主程序，验收时开回来。
 # 关闭时 ctest 无用例可跑，这是预期行为。
 option(PS_BUILD_TESTS "构建测试目标（关闭可显著缩短日常迭代构建）" ON)
+
+# Windows 运行期依赖：Qt 的 DLL 在 <前缀>/bin，缺了 exe 双击即 0xc0000135。
+# 开：构建后跑 windeployqt 拷到输出目录；关：只在 VS 调试器环境里注入 PATH。
+# Linux 无此问题（Qt 由 rpath/系统库解决），该开关在非 Windows 上不起作用。
+option(PS_DEPLOY_QT "Windows：构建后用 windeployqt 部署 Qt 运行库" ON)
 
 # 顶层薄壳：src/ 工程本体 + 根 tests/ 测试。
 # 全部构建逻辑在 src/CMakeLists.txt（唯一事实源）。

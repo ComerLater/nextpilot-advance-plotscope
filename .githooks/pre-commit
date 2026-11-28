@@ -20,9 +20,17 @@
 set -u
 
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-[ -x "$ROOT/tools/format.sh" ] || exit 0
+[ -f "$ROOT/tools/format.sh" ] || exit 0
 
-(cd "$ROOT" && tools/format.sh --staged) || true
+# Windows 上 NTFS 不带执行位，用 -f 判定 + ps_run_script 的 bash 兜底，
+# 否则 hook 会"看起来存在但从没跑过"。
+. "$ROOT/tools/lib/ps-env.sh" 2>/dev/null || true
+
+if command -v ps_run_script >/dev/null 2>&1; then
+    (cd "$ROOT" && ps_run_script tools/format.sh --staged) || true
+else
+    (cd "$ROOT" && tools/format.sh --staged) || true
+fi
 
 # 整文件重排告警：暂存区的 C/C++ 改动行数与忽略空白后的行数差得离谱时提示。
 # 阈值与 tools/ci/local_preflight.sh 一致（>200 行且 >3 倍）。

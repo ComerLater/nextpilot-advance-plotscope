@@ -76,7 +76,7 @@ set(PS_DEPS_NANOARROW_URL
 | ccache       | `PS_USE_CCACHE`（默认 ON）  | 根 `CMakeLists.txt` 裸 `find_program(ccache)`，命中即设 `CMAKE_CXX_COMPILER_LAUNCHER`；探测不到就静默直连 |
 | 测试目标裁剪 | `PS_BUILD_TESTS`（默认 ON） | 关闭后不编测试目标，显著缩短日常迭代构建；此时 ctest 无用例可跑，属预期                                   |
 
-ccache 本身由 `tools/ubuntu-setup.sh --install-toolchain` 安装（自包含目录落
+ccache 本身由 `python3 tools/ps-setup.py install cmake ninja ccache` 安装（自包含目录落
 `~/.ps-deps/toolchain/ccache/`）。因为 `CMakeLists.txt` 里的探测靠 shell 的 `PATH`，
 换机器后重跑一次脚本即可，不需要改仓库配置。
 
@@ -102,13 +102,13 @@ ccache 会退回默认 `~/.cache/ccache`，上面那份策略（尤其 `sloppine
 钉进 conf——无论 shell 环境如何都落到统一缓存并读到同一份策略。preset 因此不再
 注入 `CCACHE_DIR`（避免硬编码根路径破坏自定义 `PS_DEPS_ROOT` 的用户）。
 
-**两层校验，别混为一谈：**`tools/ubuntu-setup.sh --check` 只检查工具实际安装路径是否存在、
+**两层校验，别混为一谈：**`python3 tools/ps-setup.py check` 只检查工具实际安装路径是否存在、
 版本是否达标；它不判断当前 shell 的 PATH（`--check` 可能不在编译终端里），也不做编译验证。
 `cmake configure` 面向“这次构建”，会检查当前进程的 `CCACHE_DIR` 是否存在且可写、
 `CCACHE_DISABLE` 是否关闭，并用 `CMAKE_C_COMPILER` 实编两次验证命中；Linux 本地
 `PS_REQUIRE_CCACHE` 默认 ON，不通过直接失败。
 
-脚本生成的 `ccache.conf`（`--install` 和 `--warm-cache` 都会确保它存在）：
+内核写的 `ccache.conf`（`install` 时确保它存在）：
 
 ```ini
 max_size = 5G
@@ -158,7 +158,7 @@ export CCACHE_MAXSIZE=5G
 
 - `base_dir` 取**所有 worktree 的共同祖先**（`/home/user`），这样 `wt-a/build`、`wt-b/build`
   里的路径会被折算成同一套相对路径，条目可互相复用。
-- 该值同样建议写进 `CMakePresets.json` 的 `environment` 或由 `tools/ubuntu-setup.sh` 注入，
+- 该值同样建议写进 `CMakePresets.json` 的 `environment` 或由 `tools/ps-setup.py` 注入，
   并**在非交互构建脚本里显式 export**（不依赖 `.bashrc`）。
 - 校验：`ccache -p | grep -E "cache_dir|base_dir"` 不得出现 `/runtime`、`/tmp`、`/var/tmp`。
 
@@ -185,26 +185,22 @@ export CCACHE_MAXSIZE=5G
 - `3rdparty`（`saribbon` / `lua` / `ads`）：各自源目录不同、参数不同，命中率天然偏低。
 - 改公共头文件：包含它的 TU 全部失效，这是正确行为，不是缓存失效。
 
-### 预热缓存：--warm-cache
+### 预热缓存（手动跑一次）
 
 ccache 的收益要等缓存里真有过东西才兑现。换机器、清过缓存目录、CI 冷 runner
 都是空缓存，此时第一次全量构建仍然要跑满全程。
 
 ```bash
-tools/ubuntu-setup.sh --warm-cache          # 跑一次全量构建把缓存填满
-tools/ubuntu-setup.sh --warm-cache-force  # 缓存已达标也强制重跑
-tools/ubuntu-setup.sh --install-with-warm-cache  # 装环境时顺手预热
+cmake --preset default && cmake --build --preset default   # 填满 Release 缓存
+cmake --preset debug && cmake --build --preset debug       # 填满 Debug 缓存
 ```
 
-不预热也不会坏，只是第一次构建仍是冷构建。脚本用 `ccache --print-stats` 的
-`cache_size_kibibyte` 判断缓存体积，阈值在 `deps-version.json` 的
-`toolchains.ccache.warm_min_mb`（默认 12MB，本仓库一次全量构建约产生 16.5MB）。
+不预热也不会坏，只是第一次构建仍是冷构建。环境脚本不再自动判定预热结果：
+需要确认时自己看 `ccache --print-stats` 的 `cache_size_kibibyte`
+（本仓库一次全量构建约产生 16.5MB，低于这个量级说明还是空缓存）。
 
-判定还要求**预热标记与当前源码版本一致**
-（`~/.ps-deps/state/ccache-warm.default.stamp` 与 `.debug.stamp`）。
-只看体积不够：缓存目录是全局共享的，别人留下的几百 MB 缓存也会让体积达标，
-但里面未必有本仓库的条目——那种情况下日常构建照样 miss，提示就失效了。
-标记绑定 git HEAD + 工作区差异 + 未跟踪文件列表，任何一处改动都会让提示重新出现。
+注意缓存是全局共享的：别人留下的几百 MB 缓存也会让体积看着达标，
+但里面未必有本仓库的条目——那种情况下日常构建照样 miss。
 
 预热必须遵守三条，否则等于白烧几分钟（详见"配置分三层"与下方实测）：
 
@@ -275,8 +271,8 @@ ccache --print-stats | grep -E "direct_cache_hit|preprocessed_cache_hit|cache_mi
 
 ## 工具安装镜像（rustup / pip / Qt / apt）
 
-源码依赖走构建期的 `FetchContent` 镜像（上文）；而**工具本身**的安装由 `tools/ubuntu-setup.sh` 负责，
-下载地址同样集中在 `deps-version.json → mirrors`。每个工具给一组 URL，脚本按顺序轮询、第一个可达的即用：
+源码依赖走构建期的 `FetchContent` 镜像（上文）；而**工具本身**的安装由 `tools/ps-setup.py` 负责，
+下载地址集中在各 Tool 类的 `urls`（代码常量）。每个工具给一组 URL，脚本按顺序轮询、第一个可达的即用：
 
 | 工具   | 注入方式                                                | 镜像列表（节选，国内在前、官方兜底）         |
 | ------ | ------------------------------------------------------- | -------------------------------------------- |
@@ -288,7 +284,7 @@ ccache --print-stats | grep -E "direct_cache_hit|preprocessed_cache_hit|cache_mi
 **轮询机制**：6s 超时逐个探测，某源慢/不可达自动跳下一个，全部不可达用第一个并报真实错误。
 这直接解决国内网络下 rustup 卡在下载 toolchain、pip/Qt/apt 官方源超时的问题
 （实测 `static.rust-lang.org`、`pypi.org`、`archive.ubuntu.com` 在国内环境均超时，镜像全通）。
-换源或调优先级只改 `deps-version.json` 的数组顺序，脚本无需改。
+换源或调优先级只改对应 Tool 类的数组顺序，脚本无需改。
 pip 用户在 `pip.conf` 显式配过 index 时脚本不覆盖；apt 仅对 Ubuntu 生成临时源。
 
 ## 排查

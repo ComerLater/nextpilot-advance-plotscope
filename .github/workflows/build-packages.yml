@@ -71,7 +71,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@1.93.0
 
-      - name: Install Qt 6.2.4
+      - name: Install Qt 6.8.3
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.PS_QT_VER }}
@@ -203,7 +203,7 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Install Qt 6.2.4 (MSVC)
+      - name: Install Qt 6.8.3 (MSVC)
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.PS_QT_VER }}
@@ -287,7 +287,7 @@ jobs:
   macos:
     # Two architectures in one matrix. An Intel Mac can only launch an x86_64 .app and an Apple
     # Silicon Mac an arm64 one, so each leg builds natively; macos-13/14 are retired in 2026,
-    # which makes macos-15-intel the only Intel label left. The Qt 6.2.4 clang_64 package is
+    # which makes macos-15-intel the only Intel label left. The Qt 6.8.3 clang_64 package is
     # universal, so both legs install the same Qt.
     runs-on: ${{ matrix.os }}
     timeout-minutes: 150
@@ -332,7 +332,7 @@ jobs:
           command -v ninja || HOMEBREW_NO_AUTO_UPDATE=1 brew install ninja
           xcodebuild -version
 
-      - name: Install Qt 6.2.4
+      - name: Install Qt 6.8.3
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.PS_QT_VER }}

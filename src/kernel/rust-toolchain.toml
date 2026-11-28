@@ -1,4 +1,4 @@
 [toolchain]
-# Rust 工具链版本唯一源：cargo 直读本文件，tools/ubuntu-setup.sh 也读它装 rustup。
-# 与 deps-version.json 的 toolchain.rust.pin 必须一致（--check 会校验）。
+# Rust 工具链版本唯一源：cargo 直读本文件，tools/ps-setup.py 的 RustTool 默认值与之相同。
+# 与 tools/ps-setup.py 里 RustTool 的 version 必须一致（toolchain 门禁会比对）。
 channel = "1.93.0"
