@@ -77,10 +77,15 @@ if(PS_USE_CCACHE)
         endif()
         set(CMAKE_CXX_COMPILER_LAUNCHER ${_ps_ccache_launcher})
         set(CMAKE_C_COMPILER_LAUNCHER ${_ps_ccache_launcher})
-        if(PS_REQUIRE_CCACHE AND NOT _PS_CCACHE_OK)
+        # 硬门禁只认"实测过且结论为否"：DevEnvCheck 在 CI 下提前返回，_PS_CCACHE_OK
+        # 不会被定义，把"没实测"当"未通过"会让 CI 必然误红。
+        if(PS_REQUIRE_CCACHE AND DEFINED _PS_CCACHE_OK AND NOT _PS_CCACHE_OK)
             message(FATAL_ERROR
                 "[ccache] 门禁实测未通过：${_PS_CCACHE_MSG}（CCACHE_DIR=$ENV{CCACHE_DIR}）；"
                 "修法：python3 tools/ps-setup.py doctor；不用缓存就 -DPS_USE_CCACHE=OFF。")
+        endif()
+        if(PS_REQUIRE_CCACHE AND NOT DEFINED _PS_CCACHE_OK)
+            message(STATUS "[ccache] 未跑环境实测（CI 跳过 prepare），跳过硬门禁：仅确认 ${CCACHE_PROGRAM} 存在")
         endif()
         message(STATUS "[ccache] 已启用：${CCACHE_PROGRAM}")
     elseif(PS_REQUIRE_CCACHE)

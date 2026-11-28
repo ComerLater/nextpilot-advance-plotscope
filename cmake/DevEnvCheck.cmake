@@ -24,7 +24,9 @@ include_guard(GLOBAL)
 include("${CMAKE_SOURCE_DIR}/cmake/DepsRoot.cmake")
 
 if(DEFINED ENV{CI} AND NOT "$ENV{CI}" STREQUAL "")
-    message(STATUS "[dev-env] CI 环境，跳过本地开发环境检查")
+    # 提前返回意味着第 3 步的 _PS_CCACHE_OK / _PS_CCACHE_MSG 不会被定义；
+    # CMakeLists 的硬门禁必须把"没实测"与"实测未通过"分开判。
+    message(STATUS "[dev-env] CI 环境，跳过本地开发环境检查（ccache 无实测结论）")
     return()
 endif()
 
