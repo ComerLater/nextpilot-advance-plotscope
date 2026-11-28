@@ -135,6 +135,11 @@ struct DumpSink
 
 int dumpWriter(lua_State *, const void *p, std::size_t sz, void *ud)
 {
+    // Lua 5.5 用最后一次 writer 调用（p == nullptr, sz == 0）标记 dump 结束。
+    if (p == nullptr || sz == 0)
+    {
+        return 0; // 0 = 写入成功
+    }
     auto *s = static_cast<DumpSink *>(ud);
     const auto *b = static_cast<const char *>(p);
     s->data.append(b, sz);
@@ -149,7 +154,7 @@ std::unordered_map<std::string, std::string> g_bytecode;
 bool compileOnce(const std::string &code, std::string &bytecode, std::string &err)
 {
     MemBudget budget;
-    lua_State *L = lua_newstate(budgetAlloc, &budget);
+    lua_State *L = lua_newstate(budgetAlloc, &budget, luaL_makeseed(NULL));
     if (!L)
     {
         err = "lua 状态创建失败（内存预算不足）";
@@ -213,7 +218,7 @@ bool runDigestScript(const std::string &code, const ScriptDigestInput &in, uint6
         return false;
 
     MemBudget budget;
-    lua_State *L = lua_newstate(budgetAlloc, &budget);
+    lua_State *L = lua_newstate(budgetAlloc, &budget, luaL_makeseed(NULL));
     if (!L)
     {
         err = "lua 状态创建失败（内存预算不足）";

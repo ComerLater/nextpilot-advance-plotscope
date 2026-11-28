@@ -121,8 +121,8 @@ include("${CMAKE_SOURCE_DIR}/cmake/RuntimeDeploy.cmake")  # 提供 ps_deploy_win
 set(PS_THIRDPARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty"
     CACHE PATH "第三方锁版本库源码根目录")
 
-# Lua 5.4.4（MIT）—— 脚本后端，源码编库（目标 lua::lua），Linux/Windows 吃同一份输入
-add_subdirectory("${PS_THIRDPARTY_DIR}/lua-5.4" "${CMAKE_CURRENT_BINARY_DIR}/3rdparty/lua"
+# Lua 5.5.1（MIT）—— 脚本后端，源码编库（目标 lua::lua），Linux/Windows 吃同一份输入
+add_subdirectory("${PS_THIRDPARTY_DIR}/lua" "${CMAKE_CURRENT_BINARY_DIR}/3rdparty/lua"
                  EXCLUDE_FROM_ALL)
 
 add_subdirectory(libs/foundation)

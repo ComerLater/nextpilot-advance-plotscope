@@ -28,11 +28,11 @@ add_library(ps_protocol STATIC
     include/protocol/ScriptEngine.h
 )
 
-# 脚本后端：仓库内 src/3rdparty/lua-5.4（源码编库，目标 lua::lua），不走系统包。
+# 脚本后端：仓库内 src/3rdparty/lua（源码编库，目标 lua::lua），不走系统包。
 # 目标由 ng 顶层 add_subdirectory 提供；路径、平台差异（m/libdl）都在 lua 目标自己身上，
 # 这里只管链接，不再出现任何 ../../../deps 之类写死的路径。
 if(NOT TARGET lua)
-    message(FATAL_ERROR "缺少 lua::lua 目标：ng/CMakeLists.txt 需要先引入 3rdparty/lua-5.4")
+    message(FATAL_ERROR "缺少 lua::lua 目标：ng/CMakeLists.txt 需要先引入 3rdparty/lua")
 endif()
 target_link_libraries(ps_protocol PUBLIC lua::lua)
 target_compile_definitions(ps_protocol PUBLIC PS_PROTOCOL_LUA=1)

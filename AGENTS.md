@@ -23,7 +23,7 @@
 - 构建：仓库顶层 `CMakeLists.txt`（project PlotScope），构建目录 `build-debug` / `build-release`
 - 测试：根 `tests/`（`ctest`，fixture 在 `tests/fixture/`）
 - Rust 内核：`src/kernel`（cargo 编 `ps-abi`，构建入口在顶层 CMake）
-- 第三方锁版本库：`src/3rdparty`（lua-5.4 / saribbon / ads / mavlink）
+- 第三方锁版本库：`src/3rdparty`（lua / saribbon / ads / mavlink）
 - 受管环境根：`~/.ps-deps`（仓库外；工具链 / bin / caches，由 `python3 tools/ps-setup.py install` 生成）
 
 ## 2. 文档边界

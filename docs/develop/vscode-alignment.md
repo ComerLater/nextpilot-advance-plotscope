@@ -92,7 +92,7 @@
 
 ### 第三方依赖白名单
 
-`src/3rdparty/` 现只有：`ads`（Qt Advanced Docking System，vendored，基线提交见 `src/3rdparty/ads/VENDOR.md`）、`saribbon`、`lua-5.4`、`mavlink`。
+`src/3rdparty/` 现只有：`ads`（Qt Advanced Docking System，vendored，基线提交见 `src/3rdparty/ads/VENDOR.md`）、`saribbon`、`lua`、`mavlink`。
 
 - 新增任何 **UI 类**第三方库 = 先改本节白名单并取得评审同意，**不许在改动里顺手引入**；
 - 数据/协议类库（如新的日志格式解析器）按模块边界单独评审，不进壳。
