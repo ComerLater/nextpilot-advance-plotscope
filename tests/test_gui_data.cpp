@@ -141,6 +141,11 @@ int main(int argc, char *argv[])
         OK("data 段：data.reload 按源 id 重载成功，数据集 id 稳定");
     }
 
+    // 退出前先拆模块：本函数里 window 先于 application 析构，而 ~App 还会再跑一次
+    // deactivateAll。不先拆，那次 deactivateAll 就落到已析构的 ExtensionService 上
+    // （云端实测 SIGSEGV：~App → ~RuntimeHost → deactivateAll → getActivatedExtensions）。
+    application.host().deactivateAll();
+
     fprintf(stdout, "[shell+data] 模块段通过\n");
     return 0;
 }
