@@ -2757,15 +2757,23 @@ int main(int argc, char *argv[])
         // 真实推送路径：AxesView::setCursorTime → cursorTimeChanged → PlotWorkspace
         // → hub `plot.axes.cursor`；文案形如 "游标: 1.25 s"（两位小数）。
         // 节流是 10Hz 且带尾沿补发：转一下事件循环等补发定时器把终值落下去。
+        // 宽限期取 2s（节流窗口 100ms 的 20 倍）：并行 ctest（-j N）+ ASan 下
+        // 定时器会被拖到几百毫秒，200ms 墙钟会让断言和机器负载赛跑——CI 曾在此偶发红，
+        // 失败现场状态栏停在声明的初始值「游标: --」，即补发还没出定时器就又断言了。
         {
             QElapsedTimer waiter;
             waiter.start();
             auto cur = [&]() { return window.context()->statusText(QStringLiteral("plot.axes.cursor")); };
-            while (waiter.elapsed() < 200 && !cur().contains(QStringLiteral("1.25")))
+            while (waiter.elapsed() < 2000 && !cur().contains(QStringLiteral("1.25")))
                 QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
         }
         const QString cursorText =
             window.context()->statusText(QStringLiteral("plot.axes.cursor"));
+        // 失败时把现场值打出来：CHECK 只回显表达式，看不出是默认占位还是别的文案。
+        if (!cursorText.contains(QStringLiteral("1.25")))
+            fprintf(stderr, "[diag] plot.axes.cursor=\"%s\" canvas=%p activeCanvas=%p visible=%d cursorTime=%.6f\n",
+                    cursorText.toUtf8().constData(), static_cast<void *>(canvas),
+                    static_cast<void *>(workspace->activeCanvas()), canvas->isVisible() ? 1 : 0, canvas->cursorTime());
         CHECK(!cursorText.isEmpty());
         CHECK(cursorText.startsWith(QStringLiteral("游标: ")));
         CHECK(cursorText.contains(QStringLiteral("1.25")));

@@ -106,16 +106,17 @@ const ParserEntry *ParserHub::findByExtension(const QString &suffix)
     if (!key.startsWith(QLatin1Char('.')))
         key.prepend(QLatin1Char('.'));
 
-    // 精确匹配优先；同后缀多解析器时取先登记者（values() 保序）。
-    for (const ParserEntry &e : store().entries.values())
+    // 精确匹配优先；同后缀多解析器时取先登记者。
+    // 遍历用 keys()（插入顺序）+ find()（表内地址）：values() 返回副本，返回其元素地址会悬空。
+    for (const QString &id : store().entries.keys())
     {
-        if (!e.info.extensions || !*e.info.extensions)
+        const ParserEntry *e = store().entries.find(id);
+        if (!e || !e->info.extensions || !*e->info.extensions)
             continue;
-        const QStringList exts = QString::fromUtf8(e.info.extensions)
-                                     .split(QLatin1Char(','), Qt::SkipEmptyParts);
+        const QStringList exts = QString::fromUtf8(e->info.extensions).split(QLatin1Char(','), Qt::SkipEmptyParts);
         for (const QString &ext : exts)
             if (ext.trimmed().toLower() == key)
-                return &e;
+                return e;
     }
     return nullptr;
 }
@@ -124,19 +125,21 @@ const ParserEntry *ParserHub::findBySniff(const QByteArray &head)
 {
     if (head.isEmpty())
         return nullptr;
-    for (const ParserEntry &e : store().entries.values())
+    // keys() + find()：与 findByExtension 同源，避免返回副本元素地址。
+    for (const QString &id : store().entries.keys())
     {
-        if (!e.info.can_sniff || !e.vtable->sniff)
+        const ParserEntry *e = store().entries.find(id);
+        if (!e || !e->info.can_sniff || !e->vtable->sniff)
             continue;
         // 用一个临时实例做探测：探测不应改变解析器状态。
-        void *ctx = e.vtable->create();
+        void *ctx = e->vtable->create();
         if (!ctx)
             continue;
-        const int32_t ok = e.vtable->sniff(ctx, reinterpret_cast<const uint8_t *>(head.constData()),
-                                           static_cast<uint32_t>(head.size()));
-        e.vtable->destroy(ctx);
+        const int32_t ok = e->vtable->sniff(ctx, reinterpret_cast<const uint8_t *>(head.constData()),
+                                            static_cast<uint32_t>(head.size()));
+        e->vtable->destroy(ctx);
         if (ok > 0)
-            return &e;
+            return e;
     }
     return nullptr;
 }
@@ -144,12 +147,12 @@ const ParserEntry *ParserHub::findBySniff(const QByteArray &head)
 QStringList ParserHub::unresolvedExtensions()
 {
     QStringList out;
-    for (const ParserEntry &e : store().entries.values())
+    for (const QString &id : store().entries.keys())
     {
-        if (!e.info.extensions || !*e.info.extensions)
+        const ParserEntry *e = store().entries.find(id);
+        if (!e || !e->info.extensions || !*e->info.extensions)
             continue;
-        const QStringList exts = QString::fromUtf8(e.info.extensions)
-                                     .split(QLatin1Char(','), Qt::SkipEmptyParts);
+        const QStringList exts = QString::fromUtf8(e->info.extensions).split(QLatin1Char(','), Qt::SkipEmptyParts);
         for (const QString &ext : exts)
         {
             const QString key = ext.trimmed().toLower();
