@@ -197,7 +197,7 @@ int main(int argc, char *argv[])
                                                                    &&application.commands()));
     CHECK(nextpilot::plotscope::ext::automotive::installAutomotiveViewFactories(
         &application.services(), &application.context(), &&application.commands()));
-    &application.services()->registerSingleton(
+    application.services().registerSingleton(
         QStringLiteral("report.exportHost"), &reportExportHost, QStringLiteral("assembly"), 1,
         nextpilot::plotscope::instantiation::ServiceTypeTag<nextpilot::plotscope::report::IReportExportHost>::value());
     window.build(&application.services(), application.commands(), &application.extensions(),
@@ -270,7 +270,7 @@ int main(int argc, char *argv[])
         // 域，模块不认识 QWidget，headless 里也不该出现任何界面语义。
         // 壳级动作现在只落 MenuRegistry（menubar/<pageId>，VSCode appendMenuItem 口径）；
         // 读回按 group 聚合，不再经插槽容器。
-        auto *menus = &application.commands().menuRegistry();
+        auto *menus = &application.menuRegistry();
         CHECK(menus != nullptr);
         const auto fileItems = menus->getMenuItems(MenuId::menubar(QStringLiteral("ribbon.page.file")));
         bool hasSettingsAction = false;
@@ -293,11 +293,11 @@ int main(int argc, char *argv[])
     // （menubar/<pageId>，按 IMenuItem.group 聚合）。壳不再维护插槽容器。
     {
         auto *ribbonSvc = &application.services()
-                              ? &application.services()->getService<nextpilot::plotscope::workbench::IRibbonService>(
+                              ? application.services().getService<nextpilot::plotscope::workbench::IRibbonService>(
                                     QStringLiteral("ribbon.readback"))
                               : nullptr;
         CHECK(ribbonSvc != nullptr);
-        auto *menus = &application.commands().menuRegistry();
+        auto *menus = &application.menuRegistry();
         CHECK(menus != nullptr);
         const auto pages = ribbonSvc->ribbonPages();
         CHECK(!pages.isEmpty());
@@ -582,11 +582,11 @@ int main(int argc, char *argv[])
     // 插槽声明了页签/分组；动作由模块在 onAttach 里登记
     // 页/组声明读回（contributes.ribbonPages/ribbonGroups）；动作读回（MenuRegistry 的 menubar/<pageId>）。
     auto *ribbonSvc = &application.services()
-                          ? &application.services()->getService<nextpilot::plotscope::workbench::IRibbonService>(
+                          ? application.services().getService<nextpilot::plotscope::workbench::IRibbonService>(
                                 QStringLiteral("ribbon.readback"))
                           : nullptr;
     CHECK(ribbonSvc != nullptr);
-    auto *menusReg = &application.commands().menuRegistry();
+    auto *menusReg = &application.menuRegistry();
     CHECK(menusReg != nullptr);
     const auto groupActions = [&](const QString &groupId) {
         QList<IMenuItem> out;
@@ -822,7 +822,7 @@ int main(int argc, char *argv[])
     // "12 个业务 id 全走 views/editor 声明且 owner 归模块"——断言见下。
     // A2c 判据：plot.properties 归位 owner plot。
     auto *plotViewsSvc = &application.services()
-                             ? &application.services()->getService<nextpilot::plotscope::workbench::IViewsService>(
+                             ? application.services().getService<nextpilot::plotscope::workbench::IViewsService>(
                                    QStringLiteral("views.readback"))
                              : nullptr;
     CHECK(plotViewsSvc && plotViewsSvc->viewForId(QStringLiteral("plot.properties")).owner == QStringLiteral("plot"));
@@ -842,7 +842,7 @@ int main(int argc, char *argv[])
                   plotViewsSvc->viewForId(QString::fromLatin1(ov.id)).owner == QString::fromLatin1(ov.owner));
 
         auto *editorsSvc = &application.services()
-                               ? &application.services()->getService<nextpilot::plotscope::workbench::IEditorService>(
+                               ? application.services().getService<nextpilot::plotscope::workbench::IEditorService>(
                                      QStringLiteral("editor.readback"))
                                : nullptr;
         CHECK(editorsSvc != nullptr);
@@ -881,7 +881,7 @@ int main(int argc, char *argv[])
     // contributes.views 单一声明通道——这里锁住 owner 归属与 headless 可查。
     {
         auto *autoViewsSvc = &application.services()
-                                 ? &application.services()->getService<nextpilot::plotscope::workbench::IViewsService>(
+                                 ? application.services().getService<nextpilot::plotscope::workbench::IViewsService>(
                                        QStringLiteral("views.readback"))
                                  : nullptr;
         CHECK(autoViewsSvc &&
@@ -952,12 +952,12 @@ int main(int argc, char *argv[])
     // 同一 view 二次 openView 仍是同一实例。缺一条打回②。
     {
         auto *viewsSvc = &application.services()
-                             ? &application.services()->getService<nextpilot::plotscope::workbench::IViewsService>(
+                             ? application.services().getService<nextpilot::plotscope::workbench::IViewsService>(
                                    QStringLiteral("views.readback"))
                              : nullptr;
         CHECK(viewsSvc != nullptr);
         auto *reg = &application.services()
-                        ? &application.services()->getService<nextpilot::plotscope::registry::ViewRegistry>(
+                        ? application.services().getService<nextpilot::plotscope::registry::ViewRegistry>(
                               QStringLiteral("views.registry"))
                         : nullptr;
         CHECK(reg != nullptr);
@@ -1404,7 +1404,7 @@ int main(int argc, char *argv[])
         //  a) 声明命中：data.datasetTree owner == "data"（模块自声明，壳不代声明）；
         //  b) 不同 ref 各开一页签（复用语义归 provider：uri 相等才复用）。
         auto *viewsSvc = &application.services()
-                             ? &application.services()->getService<nextpilot::plotscope::workbench::IViewsService>(
+                             ? application.services().getService<nextpilot::plotscope::workbench::IViewsService>(
                                    QStringLiteral("views.readback"))
                              : nullptr;
         CHECK(viewsSvc != nullptr);
@@ -2570,7 +2570,7 @@ int main(int argc, char *argv[])
         Theme *tm = window.themeManager();
         auto *cfgSvc =
             &application.services()
-                ? &application.services()->getService<IConfigurationService>(QStringLiteral("configuration.readback"))
+                ? application.services().getService<IConfigurationService>(QStringLiteral("configuration.readback"))
                 : nullptr;
         CHECK(tm != nullptr);
         CHECK(cfgSvc != nullptr);
@@ -2599,7 +2599,7 @@ int main(int argc, char *argv[])
         using SettingsScope = nextpilot::plotscope::context::SettingsScope;
         auto *cfgSvc =
             &application.services()
-                ? &application.services()->getService<IConfigurationService>(QStringLiteral("configuration.readback"))
+                ? application.services().getService<IConfigurationService>(QStringLiteral("configuration.readback"))
                 : nullptr;
         CHECK(cfgSvc != nullptr);
         if (cfgSvc)
@@ -3160,11 +3160,11 @@ int main(int argc, char *argv[])
     {
         // 页/组声明读回（contributes.ribbonPages/ribbonGroups）；动作读回（MenuRegistry 的 menubar/<pageId>）。
         auto *ribbonSvc = &application.services()
-                              ? &application.services()->getService<nextpilot::plotscope::workbench::IRibbonService>(
+                              ? application.services().getService<nextpilot::plotscope::workbench::IRibbonService>(
                                     QStringLiteral("ribbon.readback"))
                               : nullptr;
         CHECK(ribbonSvc != nullptr);
-        auto *menusReg = &application.commands().menuRegistry();
+        auto *menusReg = &application.menuRegistry();
         CHECK(menusReg != nullptr);
         const auto groupActions = [&](const QString &groupId) {
             QList<IMenuItem> out;
@@ -3203,11 +3203,11 @@ int main(int argc, char *argv[])
         auto &settings = application.context().settings();
         // 页/组声明读回（contributes.ribbonPages/ribbonGroups）；动作读回（MenuRegistry 的 menubar/<pageId>）。
         auto *ribbonSvc = &application.services()
-                              ? &application.services()->getService<nextpilot::plotscope::workbench::IRibbonService>(
+                              ? application.services().getService<nextpilot::plotscope::workbench::IRibbonService>(
                                     QStringLiteral("ribbon.readback"))
                               : nullptr;
         CHECK(ribbonSvc != nullptr);
-        auto *menusReg = &application.commands().menuRegistry();
+        auto *menusReg = &application.menuRegistry();
         CHECK(menusReg != nullptr);
         const auto groupActions = [&](const QString &groupId) {
             QList<IMenuItem> out;

@@ -210,7 +210,7 @@ int main(int argc, char *argv[])
     // "pure virtual method called" 直接 abort）。故在 host 之后声明一个守卫，
     // 让本块退出时先拆模块、再让 host 死亡。
     nextpilot::plotscope::gui::ReportExportHost reportExportHost(application.context());
-    &application.services()->registerSingleton(
+    application.services().registerSingleton(
         QStringLiteral("report.exportHost"), &reportExportHost, QStringLiteral("assembly"), 1,
         nextpilot::plotscope::instantiation::ServiceTypeTag<nextpilot::plotscope::report::IReportExportHost>::value());
     struct DeactivateBeforeHostDeath

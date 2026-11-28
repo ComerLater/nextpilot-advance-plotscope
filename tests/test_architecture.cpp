@@ -297,7 +297,7 @@ int main(int argc, char **argv)
     // 「新增 module / extension 不修改其他代码」的直接证明。
     App application;
     FakeReportExportHost fakeReportHost(application.context());
-    &application.services()->registerSingleton(
+    application.services().registerSingleton(
         QStringLiteral("report.exportHost"), &fakeReportHost, QStringLiteral("test"), 1,
         nextpilot::plotscope::instantiation::ServiceTypeTag<nextpilot::plotscope::report::IReportExportHost>::value());
     const auto errors = application.startup(true);

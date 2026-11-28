@@ -80,7 +80,7 @@ int main(int argc, char *argv[])
     // data/plot/script/protocol/analysis/report 六页归各业务模块，业务出壳后本就不该出现。
     // 所以这里断言"壳拥有的正好是这 3 页"，而不是全产品的 9 页——后者是模块挂回后的事。
     {
-        auto *ribbonSvc = &application.services()->getService<IRibbonService>(QStringLiteral("ribbon.readback"));
+        auto *ribbonSvc = application.services().getService<IRibbonService>(QStringLiteral("ribbon.readback"));
         CHECK(ribbonSvc != nullptr);
         const auto pages = ribbonSvc->ribbonPages();
         CHECK(pages.size() == 3);
@@ -108,7 +108,7 @@ int main(int argc, char *argv[])
 
     // --- E) 菜单面：壳标准动作落 MenuRegistry（menubar/<pageId>），不靠业务 ---
     {
-        auto *menus = &application.commands().menuRegistry();
+        auto *menus = &application.menuRegistry();
         CHECK(menus != nullptr);
         // 壳骨架动作（新建/打开/导出/退出/设置等）落在文件页与视图页。
         int shellItems = 0;

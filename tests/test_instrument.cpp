@@ -330,7 +330,7 @@ int main(int argc, char *argv[])
     CHECK(nextpilot::plotscope::plot::installPlotViewFactories(&application.services(), &application.context(),
                                                                &&application.commands()));
     auto *plotEditorSvc = &application.services()
-                              ? &application.services()->getService<nextpilot::plotscope::workbench::IEditorService>(
+                              ? application.services().getService<nextpilot::plotscope::workbench::IEditorService>(
                                     QStringLiteral("editor.readback"))
                               : nullptr;
     CHECK(plotEditorSvc != nullptr);

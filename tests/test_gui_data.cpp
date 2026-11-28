@@ -58,7 +58,7 @@ int main(int argc, char *argv[])
     CHECK(nextpilot::plotscope::assembly::declareBuiltinWorkbenchViews(&application.services()));
     CHECK(nextpilot::plotscope::gui::installBuiltinWorkbenchViewProviders(&application.services()));
     CHECK(nextpilot::plotscope::data::installDataViewFactories(&application.services(), &application.context(),
-                                                               &&application.commands()));
+                                                               &application.commands()));
 
     window.build(&application.services(), application.commands(), &application.extensions(),
                  application.menuRegistry());

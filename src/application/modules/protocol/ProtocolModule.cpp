@@ -1,3 +1,8 @@
+#include "AppContext.h"
+#include "DatasetRegistry.h"
+#include "SourceRegistry.h"
+#include "IngestPipeline.h"
+#include "ExtensionRegistry.h"
 #include "ProtocolModule.h"
 #include "Intent.h"
 
