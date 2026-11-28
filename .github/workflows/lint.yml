@@ -319,11 +319,16 @@ jobs:
           # tests 必须 ON：编译数据库是按目标导出的，tests=OFF 时 tests/*.cpp 没有条目，
           # clang-tidy 会用空参数兜底，把正交测试文件报成 "App.h file not found" +
           # 满屏伪 "not initialized"。configure 不编译，开 tests 只是多导出几份命令。
+          # ccache 显式关：本 job 只生成编译数据库、不产生任何 .o，缓存对它没有意义；
+          # 而仓库的 ccache 门禁在 CI 下是硬失败（PS_REQUIRE_CCACHE=ON 且 PATH 上没有
+          # ccache 就 FATAL_ERROR）。这里没装 ccache（runner 镜像也不保证有），
+          # 不关就会在只改 .cpp 的 PR 上稳定红在这一步。
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" \
             -DPS_BUILD_TESTS=ON \
-            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DPS_USE_CCACHE=OFF
 
       - name: Run clang-tidy on changed files
         if: steps.changed.outputs.files != ''
