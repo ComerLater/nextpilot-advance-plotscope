@@ -233,7 +233,7 @@ int main(int argc, char *argv[])
     // 对话框动作由组合根经装配层助手（DialogLaunch.h）落到模块呈现层注册的启动器。
     window.setDialogLauncher([&window, &application](const QString &actionId) {
         nextpilot::plotscope::assembly::launchDialogById(actionId, &window, application.context(),
-                                                         &application.commands());
+                                                         application.commands());
         return true;
     });
 
