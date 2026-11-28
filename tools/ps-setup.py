@@ -2085,80 +2085,86 @@ class EnvFileWriter:
         self.p = EnvPathLayout(root)
 
     @staticmethod
+    def _find_vcvars64() -> Path | None:
+        """找一份可用的 vcvars64.bat；VS 选择、路径拼接只在这里做一次。"""
+        if not PLATFORM.is_windows:
+            return None
+        for vs in _win_vs_installs():
+            candidate = vs / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
+            if candidate.is_file():
+                return candidate
+        return None
+
+    @staticmethod
     def _msvc_env() -> dict[str, str]:
         """Windows：运行 vcvars64 并取回它设置的完整环境（PATH / INCLUDE / LIB / LIBPATH 等）。
         Linux 没有 MSVC，返回空；找不到 VS 也返回空，由 check 报缺，不在生成 env 时抛异常。"""
-        if not PLATFORM.is_windows:
+        vcvars = EnvFileWriter._find_vcvars64()
+        if vcvars is None:
             return {}
-        for vs in _win_vs_installs():
-            vcvars = vs / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
-            if not vcvars.is_file():
-                continue
+        try:
+            # 直接给 cmd /c 传带引号的长命令会被 /s 的引号规则吃掉；落一个临时 .bat
+            # 再执行，路径里有空格或括号也稳。
+            with tempfile.NamedTemporaryFile("w", suffix=".bat", delete=False, encoding="mbcs", errors="replace") as fh:
+                fh.write("@echo off\n")
+                fh.write(f'call "{vcvars}" >nul 2>&1\n')
+                fh.write("if errorlevel 1 exit /b 1\n")
+                fh.write("set\n")
+                bat = fh.name
             try:
-                # 直接给 cmd /c 传带引号的长命令会被 /s 的引号规则吃掉；落一个临时 .bat
-                # 再执行，路径里有空格或括号也稳。
-                with tempfile.NamedTemporaryFile(
-                    "w", suffix=".bat", delete=False, encoding="mbcs", errors="replace"
-                ) as fh:
-                    fh.write("@echo off\n")
-                    fh.write(f'call "{vcvars}" >nul 2>&1\n')
-                    fh.write("if errorlevel 1 exit /b 1\n")
-                    fh.write("set\n")
-                    bat = fh.name
-                try:
-                    r = subprocess.run(
-                        [os.environ.get("ComSpec", "cmd.exe"), "/d", "/c", bat],
-                        capture_output=True,
-                        text=True,
-                        timeout=60,
-                    )
-                finally:
-                    Path(bat).unlink(missing_ok=True)
-            except (OSError, UnicodeError, subprocess.TimeoutExpired):
+                r = subprocess.run(
+                    [os.environ.get("ComSpec", "cmd.exe"), "/d", "/c", bat],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+            finally:
+                Path(bat).unlink(missing_ok=True)
+        except (OSError, UnicodeError, subprocess.TimeoutExpired):
+            return {}
+        if r.returncode != 0:
+            return {}
+        env: dict[str, str] = {}
+        for line in r.stdout.splitlines():
+            if "=" not in line:
                 continue
-            if r.returncode != 0:
-                continue
-            env: dict[str, str] = {}
-            for line in r.stdout.splitlines():
-                if "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                if k and not k.startswith("="):
-                    env[k] = v
-            # vcvars 的 `set` 会把当前进程的整份环境都吐出来（CUA_*、PSModulePath 等）。
-            # 只留编译器/链接器真正需要的键，避免 env 文件被无关变量污染。
-            keep = {
-                "PATH",
-                "INCLUDE",
-                "LIB",
-                "LIBPATH",
-                "VCINSTALLDIR",
-                "VCTOOLSINSTALLDIR",
-                "VCTOOLSVERSION",
-                "VSINSTALLDIR",
-                "WINDOWSSDKDIR",
-                "WINDOWSSDKVERSION",
-                "UCRTCONTENTROOT",
-                "UNIVERSALCRTSDKDIR",
-                "WINDOWSSDKBINPATH",
-                "VSCMD_ARG_TGT_ARCH",
-                "VSCMD_ARG_HOST_ARCH",
-                "VSCMD_VER",
-            }
-            env = {k: v for k, v in env.items() if k.upper() in keep}
-            path_key = next((k for k in env if k.lower() == "path"), "")
-            if path_key:
-                orig = [d for d in os.environ.get("PATH", "").split(os.pathsep) if d]
-                parts = [d for d in env[path_key].split(os.pathsep) if d]
-                # vcvars 是在现有 PATH 前面插入自己的一组目录；尾部若是原始 PATH，
-                # 就去掉，避免 env 文件里再抄一遍整条系统 PATH。
-                if orig and len(parts) > len(orig):
-                    tail = [d.lower() for d in parts[-len(orig) :]]
-                    if tail == [d.lower() for d in orig]:
-                        parts = parts[: -len(orig)]
-                env[path_key] = os.pathsep.join(parts)
-            if path_key:
-                return env
+            k, v = line.split("=", 1)
+            if k and not k.startswith("="):
+                env[k] = v
+        # vcvars 的 `set` 会把当前进程的整份环境都吐出来（CUA_*、PSModulePath 等）。
+        # 只留编译器/链接器真正需要的键，避免 env 文件被无关变量污染。
+        keep = {
+            "PATH",
+            "INCLUDE",
+            "LIB",
+            "LIBPATH",
+            "VCINSTALLDIR",
+            "VCTOOLSINSTALLDIR",
+            "VCTOOLSVERSION",
+            "VSINSTALLDIR",
+            "WINDOWSSDKDIR",
+            "WINDOWSSDKVERSION",
+            "UCRTCONTENTROOT",
+            "UNIVERSALCRTSDKDIR",
+            "WINDOWSSDKBINPATH",
+            "VSCMD_ARG_TGT_ARCH",
+            "VSCMD_ARG_HOST_ARCH",
+            "VSCMD_VER",
+        }
+        env = {k: v for k, v in env.items() if k.upper() in keep}
+        path_key = next((k for k in env if k.lower() == "path"), "")
+        if path_key:
+            orig = [d for d in os.environ.get("PATH", "").split(os.pathsep) if d]
+            parts = [d for d in env[path_key].split(os.pathsep) if d]
+            # vcvars 是在现有 PATH 前面插入自己的一组目录；尾部若是原始 PATH，
+            # 就去掉，避免 env 文件里再抄一遍整条系统 PATH。
+            if orig and len(parts) > len(orig):
+                tail = [d.lower() for d in parts[-len(orig) :]]
+                if tail == [d.lower() for d in orig]:
+                    parts = parts[: -len(orig)]
+            env[path_key] = os.pathsep.join(parts)
+        if path_key:
+            return env
         return {}
 
     @staticmethod
@@ -2259,20 +2265,15 @@ class EnvFileWriter:
         调用方在同一 cmd 里 call 本文件，之后直接跑 cmake。"""
         p, root = self.p, self.root
         qt = self._qt_dir()
-        vcvars = ""
-        if PLATFORM.is_windows:
-            for vs in _win_vs_installs():
-                candidate = vs / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
-                if candidate.is_file():
-                    vcvars = str(candidate)
-                    break
+        vcvars = EnvFileWriter._find_vcvars64()
+        vcvars_arg = str(vcvars) if vcvars else ""
         lines = [
             "@echo off",
             "rem 由 tools/ps-setup.py 生成；cmd 用 call 引入。",
             "if defined PS_DEPS_ENV_LOADED goto :eof",
         ]
-        if vcvars:
-            lines.append(f'call "{vcvars}" >nul 2>&1')
+        if vcvars_arg:
+            lines.append(f'call "{vcvars_arg}" >nul 2>&1')
         lines += [
             f'set "PS_DEPS_ROOT={root}"',
             f'set "PATH={p.bin};{p.venv_bin};{p.ccache_bin_dir};%PATH%"',
@@ -2467,18 +2468,15 @@ class EntryPointMounter:
             except OSError as e:
                 log(f"读 {f} 失败（{e}），跳过 WT 默认终端")
                 continue
-            if re.search(rf'"defaultProfile"\s*:\s*"{re.escape(guid)}"', text):
-                log(f"WT 默认终端已是 PlotScope Dev：{f}")
+            m = re.search(r'"defaultProfile"\s*:\s*"([^"]+)"', text)
+            if m:
+                current = m.group(1)
+                if current.lower() == guid.lower():
+                    log(f"WT 默认终端已是 PlotScope Dev：{f}")
+                else:
+                    log(f"WT 已有默认终端（{current}），保留用户选择；可在设置里手动选 PlotScope Dev")
                 continue
-            if '"defaultProfile"' in text:
-                new, n = re.subn(
-                    r'("defaultProfile"\s*:\s*")[^"]+(")',
-                    rf"\g<1>{guid}\g<2>",
-                    text,
-                    count=1,
-                )
-            else:
-                new, n = re.subn(r"\{", '{\n    "defaultProfile": "' + guid + '",', text, count=1)
+            new, n = re.subn(r"\{", '{\n    "defaultProfile": "' + guid + '",', text, count=1)
             if n != 1:
                 log(f"{f} 未找到可替换的 defaultProfile，跳过")
                 continue
@@ -2545,8 +2543,9 @@ class EntryPointMounter:
             else "terminal.integrated.defaultProfile.linux"
         )
         if PLATFORM.is_windows:
-            # $env:USERPROFILE 由 PowerShell 自己展开，profile 里不写死绝对路径。
-            command = "$p = Join-Path $env:USERPROFILE '.ps-deps\\env.ps1'; if (Test-Path $p) { . $p }"
+            # 用实际环境根，兼容 PS_DEPS_ROOT 自定义；单引号字面量避免路径注入。
+            env_ps1 = get_deps_root() / "env.ps1"
+            command = f"$p = {EnvFileWriter._ps_quote(str(env_ps1))}; if (Test-Path $p) {{ . $p }}"
             profile = {"path": "powershell.exe", "args": ["-NoLogo", "-NoExit", "-Command", command]}
         else:
             profile = {"path": "bash", "args": ["-l"]}
