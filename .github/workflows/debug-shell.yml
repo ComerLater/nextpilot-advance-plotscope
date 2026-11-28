@@ -239,9 +239,15 @@ jobs:
           rc=$?
           echo "ctest rc=$rc"
           if [ "$rc" -ne 0 ]; then
-            # 模块段挂了就把二进制直接跑一遍，拿到完整输出（ctest 只回显失败尾部）。
+            # 模块段挂了就把二进制直接跑一遍，拿到完整输出（ctest 只回显失败尾部），
+            # 再用 gdb 取调用栈——SegFault 的现场只在 bt 里。
             BIN="$(find build -type f -name 'ps_test_gui_data' -perm -u+x | head -1)"
-            [ -n "$BIN" ] && { echo "--- 直跑 $BIN ---"; timeout 300 "$BIN"; echo "direct rc=$?"; }
+            if [ -n "$BIN" ]; then
+              echo "--- 直跑 $BIN ---"
+              timeout 300 "$BIN"; echo "direct rc=$?"
+              echo "--- gdb 现场 ---"
+              gdb -batch -ex 'set pagination off' -ex run -ex 'bt 40' --args "$BIN" 2>&1 | tail -120
+            fi
             exit 1
           fi
 
