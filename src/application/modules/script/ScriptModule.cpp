@@ -1,3 +1,4 @@
+#include "InteractionHub.h"
 #include "ScriptModule.h"
 
 #include "BatchRunner.h"

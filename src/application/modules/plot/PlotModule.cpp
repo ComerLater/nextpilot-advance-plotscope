@@ -1,3 +1,4 @@
+#include "DerivedSeriesHub.h"
 #include "PlotModule.h"
 
 #include "PlotDocument.h"
