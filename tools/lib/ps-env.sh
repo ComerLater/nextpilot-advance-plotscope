@@ -23,7 +23,8 @@ ps_platform() {
 ps_is_windows() { [ "$(ps_platform)" = windows ]; }
 
 # 依赖根：环境变量优先，其次平台缺省。
-# 与 cmake/DepsRoot.cmake 的 ps_deps_root() 同一条优先级（env > -D > 缺省）。
+# 与 cmake/DepsRoot.cmake 的 ps_deps_root() 同一口径：CMake 侧 `-D` 还会压过环境变量，
+# shell 里看不到 `-D`，所以这里只表达"环境变量 > 缺省"。
 ps_deps_root() {
     if [ -n "${PS_DEPS_ROOT:-}" ]; then
         printf '%s\n' "$PS_DEPS_ROOT"
@@ -40,8 +41,33 @@ ps_deps_root() {
     fi
 }
 
+# ps_find_file <候选绝对路径...>
+# 只按路径探测（不看 PATH）：存在即可执行（MSYS 对 .exe 的 -x 判定不稳，存在即认）。
+# 命中打印路径，全不命中返回 1。ps_find_tool 与"必须先看固定路径"的调用方共用这一份口径。
+ps_find_file() {
+    for _pff_cand in "$@"; do
+        [ -n "$_pff_cand" ] || continue
+        if [ -f "$_pff_cand" ] && [ -x "$_pff_cand" ]; then
+            printf '%s\n' "$_pff_cand"
+            unset _pff_cand
+            return 0
+        fi
+        case "$_pff_cand" in
+            *.exe | *.cmd | *.bat)
+                if [ -f "$_pff_cand" ]; then
+                    printf '%s\n' "$_pff_cand"
+                    unset _pff_cand
+                    return 0
+                fi
+                ;;
+        esac
+    done
+    unset _pff_cand
+    return 1
+}
+
 # ps_find_tool <命令名> [候选绝对路径...]
-# 命中即打印路径；全找不到返回 1（调用方自己决定 skip 还是失败）。
+# 先查 PATH，再按候选路径探测；命中即打印路径，全找不到返回 1（调用方自己决定 skip 还是失败）。
 ps_find_tool() {
     _pft_name="$1"
     shift
@@ -49,23 +75,7 @@ ps_find_tool() {
         command -v "$_pft_name"
         return 0
     fi
-    for _pft_cand in "$@"; do
-        [ -n "$_pft_cand" ] || continue
-        if [ -f "$_pft_cand" ] && [ -x "$_pft_cand" ]; then
-            printf '%s\n' "$_pft_cand"
-            return 0
-        fi
-        # MSYS 对 .exe 的 -x 判定不稳，存在即认（能执行由调用方验证）。
-        case "$_pft_cand" in
-            *.exe | *.cmd | *.bat)
-                if [ -f "$_pft_cand" ]; then
-                    printf '%s\n' "$_pft_cand"
-                    return 0
-                fi
-                ;;
-        esac
-    done
-    return 1
+    ps_find_file "$@"
 }
 
 # clang-format / git-clang-format：Linux 通常在 PATH，Windows 在 LLVM 或 VS 目录。
@@ -107,19 +117,56 @@ _ps_vs_llvm() {
 # ruff：PATH 里有就用；否则查受管依赖根里的 venv（Windows 在 Scripts/）。
 ps_ruff() {
     _root="$(ps_deps_root)"
-    ps_find_tool ruff ||
-        ps_find_tool ruff \
-            "$_root/toolchain/python/venv/Scripts/ruff.exe" \
-            "$_root/toolchain/python/venv/bin/ruff"
+    if _rf_path="$(ps_find_tool ruff \
+        "$_root/toolchain/python/venv/Scripts/ruff.exe" \
+        "$_root/toolchain/python/venv/bin/ruff")"; then
+        printf '%s\n' "$_rf_path"
+        unset _root _rf_path
+        return 0
+    fi
+    unset _root _rf_path
+    return 1
 }
 
-# Python 解释器：Linux 习惯 python3，Windows 只有 python / py。
+# ShellCheck（本仓库本地那份来自 venv 里的 shellcheck-py，钉在 requirements.txt）：
+# CI 用 apt 装 shellcheck，本地用 venv 二进制；与 CI 同一档，只查 error（-S error），
+# 历史脚本的 style warning 不拦。
+ps_shellcheck() {
+    _root="$(ps_deps_root)"
+    if _sc_path="$(ps_find_tool shellcheck \
+        "$_root/toolchain/python/venv/Scripts/shellcheck.exe" \
+        "$_root/toolchain/python/venv/bin/shellcheck")"; then
+        printf '%s\n' "$_sc_path"
+        unset _root _sc_path
+        return 0
+    fi
+    unset _root _sc_path
+    return 1
+}
+
+# Python 解释器：优先受管 venv（mypy / ruff / clang-format 都装在这里，preflight 的
+# mypy 检查必须命中它，否则会退到系统 Python 然后静默 skip）；没有再退 PATH。
 # 找不到返回 1，调用方把对应检查降级为 skip（不假装通过）。
+# 临时变量收尾时 unset（本文件被 source，保持 POSIX sh，不用非标准的 local）。
 ps_python() {
-    ps_find_tool python3 ||
-        ps_find_tool python ||
-        ps_find_tool py ||
-        return 1
+    _pp_root="$(ps_deps_root)"
+    case "$_pp_root" in
+        /*) ;;
+        *) if command -v cygpath >/dev/null 2>&1; then _pp_root="$(cygpath -u "$_pp_root")"; fi ;;
+    esac
+    # 受管 venv 优先，且必须先于 PATH——系统 Python 在 PATH 前面会抢走解释器。
+    if _pp_py="$(ps_find_file "$_pp_root/toolchain/python/venv/Scripts/python.exe" "$_pp_root/toolchain/python/venv/bin/python")"; then
+        printf '%s\n' "$_pp_py"
+        unset _pp_py _pp_root
+        return 0
+    fi
+    if _pp_py="$(ps_find_tool python3)" || _pp_py="$(ps_find_tool python)" || _pp_py="$(ps_find_tool py)"; then
+        printf '%s\n' "$_pp_py"
+        unset _pp_py _pp_root
+        return 0
+    fi
+    unset _pp_py _pp_root
+    return 1
 }
 
 # 并行度：Linux nproc，Windows NUMBER_OF_PROCESSORS，再退 4。

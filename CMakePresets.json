@@ -4,7 +4,7 @@
     {
       "name": "default",
       "displayName": "Release（日常构建）",
-      "description": "落 build/，Ninja。默认 CMAKE_BUILD_TYPE=Release、PS_DEPS_FETCH=ON、CMAKE_PREFIX_PATH=$env{PS_QT_DIR}，环境注入 ccache 三件套（PATH / CCACHE_DIR / CCACHE_BASEDIR）。可自行覆盖：PS_BUILD_TESTS（ON/OFF）、PS_USE_CCACHE（ON/OFF）、PS_REQUIRE_CCACHE（ON=探不到 ccache 直接失败）、PS_USE_PCH + PS_PCH_TARGETS。变量取值与默认值见 docs/develop/building.md 的「配置项全景」一节。",
+      "description": "落 build/，Ninja。默认 CMAKE_BUILD_TYPE=Release、PS_DEPS_FETCH=ON；environment 只注入 CCACHE_BASEDIR=${sourceDir}，CCACHE_DIR 与 PATH 由 configure 里的 ps-setup prepare 解析后导出（不走 preset）。可自行覆盖：PS_BUILD_TESTS（ON/OFF）、PS_USE_CCACHE（ON/OFF）、PS_REQUIRE_CCACHE（ON=探不到 ccache 直接失败）、PS_USE_PCH + PS_PCH_TARGETS。变量取值、来源与优先级见 docs/develop/building.md 的「配置项」一节。",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {

@@ -15,7 +15,9 @@
 - 工具链（cmake / ninja / ccache / python / rust / qt）：`tools/ps-setup.py`，每个组件一个类，改版本、换镜像都只改这里。
 - 三方库（zlib / zstd / lz4 / nanoarrow）：`cmake/Dependencies.cmake` 顶部的 `PS_VER_*` 与 `PS_MIRRORS_*`。镜像按 `URL|SHA256` 排列，构建时按顺序探测，第一个可用的即用。
 
-默认安装到 `~/.ps-deps`（Windows 为 `%USERPROFILE%\.ps-deps`），改到别处按优先级取第一个有值的：`-DPS_DEPS_ROOT=<path>` → 环境变量 `PS_DEPS_ROOT` → 平台缺省。命令行最高：`-DPS_DEPS_ROOT` 同时决定工具链根与三方库前缀。
+默认安装到 `~/.ps-deps`（Windows 为 `%USERPROFILE%\.ps-deps`），改到别处按优先级取第一个有值的：`-DPS_DEPS_ROOT=<path>` → 环境变量 `PS_DEPS_ROOT` → 平台缺省。命令行最高。
+
+`PS_DEPS_ROOT` 只管**环境根**（`toolchain/`、`bin/`、`caches/`、`env.*`），不管第三方库。想用已经预编译好的 zlib / sqlite3 / zstd / lz4，另用 `-DPS_LIBS_PREFIX=<含 include 与 lib 的目录>`，缺省为空（走系统 / vcpkg / FetchContent）。两个变量互不影响，换工具链根不会顺带改库搜索路径。
 
 ## 环境组合速查
 
@@ -34,7 +36,7 @@ configure 的固定顺序是"体检 → 用现成的 → 缺了才装"，所以�
 | 同一组件装了好几份                                | Qt 取版本最高；其余按 `PATH` 先后                                                                       | 同左                                                                                                         | 自动               |
 | 已有旧的 `build/` 目录                            | 换过生成器就删掉重建；只换 Qt 用 `-DPS_QT_DIR` 覆盖                                                     | 同左                                                                                                         | 视情况             |
 
-显式指定永远优先：`-D` > 环境变量（`PS_DEPS_ROOT` / `PS_QT_DIR` / `CCACHE_DIR`）> 缓存里的旧值 > 平台缺省。显式指定了低于下限的 Qt 也不会被放过，报错里会直接说是哪一项不满足。
+显式指定永远优先：`-D` > 环境变量（`PS_DEPS_ROOT` / `PS_QT_DIR` / `CCACHE_DIR` / `PS_LIBS_PREFIX`）> 缓存里的旧值 > 平台缺省。显式指定了低于下限的 Qt 也不会被放过，报错里会直接说是哪一项不满足。
 
 ## Linux / 云主机
 
@@ -61,7 +63,7 @@ cmake --preset debug                            # Debug + 断言，落 build-deb
 
 三个 preset 都用 Ninja。若旧目录是别的生成器建的（Makefiles 等），删掉 `build/` 重建——CMake 不允许在生成器不同的目录上 configure。
 
-configure 会自检环境，缺什么自动装什么（`python3 tools/ps-setup.py install <缺失项>`），装完复查；自动装失败才终止并给出手动命令。
+configure 会跑一次 `tools/ps-setup.py prepare` 做门禁：缺什么自动补装，装完复查，仍不过才终止并给出手动命令；只想体检不改机器就 `prepare --no-install`。
 
 ## Windows
 
@@ -117,6 +119,29 @@ python tools/ps-setup.py doctor        # 逐项：实测 / 要求 / 来源 / 路
 python tools/ps-setup.py resolve qt    # 只看某一项
 ```
 
+### 缺组件怎么补
+
+configure 会自己补：`prepare` 默认缺什么装什么，装不上才 FATAL。想先看清缺哪一项，跑 `check` / `doctor`。手动作业按组件来：
+
+```powershell
+python tools\ps-setup.py check                 # 只体检，不改机器
+python tools\ps-setup.py install msvc           # 缺编译器：winget 装 VS 2022 Build Tools（VC Tools + Windows SDK）
+python tools\ps-setup.py install python         # 缺 Python / venv：pbs Python + venv（aqt、ruff 都落这里）
+python tools\ps-setup.py install qt             # 缺 Qt：aqt 装 6.8.3 的 win64_msvc2022_64
+```
+
+**缺 Python**：一般不用自己装。`tools\ps-setup.bat` 先找受管 venv（`$PS_DEPS_ROOT\toolchain\python\venv`），其次找已下载的 pbs 解释器（`…\python\pbs\python\python.exe`），都没有才按版本 + sha256 下载 python-build-standalone 到 `$PS_DEPS_ROOT\toolchain\python`；全程不碰、也不依赖系统 Python。想显式重建 venv：`tools\ps-setup.bat install python`。
+
+**缺 Qt**，按机器现状三选一：
+
+1. 已有 MSVC 版 Qt（≥ 6.8.3）——不用装，指过去就行：`-DPS_QT_DIR=D:/program/Qt/6.12.0/msvc2022_64`。不在上面那些常见落点时尤其要显式指。
+2. 完全没有 Qt——`python tools\ps-setup.py install qt`。前置是 MSVC 和 venv：没有 MSVC 时 `abi_name()` 直接报"先装 msvc"，不会替你装一份 ABI 不配套的 Qt。装完落在 `%PS_DEPS_ROOT%\toolchain\qt\6.8.3\win64_msvc2022_64`，下次 configure 自动命中。
+3. 只有 MinGW 版 Qt——不认。MSVC 配 MinGW 的 Qt 能过 configure，链接期才炸 LNK2038；必须换 MSVC 版（`install qt`，或用官方安装器装 MSVC 2022 64-bit 组件）。
+
+内网或完全离线：`install qt` 走 aqt 在线源（官方 + 阿里云镜像），断网装不了；改用 Qt 官方 Online Installer 装 6.8.3+ 的 **MSVC 2022 64-bit** 组件，再 `-DPS_QT_DIR` 指过去。
+
+Linux 同构：`tools/ps-setup.sh install qt` 装 `linux_gcc_64`；gcc / ninja / ccache 走 apt，脚本只在有免密 sudo 时代装，否则打印命令。
+
 ### 构建与运行
 
 ```powershell
@@ -141,7 +166,7 @@ C/C++ 只格式化变更行（整树重排会毁 git blame，默认不做；确�
 
 提交前自动格式化靠 Git hook：`python3 tools/ps-setup.py mount` 注册 `core.hooksPath=.githooks`（configure 也会自动补上）。临时绕过：`git commit --no-verify`；彻底关闭：`git config --unset core.hooksPath`。hook 只看已暂存内容，`git add` 之后又改文件请重新 add。
 
-工具版本固定在 `tools/requirements.txt`（`clang-format`、`ruff`），装法 `python3 tools/ps-setup.py install python`；prettier / markdownlint 由 `tools/format.sh` 用 `npx` 现取固定版本。本地与 CI 必须同版本，否则会出现"本地已格式化、CI 仍报 diff"。
+工具版本固定在 `tools/requirements.txt`（`clang-format`、`ruff`、`mypy`、`shellcheck-py`），装法 `python3 tools/ps-setup.py install python`；prettier / markdownlint 由 `tools/format.sh` 用 `npx` 现取固定版本。本地与 CI 必须同版本，否则会出现"本地已格式化、CI 仍报 diff"。
 
 ## 构建加速开关
 
@@ -172,12 +197,15 @@ cmake --preset default -DPS_USE_PCH=ON -DPS_PCH_TARGETS="SARibbonBar;fastplot" -
 | `PS_REQUIRE_CCACHE` | Linux `ON`，Windows `OFF`     | 缓存不可用即失败                                                       |
 | `PS_USE_PCH`        | `OFF`                         | 预编译头                                                               |
 | `PS_DEPS_FETCH`     | `ON`                          | 缺 zlib / sqlite3 / nanoarrow 时构建期拉源码编静态库                   |
-| `PS_DEPS_ROOT`      | `~/.ps-deps`                  | 工具链与依赖根；`-D` 优先，其次环境变量                                |
+| `PS_DEPS_ROOT`      | `~/.ps-deps`                  | 环境根（工具链 / bin / caches）；`-D` 优先，其次环境变量               |
+| `PS_LIBS_PREFIX`    | 空                            | 预编译 zlib / sqlite3 / zstd / lz4 前缀；只认 `-D`                     |
 | `CCACHE_DIR`        | `$PS_DEPS_ROOT/caches/ccache` | ccache 缓存目录；`-D` 优先，其次环境变量                               |
 | `PS_QT_DIR`         | 自动发现                      | Qt 前缀；指定后写入 `CMakeCache.txt`                                   |
 | `PS_DEPLOY_QT`      | `ON`                          | Windows：构建后 `windeployqt` 拷 DLL                                   |
 
 取值优先级：命令行 `-D` > `CMakePresets.json` 的 `cacheVariables` > 代码里的默认值。preset 只是"一组默认 -D"，`cmake --preset fast -DPS_BUILD_TESTS=ON` 仍然编测试；要连 preset 一起丢掉用 `--fresh`。
+
+环境变量这一层按变量分别对待：`PS_DEPS_ROOT`、`PS_QT_DIR`、`CCACHE_DIR` 都既是环境变量、也是 CMake 缓存变量，两者同时存在时 `-D` 优先（`PS_DEPS_ROOT` 没有"环境变量压过 `-D`"的例外）。`PS_LIBS_PREFIX` 只有缓存变量一种入口，不读同名环境变量。`CMakePresets.json` 的 `environment` 只改 configure 进程的环境（本仓库只注入 `CCACHE_BASEDIR`），不写 `cacheVariables`，因此不会覆盖你用 `-D` 给的值；`PS_QT_DIR` 只有在本次缓存里没有值时才由 `prepare` 把发现结果 FORCE 写进缓存，显式 `-D` 过的值原样保留。`PATH`、`CMAKE_PREFIX_PATH`、`LD_LIBRARY_PATH` 由 `prepare` 按 `PS_DEPS_ROOT` 与 Qt 前缀算好后导出，命令行不要重复设置。
 
 ## 产物与运行
 

@@ -37,7 +37,7 @@ elseif(MSVC)
     endif()
 endif()
 
-# 第三方 C 依赖（zlib / sqlite3）：优先系统或 -DPS_DEPS_ROOT 前缀，
+# 第三方 C 依赖（zlib / sqlite3）：优先系统或 -DPS_LIBS_PREFIX 前缀，
 # 都没有且 PS_DEPS_FETCH=ON 时按固定 URL 拉源码编静态库——Windows 上没有
 # 包管理器也能一次 configure 到位。必须在 src/ 之前：toolbox 里 mdf/rosbag2 要链它。
 include(Dependencies)

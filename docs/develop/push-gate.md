@@ -78,5 +78,5 @@ python3 tools/ps-setup.py mount  # 只注册 hook（状态用 check 看，卸载
 - `pre-commit`：格式化暂存区（只修不拦），并对疑似整文件重排告警。
 - `pre-push`：跑 `local_preflight.sh` quick，失败阻断。
 - 非 Git 工作树跳过 hook 注册与检查；在 Git 工作树内 `.githooks` 缺失时 `check git-hook` 直接失败。
-- CMake configure 会自动注册 hook 并执行 `python3 tools/ps-setup.py check`；check 不过先自动 `--install` 修复后复查，复查仍不过才终止配置并给出手动命令；CI 环境跳过。
+- CMake configure 会自动注册 hook，并跑一次 `python3 tools/ps-setup.py prepare`（缺件默认自动补装，`--no-install` 才只体检）；补装后复查仍不过才终止配置并给出手动命令；CI 环境跳过。
 - 绕过：`SKIP_PREFLIGHT=1 git push`、`git commit --no-verify`。不建议，CI 仍会拦。

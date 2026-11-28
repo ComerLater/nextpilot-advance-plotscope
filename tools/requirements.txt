@@ -1,8 +1,8 @@
 # Python 包版本唯一源。由 tools/ps-setup.py install python 装进
 # $PS_DEPS_ROOT/toolchain/python/venv，不污染系统 site-packages。
 # 解释器版本门槛见 tools/ps-setup.py 里 PythonTool 的 version；
-# 升级包版本后重跑 --install-python。
-# 注意 aqtinstall 是 Qt 下载器（--install-qt 依赖它），不是运行时依赖。
+# 升级包版本后重跑 `python tools/ps-setup.py install python`。
+# 注意 aqtinstall 是 Qt 下载器（`install qt` 依赖它），不是运行时依赖。
 
 pynmea2==1.19.0
 pyubx2==1.4.1
@@ -21,3 +21,7 @@ ruff==0.14.6
 # Python 静态类型检查。范围见仓库根 mypy.ini（tools / tests-fixture / 桥脚本，
 # 不含 src/3rdparty）。版本同样被 .github/workflows/lint.yml 直接读取。
 mypy==2.4.1
+
+# Shell 脚本静态检查。CI 用 apt 的 shellcheck，本地用这份 pip 包（wheel 里就是官方
+# 0.11.0 二进制），preflight 的 -S error 档两边一致。没装时 preflight 会明确 [skip]。
+shellcheck-py==0.11.0.1

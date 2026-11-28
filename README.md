@@ -58,7 +58,7 @@ plotscope --mcp-bridge        # MCP server（stdio JSON-RPC，供 AI 代理驱�
 依赖 CMake ≥ 3.24、Qt 6（Core/Widgets/Gui/Svg）、C++17 编译器、Rust 工具链：
 
 ```bash
-cmake --preset default                   # 没装环境会自动跑 python3 tools/ps-setup.py install
+cmake --preset default                   # configure 会跑 python3 tools/ps-setup.py prepare，缺件自动补装
 cmake --build --preset default -j        # 变量/hook/ccache 缺失也自动补齐；不用 source 任何东西
 ctest --test-dir build --output-on-failure
 ```
@@ -67,6 +67,10 @@ ctest --test-dir build --output-on-failure
 
 ```bash
 python3 tools/ps-setup.py bootstrap        # apt 补 git，pbs 托管 Python 与 cmake 装进 ~/.ps-deps，不碰系统 Python
+```
+
+```powershell
+tools\ps-setup.bat bootstrap               # Windows：同一个内核，Python 走 pbs，不碰系统 Python
 ```
 
 手动装也可以：`python3 tools/ps-setup.py install`（生成 `~/.ps-deps/env.sh`）。环境根目录默认 `~/.ps-deps`，`-DPS_DEPS_ROOT=<path>` 优先、其次环境变量 `PS_DEPS_ROOT`。

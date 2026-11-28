@@ -158,7 +158,7 @@ if(_ps_qt_path STREQUAL "")
     message(FATAL_ERROR
         "[dev-env] 未找到 Qt6（判据：含 lib/cmake/Qt6/Qt6Config.cmake 的前缀）。\n"
         "[dev-env] 已按顺序找过：CMakeCache/env（PS_QT_DIR、QTDIR、CMAKE_PREFIX_PATH）→ "
-        "受管前缀 $PS_DEPS_ROOT/toolchain → 常见安装根 → 包管理器。\n"
+        "受管前缀 ${_ps_root}/toolchain → 常见安装根 → 包管理器。\n"
         "[dev-env] 修法一：cmake -DPS_QT_DIR=<Qt 前缀，如 D:/program/Qt/6.8.3/msvc2022_64> ...\n"
         "[dev-env] 修法二：python3 tools/ps-setup.py install qt")
 endif()

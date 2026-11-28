@@ -6,10 +6,9 @@
 #   3. 平台缺省：Windows %USERPROFILE%\.ps-deps（POSIX 的 HOME 在 Windows 上通常为空，
 #      照搬会拼出 "/.ps-deps"），其他平台 $HOME/.ps-deps
 #
-# 注意重名：cmake/Dependencies.cmake 里的 PS_DEPS_ROOT 也是"已装 zlib/sqlite3 的前缀"。
-# 命令行优先意味着 `-DPS_DEPS_ROOT=<path>` 同时决定工具链根与 libs 前缀，
-# 两者同值；只想改 libs 前缀、工具链根保持默认时，用环境变量 PS_DEPS_ROOT
-# （它同样作用于工具链根，且会被 -D 覆盖——这是刻意的：命令行永远最高）。
+# 注意分工：PS_DEPS_ROOT 只表示"环境根"（toolchain/ + bin/ + caches/ + env.*），
+# 预编译第三方库的前缀是另一个变量 PS_LIBS_PREFIX（见 cmake/Dependencies.cmake）。
+# 两者曾经同名，导致 `-DPS_DEPS_ROOT` 顺带改了库搜索路径；已拆开，互不影响。
 #
 # 只有这一处写默认值：DevEnvCheck、CMakeLists 的 ccache 提示、tools/ps-setup.py
 # 全部按同一个变量与同一套顺序解析（python 侧由门禁用 --root 传进来），

@@ -102,14 +102,24 @@ endfunction()
 option(PS_DEPS_FETCH "缺少 zlib/sqlite3/zstd/lz4/nanoarrow 时自动拉源码构建" ON)
 option(PS_DEPS_PREFER_SYSTEM "优先使用系统或 vcpkg 已安装的库" ON)
 option(PS_DEPS_INSTALL "为源码构建的依赖生成 install 规则（component=ps_deps）" OFF)
-set(PS_DEPS_ROOT "" CACHE PATH "已安装 zlib/sqlite3/zstd/lz4 的前缀，含 include 和 lib")
-# 注意重名：工具链根也叫 PS_DEPS_ROOT（见 cmake/DepsRoot.cmake），但那是环境根
-# （toolchain/ + env.*），和这里的 libs 前缀不是同一件事。命令行优先级最高：
-# `-DPS_DEPS_ROOT=<path>` 同时决定工具链根与 libs 前缀（两者同值）；只想让工具链根换
-# 地方、libs 用系统/vcpkg 时，用环境变量 PS_DEPS_ROOT 并显式 -DPS_DEPS_ROOT="" 。
+# 预编译第三方库前缀（含 include/ 与 lib/），与工具链/环境根 PS_DEPS_ROOT 彻底分开：
+# 前者是"zlib/sqlite3/zstd/lz4 装在哪"，后者是"工具链（Qt/Python/Rust…）装在哪"，
+# 两件事各有各的变量，不再共用一个名字。
+# 迁移：以前靠 `-DPS_DEPS_ROOT=<path>` 顺带当库前缀的，现在要额外显式传 `-DPS_LIBS_PREFIX=<同一路径>`；
+# 不写就是空 = 只用系统 / vcpkg / FetchContent。
+set(PS_LIBS_PREFIX "" CACHE PATH "预编译 zlib/sqlite3/zstd/lz4 的前缀（含 include/ 与 lib/），与工具链根无关")
 
-if(PS_DEPS_ROOT)
-    list(APPEND CMAKE_PREFIX_PATH "${PS_DEPS_ROOT}")
+# 破坏性迁移提示：老用法 -DPS_DEPS_ROOT=<含库的目录> 以前会顺带当库前缀，现在不再生效。
+# 只在真的看起来像库前缀（根下确实有 include/）时提醒，避免仅换工具链根的用户每次 configure 都吃警告。
+if(DEFINED PS_DEPS_ROOT AND NOT "${PS_DEPS_ROOT}" STREQUAL "" AND "${PS_LIBS_PREFIX}" STREQUAL ""
+   AND EXISTS "${PS_DEPS_ROOT}/include")
+    message(WARNING
+        "[deps] PS_DEPS_ROOT 不再兼作三方库前缀：${PS_DEPS_ROOT}/include 存在，但本次未设 PS_LIBS_PREFIX。\n"
+        "[deps] 若要继续用这里的预编译库，请显式传 -DPS_LIBS_PREFIX=${PS_DEPS_ROOT}；不需要的话可忽略本警告。")
+endif()
+
+if(PS_LIBS_PREFIX)
+    list(APPEND CMAKE_PREFIX_PATH "${PS_LIBS_PREFIX}")
 endif()
 if(DEFINED ENV{VCPKG_ROOT})
     set(_ps_vcpkg_triplet "$ENV{VCPKG_DEFAULT_TRIPLET}")
@@ -139,15 +149,15 @@ function(ps_make_interface_target name)
 endfunction()
 
 function(ps_resolve_zlib)
-    if(PS_DEPS_ROOT)
-        find_path(PS_ZLIB_INCLUDE_DIR NAMES zlib.h PATHS "${PS_DEPS_ROOT}/include" NO_DEFAULT_PATH)
+    if(PS_LIBS_PREFIX)
+        find_path(PS_ZLIB_INCLUDE_DIR NAMES zlib.h PATHS "${PS_LIBS_PREFIX}/include" NO_DEFAULT_PATH)
         find_library(PS_ZLIB_LIBRARY NAMES zd z zlib zlibstatic zdll
-            PATHS "${PS_DEPS_ROOT}/lib" NO_DEFAULT_PATH)
+            PATHS "${PS_LIBS_PREFIX}/lib" NO_DEFAULT_PATH)
         if(PS_ZLIB_INCLUDE_DIR AND PS_ZLIB_LIBRARY)
             ps_make_interface_target(ps_zlib)
             target_include_directories(ps_zlib INTERFACE ${PS_ZLIB_INCLUDE_DIR})
             target_link_libraries(ps_zlib INTERFACE ${PS_ZLIB_LIBRARY})
-            message(STATUS "PlotScope deps: zlib = ${PS_DEPS_ROOT}")
+            message(STATUS "PlotScope deps: zlib = ${PS_LIBS_PREFIX}")
             return()
         endif()
     endif()
@@ -204,15 +214,15 @@ function(ps_resolve_zlib)
 endfunction()
 
 function(ps_resolve_zstd)
-    if(PS_DEPS_ROOT)
-        find_path(PS_ZSTD_INCLUDE_DIR NAMES zstd.h PATHS "${PS_DEPS_ROOT}/include" NO_DEFAULT_PATH)
+    if(PS_LIBS_PREFIX)
+        find_path(PS_ZSTD_INCLUDE_DIR NAMES zstd.h PATHS "${PS_LIBS_PREFIX}/include" NO_DEFAULT_PATH)
         find_library(PS_ZSTD_LIBRARY NAMES zstdd zstd libzstd zstd_static
-            PATHS "${PS_DEPS_ROOT}/lib" NO_DEFAULT_PATH)
+            PATHS "${PS_LIBS_PREFIX}/lib" NO_DEFAULT_PATH)
         if(PS_ZSTD_INCLUDE_DIR AND PS_ZSTD_LIBRARY)
             ps_make_interface_target(ps_zstd)
             target_include_directories(ps_zstd INTERFACE ${PS_ZSTD_INCLUDE_DIR})
             target_link_libraries(ps_zstd INTERFACE ${PS_ZSTD_LIBRARY})
-            message(STATUS "PlotScope deps: zstd = ${PS_DEPS_ROOT}")
+            message(STATUS "PlotScope deps: zstd = ${PS_LIBS_PREFIX}")
             return()
         endif()
     endif()
@@ -288,15 +298,15 @@ function(ps_resolve_zstd)
 endfunction()
 
 function(ps_resolve_lz4)
-    if(PS_DEPS_ROOT)
-        find_path(PS_LZ4_INCLUDE_DIR NAMES lz4.h PATHS "${PS_DEPS_ROOT}/include" NO_DEFAULT_PATH)
+    if(PS_LIBS_PREFIX)
+        find_path(PS_LZ4_INCLUDE_DIR NAMES lz4.h PATHS "${PS_LIBS_PREFIX}/include" NO_DEFAULT_PATH)
         find_library(PS_LZ4_LIBRARY NAMES lz4d lz4 lz4_static
-            PATHS "${PS_DEPS_ROOT}/lib" NO_DEFAULT_PATH)
+            PATHS "${PS_LIBS_PREFIX}/lib" NO_DEFAULT_PATH)
         if(PS_LZ4_INCLUDE_DIR AND PS_LZ4_LIBRARY)
             ps_make_interface_target(ps_lz4)
             target_include_directories(ps_lz4 INTERFACE ${PS_LZ4_INCLUDE_DIR})
             target_link_libraries(ps_lz4 INTERFACE ${PS_LZ4_LIBRARY})
-            message(STATUS "PlotScope deps: lz4 = ${PS_DEPS_ROOT}")
+            message(STATUS "PlotScope deps: lz4 = ${PS_LIBS_PREFIX}")
             return()
         endif()
     endif()
@@ -368,15 +378,15 @@ endfunction()
 set(PS_DEPS_SQLITE3_URL "https://www.sqlite.org/2024/sqlite-amalgamation-3460100.zip"
     CACHE STRING "sqlite3 amalgamation 源码包")
 function(ps_resolve_sqlite3)
-    if(PS_DEPS_ROOT)
-        find_path(PS_SQLITE3_INCLUDE_DIR NAMES sqlite3.h PATHS "${PS_DEPS_ROOT}/include" NO_DEFAULT_PATH)
+    if(PS_LIBS_PREFIX)
+        find_path(PS_SQLITE3_INCLUDE_DIR NAMES sqlite3.h PATHS "${PS_LIBS_PREFIX}/include" NO_DEFAULT_PATH)
         find_library(PS_SQLITE3_LIBRARY NAMES sqlite3 sqlite3_static sqlite
-            PATHS "${PS_DEPS_ROOT}/lib" NO_DEFAULT_PATH)
+            PATHS "${PS_LIBS_PREFIX}/lib" NO_DEFAULT_PATH)
         if(PS_SQLITE3_INCLUDE_DIR AND PS_SQLITE3_LIBRARY)
             ps_make_interface_target(ps_sqlite3)
             target_include_directories(ps_sqlite3 INTERFACE ${PS_SQLITE3_INCLUDE_DIR})
             target_link_libraries(ps_sqlite3 INTERFACE ${PS_SQLITE3_LIBRARY})
-            message(STATUS "PlotScope deps: sqlite3 = ${PS_DEPS_ROOT}")
+            message(STATUS "PlotScope deps: sqlite3 = ${PS_LIBS_PREFIX}")
             return()
         endif()
     endif()

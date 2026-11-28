@@ -102,10 +102,10 @@ SH_FILES="$(changed '*.sh')"
 if [ -n "$SH_FILES" ]; then
     for f in $SH_FILES; do bash -n "$f" || bad "bash -n $f"; done
     ok "bash -n"
-    if have shellcheck; then
-        shellcheck -S error $SH_FILES && ok "shellcheck (error)" || bad "shellcheck (error)"
+    if SC="$(ps_shellcheck)"; then
+        "$SC" -S error $SH_FILES && ok "shellcheck (error)" || bad "shellcheck (error)"
     else
-        skip "shellcheck 未安装"
+        skip "shellcheck 未安装（python tools/ps-setup.py install python 装 shellcheck-py）"
     fi
 else
     ok "无 shell 改动"

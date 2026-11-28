@@ -1,6 +1,6 @@
 find_package(Qt6 REQUIRED COMPONENTS Core)
 
-# zlib 走顶层 Dependencies 解析出的 ps_zlib（系统 / PS_DEPS_ROOT / FetchContent
+# zlib 走顶层 Dependencies 解析出的 ps_zlib（系统 / PS_LIBS_PREFIX / FetchContent
 # 源码构建三选一），Windows 无系统 zlib 时由 FetchContent 兜底。
 # 单独把本目录 add_subdirectory 进来时（不常见）退回 find_package。
 if(TARGET ps_zlib)

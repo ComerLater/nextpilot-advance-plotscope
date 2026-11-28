@@ -26,6 +26,7 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, cast
 
 # 平台差异只在 ps_setup_platform.py 里写一份：本文件不出现 `if PLATFORM.is_windows` 式分支，
 # 需要"装在哪/叫什么/哪个 ABI/怎么建入口"时问 PLATFORM。
@@ -442,7 +443,7 @@ class ToolBase:
     name = ""  # 注册表键 + 探测命令名（python 按平台覆盖 detect_name）
     manifest = ToolManifest(name="")  # 每个子类用自己的同构实例覆盖
     detect_name = ""  # 探测/判源用的命令名，默认取 name；python 按平台区分（Windows 只有 python.exe）
-    check_order = -1  # 体检显示顺序（<0 表示不体检，如 system）
+    check_order: float = -1  # 体检显示顺序（<0 表示不体检，如 system）；float 允许插队（1.5）
 
     def __init__(self, m: DepsManifest, root: Path):
         self.m = m
@@ -1865,7 +1866,7 @@ class CommandRunner:
         if not hook_ok:
             messages.append("Git hooks 仍未就位（python tools/ps-setup.py mount）")
 
-        qt_tool = tools["qt"]
+        qt_tool = cast(QtTool, tools["qt"])
         qt_row = next(
             (r for r in rows if r["tool"] == "qt"), {"ok": False, "path": "", "actual": "缺", "source": "none"}
         )
@@ -1875,7 +1876,7 @@ class CommandRunner:
                 abi = qt_tool.abi_name()
             except RuntimeError as e:
                 warnings.append(f"Qt ABI 无法确定：{e}")
-        qt = {
+        qt: dict[str, Any] = {
             "ok": qt_row["ok"],
             "path": qt_row["path"],
             "actual": qt_row["actual"],
@@ -2726,8 +2727,13 @@ def main(argv: list[str] | None = None) -> int:
             ShellGenerator().generate(names[0] if names else None)
             return 0
 
-    except RuntimeError as e:
-        print(f"[ps-setup] {e}", file=sys.stderr)
+    except Exception as e:
+        # 不只 RuntimeError：解压损坏包会抛 zipfile.BadZipFile、落盘失败抛 OSError，
+        # 这些逃到顶层就是裸 traceback。统一成一行 [ps-setup]；KeyboardInterrupt 不受影响
+        # （BaseException 不经过这里）。PS_SETUP_DEBUG=1 时仍重抛，保留完整栈供排查。
+        print(f"[ps-setup] {type(e).__name__}: {e}", file=sys.stderr)
+        if os.environ.get("PS_SETUP_DEBUG"):
+            raise
         return 1
 
     return 2
