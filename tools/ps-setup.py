@@ -5,14 +5,28 @@
 都在这个文件里，平台无关。子命令见 main() 里的 help。
 
 环境根 PS_DEPS_ROOT（默认 ~/.ps-deps），工具链都在 <root>/toolchain/。
-版本默认和下载源收在各 Tool 的 manifest 结构体（见 ToolManifest），仓库里
-没有任何版本清单文件：升级工具链就是改代码，没有第二份真源。
+版本与产物只从仓库根 toolchain.json 读（见 load_manifest），下载源由各 Tool
+的 download_sources 声明：升级工具链只改那一个文件，没有第二份真源。
+
+文件内六段（按出现顺序，加新东西先找段再找位置）：
+
+  1. 清单与模型   load_manifest / tool_artifact / asset_rel / DepsManifest
+  2. 基础动作     download / capture / log / run / 解压 / 软链
+  3. 组件         ToolBase 与一软件一 class（一致的四件套：find_ / detect_ / install / uninstall）
+  4. 编排与体检   CommandRunner（check / resolve / doctor / prepare / install / bootstrap）
+  5. env 与入口   EnvFileWriter / EntryPointMounter / ShellGenerator
+  6. CLI          CliContext + 每个子命令一个 cmd_* + COMMANDS 注册表
+
+动词只有四个：find_（只找位置，不执行）、detect_（执行一下取版本）、
+get_（取已算好的结论）、install/uninstall（改磁盘）。名词只有两个：
+tool（组件）、artifact（可下载产物，版本/文件名/哈希同处一条）。
 """
 
 from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
 import hashlib
 import json
 import os
@@ -24,13 +38,39 @@ import tempfile
 import time
 import urllib.request
 import zipfile
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
+from functools import lru_cache, partial
 from pathlib import Path
 from typing import Any, cast
 
 # 平台差异只在 ps_setup_platform.py 里写一份：本文件不出现 `if PLATFORM.is_windows` 式分支，
 # 需要"装在哪/叫什么/哪个 ABI/怎么建入口"时问 PLATFORM。
 from ps_setup_platform import PLATFORM, machine_arch
+
+
+def _force_utf8_streams() -> None:
+    """Windows 控制台默认 cp1252/gbk，打印中文直接 UnicodeEncodeError（连 --help 都崩）。
+
+    统一把标准流改成 UTF-8 + errors=replace：宁可个别字符显示成问号，也不能让
+    环境脚本因为编码问题整条挂掉。pythonw 下流可能为 None，跳过。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except (AttributeError, ValueError):
+            pass
+
+
+_force_utf8_streams()
+
+
+# 时间预算集中一处：换网络环境、改大包只动这里，不再散在调用点。
+DOWNLOAD_CONNECT_TIMEOUT = 10.0  # 建连上限：连不上就该立刻换源
+DOWNLOAD_MAX_TIME = 600.0  # 单文件总时长：Qt/pbs 大包留足 10 分钟
+RUSTUP_MAX_TIME = 120.0  # rustup-init 自身下载与自检，比大包小
+INSTALL_MAX_TIME = 900  # aqt / rustup / pip 这类安装器整段预算
+PROBE_TIMEOUT = 30  # 探测命令：取版本号这种秒级操作
 
 # ---------- 基础 ----------
 
@@ -137,6 +177,7 @@ REPO = RepoPathLayout(Path(__file__).resolve().parent.parent)
 # 代码里不放版本号：缺文件、缺组件、缺字段一律直接报错，避免出现「第二份默认值」。
 
 
+@lru_cache(maxsize=4)
 def read_rust_channel(toml_path: Path) -> str:
     """读 rust-toolchain.toml 的 channel（rustup 与 CI 的原生入口）。"""
     if not toml_path.is_file():
@@ -147,8 +188,9 @@ def read_rust_channel(toml_path: Path) -> str:
     return m.group(1)
 
 
-def load_toolchains() -> dict[str, dict]:
-    """读仓库根 toolchain.json，返回 toolchains 段。"""
+@lru_cache(maxsize=1)
+def load_manifest() -> dict:
+    """读仓库根 toolchain.json 全文：toolchains 是唯一版本来源，sources 可覆盖默认下载源。"""
     path = REPO.toolchain_json
     if not path.is_file():
         raise RuntimeError(f"缺版本清单 {path}：工具链版本只从它读，代码内没有默认值")
@@ -159,14 +201,31 @@ def load_toolchains() -> dict[str, dict]:
     tc = data.get("toolchains")
     if not isinstance(tc, dict) or not tc:
         raise RuntimeError(f"{path} 缺 toolchains 段")
-    return tc
+    return data
 
 
-TC = load_toolchains()
+def load_toolchains() -> dict[str, dict]:
+    """只取 toolchains 段（多数调用方只关心组件定义）。"""
+    return load_manifest()["toolchains"]
+
+
+_TC: dict[str, dict] | None = None
+
+
+def toolchains() -> dict[str, dict]:
+    """真源懒加载：首次访问才读 toolchain.json。
+
+    若在模块顶层加载，缺清单时连 `--help` 都会抛 traceback（argparse 还没跑到），
+    这个文件也无法被测试 import；缓存保证同一进程只读一次。
+    """
+    global _TC
+    if _TC is None:
+        _TC = load_toolchains()
+    return _TC
 
 
 def tool_entry(name: str) -> dict:
-    e = TC.get(name)
+    e = toolchains().get(name)
     if not isinstance(e, dict):
         raise RuntimeError(f"toolchain.json 缺组件 {name}")
     if "require" not in e and "channel_from" not in e:
@@ -205,9 +264,45 @@ def entry_artifact(name: str, e: dict, os_name: str, arch: str) -> dict:
     raise RuntimeError(f"toolchain.json 的 {name} 缺 {os_name}/{arch} 产物")
 
 
-# 清单结构（由各 Tool 类的 manifest 汇总而来）：
-#   toolchains — 每个工具「装什么」：各 Tool.manifest 的 version/sha256/extra。
-#   sources    — 每个工具「从哪下」：各 Tool.manifest.urls。
+def tool_artifact(name: str, os_name: str | None = None, arch: str | None = None) -> dict:
+    """当前平台（或指定 os/arch）的产物记录。"""
+    os_key = os_name or PLATFORM.name
+    try:
+        return entry_artifact(name, tool_entry(name), os_key, arch or machine_arch())
+    except RuntimeError as e:
+        if os_key not in ("linux", "windows"):
+            raise RuntimeError(
+                f"{os_key} 不在自动化支持范围（清单只有 linux/windows 产物）：请自备 {name}，"
+                f"体检仍可用 `ps-setup.py check`（系统安装的会被识别）"
+            ) from e
+        raise
+
+
+def asset_rel(name: str, a: dict) -> str:
+    """产物「在下载基址之后」那一段：下载与回算哈希共用这一个出口。
+
+    github 类工具返回完整 URL（与 `prefix + "/" + rel` 的拼接语义一致，
+    prefix 为空时直接就是最终地址）；pbs 返回 `<构建标识>/<文件>`；
+    rustup 返回 `archive/<版本>/<triple>/<rustup-init>`。
+    """
+    ver = str(a["version"])
+    if name == "python":
+        # pbs 的 URL 是 <构建标识>/<文件>，构建标识即版本号 "+" 之后那段
+        return f"{ver.split('+', 1)[-1]}/{a['file']}"
+    if name == "ninja":
+        return f"https://github.com/ninja-build/ninja/releases/download/v{ver}/ninja-win.zip"
+    if name == "ccache":
+        return f"https://github.com/ccache/ccache/releases/download/v{ver}/ccache-{ver}-windows-x86_64.zip"
+    if name == "rust":
+        triple = f"{a['arch']}-pc-windows-msvc" if a["os"] == "windows" else f"{a['arch']}-unknown-linux-gnu"
+        fname = "rustup-init.exe" if a["os"] == "windows" else "rustup-init"
+        return f"archive/{ver}/{triple}/{fname}"
+    raise RuntimeError(f"{name} 没有下载配方：asset_rel 只覆盖 python/ninja/ccache/rust")
+
+
+# 清单结构（唯一来源是仓库根 toolchain.json）：
+#   toolchains — 每个工具「要几版 / 下哪份产物」：require + artifacts（一条记录=一个产物）。
+#   sources    — 每个工具「从哪下」：各 Tool.download_sources.urls 汇总，文件里写了就覆盖。
 #   packages   — 第三方源码包（zlib/zstd 等）不在这里：由 cmake/Dependencies.cmake
 #                的 PS_VER_*/PS_MIRRORS_* 常量自管（CMake 自己的依赖，与工具链无关）。
 # 版本/哈希来自仓库根 toolchain.json；下载源（urls）仍写在各 Tool 子类里。
@@ -269,7 +364,13 @@ class DepsManifest:
         return a >= b
 
     def get(self, *keys: str, default=None):
-        """按 key 路径读 toolchains 下的值，任一层缺失就返回 default。"""
+        """按 key 路径读 toolchains 下的值，任一层缺失就返回 default。
+
+        `version` 不存第二份：由 require / rust 的 channel_from 现算（门禁表达式原样，
+        安装取 split_expr 之后那一段时各调用方自己拆）。
+        """
+        if len(keys) == 2 and keys[1] == "version" and keys[0] in self.tc:
+            return tool_version(keys[0])
         d = self.tc
         for k in keys:
             if not isinstance(d, dict) or k not in d:
@@ -278,7 +379,7 @@ class DepsManifest:
         return d
 
     def sources(self, kind: str) -> dict:
-        """读取顶层 sources.<kind>（由各 Tool.manifest.urls 汇总，兼容清单覆盖）。"""
+        """读取顶层 sources.<kind>（由各 Tool.download_sources 汇总，清单里写了就覆盖）。"""
         return self.data.get("sources", {}).get(kind, {}) or {}
 
     @staticmethod
@@ -369,13 +470,36 @@ def download(
     return dest
 
 
+def download_via_prefixes(prefixes: list[str], rel: str, dest: Path, want_sha256: str, label: str) -> None:
+    """逐源尝试下载（镜像前缀 + 直连兜底），全失败才报错。
+
+    同一源先试两次（瞬时 5xx / 连接被重置很常见）：哈希不符不重试——那是包本身
+    不对，重下同一地址只会浪费时间。成功时记下用的是哪个源，慢的时候能直接看出来。
+    """
+    for base in [*prefixes, ""]:
+        url = (base.rstrip("/") + "/" + rel) if base else rel
+        for attempt in (1, 2):
+            try:
+                download(url, dest, want_sha256=want_sha256)
+                log(f"{label} 下载成功：{base or '直连'}")
+                return
+            except ValueError as e:  # 含 sha256 不符：换源，不在同一地址重试
+                log(f"{label} 源失败：{e}")
+                break
+            except (OSError, TimeoutError) as e:
+                log(f"{label} 第 {attempt} 次失败：{e}")
+                if attempt == 1:
+                    time.sleep(1)
+    raise RuntimeError(f"{label} 下载失败（所有源均不可用）")
+
+
 # ---------- 探测 ----------
 
 
 def capture(cmd: list[str]) -> str | None:
     """跑命令取 stdout；报错或超时返回 None（探测用，不抛异常打断体检）。"""
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=PROBE_TIMEOUT)
         return r.stdout.strip() or None
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -385,65 +509,14 @@ def capture(cmd: list[str]) -> str | None:
 
 
 @dataclass(frozen=True)
-class ToolManifest:
-    """每个 Tool 持有的同构配置：装什么（version/sha256）+ 从哪下（urls）+
-    工具专属字段（extra）。所有工具用同一套字段，差异只在取值。
+class DownloadSources:
+    """一组下载源声明（kind -> official/mirrors/prefixes）。
 
-    name    —— 工具名（与 Tool.name 一致，导出时做 toolchains 的 key）
-    version —— 版本表达式（">=3.24" / "=6.8.3"）
-    sha256  —— 校验和映射（平台/文件 -> 哈希；无下载的工具留空）
-    urls    —— 下载源（kind -> official/mirrors/prefixes；系统组件留空）
-    extra   —— 该工具专属键（pbs/configuration/abi/windows_version/…），
-               导出时平铺进 toolchains.<name>，与清单外部格式保持一致。
+    版本、文件名、哈希都不在这里：它们只有 toolchain.json 一处，消费方用
+    tool_artifact() 取当前平台那条。类体只声明「从哪下」。
     """
 
-    name: str
-    version: str = ""
-    sha256: dict = field(default_factory=dict)
-    urls: dict = field(default_factory=dict)
-    extra: dict = field(default_factory=dict)
-
-    def spec(self) -> dict:
-        """还原成清单 toolchains.<name> 段（保持既有外部格式与字段顺序）。"""
-        return {"version": self.version, **self.extra, **({"sha256": self.sha256} if self.sha256 else {})}
-
-
-def tool_manifest(name: str, urls: dict) -> ToolManifest:
-    """按 toolchain.json 的条目构造 ToolManifest。
-
-    清单只管两件事：「门禁要几版」（require）与「实际下载哪份产物」（artifacts，
-    版本/文件名/哈希同处一条）。这里把 artifacts 摊成各 Tool 既有的消费形状，
-    免得下载逻辑到处按 os/arch 查表；urls（下载源）仍留在各自的 Tool 类里。
-    """
-    e = tool_entry(name)
-    extra = {k: v for k, v in e.items() if k not in ("require", "artifacts", "channel_from")}
-    sha: dict = {}
-    if name == "python":
-        pbs: dict[str, dict] = {}
-        tags: set[str] = set()
-        for a in entry_artifacts(name, e):
-            triple = f"{a['arch']}-pc-windows-msvc" if a["os"] == "windows" else f"{a['arch']}-unknown-linux-gnu"
-            pbs[triple] = {"file": a["file"], "sha256": a["sha256"]}
-            tags.add(str(a["version"]).split("+", 1)[-1])
-        if len(tags) != 1:
-            raise RuntimeError(f"toolchain.json 的 python 产物构建标识不一致：{sorted(tags)}")
-        extra["pbs_build"] = tags.pop()
-        extra["pbs"] = pbs
-    elif name in ("ninja", "ccache"):
-        a = entry_artifact(name, e, "windows", "x86_64")
-        extra["windows_version"] = a["version"]
-        sha = {"windows-x86_64": a["sha256"]}
-    elif name == "rust":
-        for a in entry_artifacts(name, e):
-            sha.setdefault(a["os"], {})[a["arch"]] = a["sha256"]
-        extra["rustup_version"] = entry_artifact(name, e, PLATFORM.name, machine_arch())["version"]
-    return ToolManifest(
-        name=name,
-        version=tool_version(name),
-        sha256=sha,
-        urls=urls,
-        extra=extra,
-    )
+    urls: dict
 
 
 # ---------- ToolBase 基类与组件注册表（一软件一 class）----------
@@ -475,6 +548,76 @@ def log_to(stream):
 
 def run(cmd: list[object], **kw) -> subprocess.CompletedProcess:
     return subprocess.run([str(c) for c in cmd], **kw)
+
+
+def backup_user_config(path: Path) -> Path | None:
+    """改用户自己的配置前留一份 <file>.ps-setup.bak（只保留最近一份，不堆垃圾）。"""
+    if not path.is_file():
+        return None
+    bak = path.with_name(path.name + ".ps-setup.bak")
+    try:
+        shutil.copy2(path, bak)
+    except OSError as e:
+        log(f"备份 {path} 失败（{e}），放弃修改以免丢配置")
+        raise
+    return bak
+
+
+def write_user_config(path: Path, text: str, validate: Callable[[str], None] | None = None) -> None:
+    """写用户配置：先备份、后校验，校验不过自动还原。
+
+    这些文件属于用户（.bashrc / VSCode settings / Windows Terminal settings），
+    写坏一次就是白屏或终端起不来，所以宁可失败也不能留下半截内容。
+    """
+    old = path.read_text(encoding="utf-8", errors="ignore") if path.is_file() else None
+    bak = backup_user_config(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    if validate is None:
+        return
+    try:
+        validate(text)
+    except Exception as e:
+        if old is not None:
+            path.write_text(old, encoding="utf-8")
+        raise RuntimeError(f"{path} 写入后校验失败（{e}），已还原" + (f"，备份 {bak}" if bak else "")) from e
+
+
+@contextlib.contextmanager
+def install_lock(root: Path, timeout: float = 30.0):
+    """同一环境根只允许一个安装/卸载/引导在跑。
+
+    两个终端同时 install 会各自 rmtree 同一个 toolchain/<x>，最终装出半套；
+    锁文件里写 pid，进程已死但锁还在（上次 Ctrl-C）超过 2 小时按残留处理。
+    """
+    lock = Path(root) / ".ps-setup.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + timeout
+    fd = -1
+    while fd < 0:
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+        except FileExistsError:
+            try:
+                stale = time.time() - lock.stat().st_mtime > 7200
+                pid = lock.read_text(encoding="utf-8", errors="ignore").strip() or "?"
+            except OSError:
+                stale, pid = True, "?"
+            if stale:
+                log(f"清掉残留锁 {lock}（pid={pid}，超过 2 小时）")
+                lock.unlink(missing_ok=True)
+                continue
+            if time.monotonic() > deadline:
+                raise RuntimeError(
+                    f"另一个 ps-setup 正在操作 {root}（pid={pid}）；等它结束，或确认无进程后删 {lock}"
+                ) from None
+            time.sleep(0.5)
+    try:
+        yield
+    finally:
+        os.close(fd)
+        lock.unlink(missing_ok=True)
 
 
 def make_symlink(src: Path, dst: Path) -> None:
@@ -547,12 +690,14 @@ def _win_vs_installs() -> list[Path]:
 
 
 class ToolBase:
-    """组件基类：get_installed_version（探测版本）/ install / get_health_record（体检记录）/ uninstall 四件套。
+    """组件基类，子类只覆写需要的那几个：
+    find_executable / detect_version / install / uninstall，
+    体检结论统一由 health_record() 组装，不各写一套判定。
     uninstall 红线：只删 $PS_DEPS_ROOT/toolchain 与 <root>/bin 下自己的链接，
     绝不碰 env.sh / profile 挂载 / 系统组件。"""
 
     name = ""  # 注册表键 + 探测命令名（python 按平台覆盖 detect_name）
-    manifest = ToolManifest(name="")  # 每个子类用自己的同构实例覆盖
+    download_sources = DownloadSources(urls={})  # 每个子类声明自己的下载源
     detect_name = ""  # 探测/判源用的命令名，默认取 name；python 按平台区分（Windows 只有 python.exe）
     check_order: float = -1  # 体检显示顺序（<0 表示不体检，如 system）；float 允许插队（1.5）
 
@@ -562,7 +707,7 @@ class ToolBase:
         self.p = EnvPathLayout(root)
 
     @staticmethod
-    def _extract_version(cmd: list[str], pattern: str, group: int = 1) -> str | None:
+    def _parse_version_output(cmd: list[str], pattern: str, group: int = 1) -> str | None:
         """跑 cmd 后用正则从输出里抠版本号，匹配不到返回 None。"""
         out = capture(cmd)
         if not out:
@@ -587,7 +732,7 @@ class ToolBase:
         except (OSError, ValueError):
             return "system"
 
-    def scan_candidates(self) -> list[Path]:
+    def find_candidates(self) -> list[Path]:
         """PATH 之外、本机已装好的常见落点（Windows 为主：VS 自带工具多半不在 PATH）。
         默认不扫；各工具按自己的生态覆盖。"""
         return []
@@ -602,7 +747,7 @@ class ToolBase:
         found = shutil.which(name)
         if found:
             return found, self.detect_source(name, self.root)
-        for cand in self.scan_candidates():
+        for cand in self.find_candidates():
             if cand.is_file():
                 return str(cand), "scan"
         return None, "none"
@@ -611,7 +756,7 @@ class ToolBase:
         """探测版本；root 可覆盖探测根（cmake 探系统版本时传 Path("/")）。"""
         raise NotImplementedError
 
-    def get_installed_version(self) -> str | None:
+    def detect_installed_version(self) -> str | None:
         """当前工具版本，未安装返回 None。"""
         return self.detect_version(self.root)
 
@@ -622,7 +767,7 @@ class ToolBase:
     def get_health_record(self) -> dict:
         """一条体检记录，字段即 --json 输出。"""
         expr = self.m.get(self.name, "version", default="")
-        v = self.get_installed_version()
+        v = self.detect_installed_version()
         ok = DepsManifest.test_version(v, expr)
         _, src = self.find_executable() if v else (None, "none")
         return {"tool": self.name, "require": expr, "actual": v or "缺", "source": src, "ok": ok}
@@ -704,7 +849,13 @@ class PipInstaller:
         base: list[object] = ["pip", "install", "--quiet", "--disable-pip-version-check"]
         if index:
             base += ["--index-url", index]
-        r = run(base + list(args), capture_output=True, text=True, env={**os.environ, **(env_extra or {})})
+        r = run(
+            base + list(args),
+            capture_output=True,
+            text=True,
+            env={**os.environ, **(env_extra or {})},
+            timeout=INSTALL_MAX_TIME,
+        )
         if r.returncode == 0:
             return
         err = (r.stderr or "") + (r.stdout or "")
@@ -719,6 +870,7 @@ class PipInstaller:
                     capture_output=True,
                     text=True,
                     env={**os.environ, **(env_extra or {})},
+                    timeout=INSTALL_MAX_TIME,
                 )
                 if r2.returncode == 0:
                     return
@@ -730,7 +882,13 @@ class PipInstaller:
             if host:
                 log(f"系统 CA 仍失败，降级为仅信任当前源 host：{host}（关闭该 host 校验，仅此环境）")
                 env3 = {**os.environ, **(env_extra or {})}
-                r3 = run(base + ["--trusted-host", host, *args], capture_output=True, text=True, env=env3)
+                r3 = run(
+                    base + ["--trusted-host", host, *args],
+                    capture_output=True,
+                    text=True,
+                    env=env3,
+                    timeout=INSTALL_MAX_TIME,
+                )
                 if r3.returncode == 0:
                     return
                 err = (r3.stderr or "") + (r3.stdout or "")
@@ -743,7 +901,7 @@ class PipInstaller:
 
 class GccTool(ToolBase):
     name = "gcc"
-    manifest = tool_manifest("gcc", urls={})  # 系统组件，apt 源见 SystemTool
+    download_sources = DownloadSources(urls={})  # 系统组件，apt 源见 SystemTool
     check_order = 0
 
     def applicable(self) -> bool:
@@ -764,8 +922,7 @@ class GccTool(ToolBase):
 
 class CmakeTool(ToolBase):
     name = "cmake"
-    manifest = tool_manifest(
-        "cmake",
+    download_sources = DownloadSources(
         urls={
             "pypi": {
                 "official": "https://pypi.org/simple",
@@ -781,9 +938,9 @@ class CmakeTool(ToolBase):
     def detect_version(self, root: Path | None = None) -> str | None:
         """受管 bin/venv 已在 PATH 最前，which 命中即受管版本；否则扫本机落点（VS 自带 CMake）。"""
         which, _ = self.find_executable()
-        return ToolBase._extract_version([which, "--version"], r"cmake version (\S+)") if which else None
+        return ToolBase._parse_version_output([which, "--version"], r"cmake version (\S+)") if which else None
 
-    def scan_candidates(self) -> list[Path]:
+    def find_candidates(self) -> list[Path]:
         """装了但没进 PATH 的 CMake：独立安装（Program Files/LOCALAPPDATA），
         以及 VS 自带的 CMake 组件（在 Common7 下，永远不在 PATH 上）。"""
         if not PLATFORM.is_windows:
@@ -821,14 +978,13 @@ class CmakeTool(ToolBase):
     def uninstall(self) -> None:
         self._remove([self.p.bin / f"cmake{self.p.exe}"])
         if shutil.which("pip"):
-            run(["pip", "uninstall", "-y", "cmake"], capture_output=True, text=True)
+            run(["pip", "uninstall", "-y", "cmake"], capture_output=True, text=True, timeout=INSTALL_MAX_TIME)
             log("venv 内 pip 包 cmake 已卸载")
 
 
 class NinjaTool(ToolBase):
     name = "ninja"
-    manifest = tool_manifest(
-        "ninja",
+    download_sources = DownloadSources(
         urls={"github": {"prefixes": ["https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/"]}},
     )
     check_order = 2
@@ -837,7 +993,7 @@ class NinjaTool(ToolBase):
         which, _ = self.find_executable()
         return capture([which, "--version"]) if which else None
 
-    def scan_candidates(self) -> list[Path]:
+    def find_candidates(self) -> list[Path]:
         """VS 自带 ninja 在 Common7/IDE/.../CMake/Ninja 下，不在 PATH —— 这是
         Windows 上"机器明明有 ninja 却判缺"最常见的一处。"""
         if not PLATFORM.is_windows:
@@ -858,22 +1014,11 @@ class NinjaTool(ToolBase):
                 return
         if not PLATFORM.is_windows:
             raise RuntimeError("缺 ninja：sudo apt-get install -y ninja-build 后重跑")
-        ver = (
-            m.get("ninja", "windows_version", default="")
-            or DepsManifest.split_expr(m.get("ninja", "version", default=""))[1]
-        )
-        url_gh = f"https://github.com/ninja-build/ninja/releases/download/v{ver}/ninja-win.zip"
-        want = m.get("ninja", "sha256", "windows-x86_64", default="")
-        z = p.download_path("ninja-win.zip")
-        for base in [*m.sources("github").get("prefixes", []), ""]:
-            url = (base.rstrip("/") + "/" + url_gh) if base else url_gh
-            try:
-                download(url, z, want_sha256=want)
-                break
-            except (OSError, ValueError, TimeoutError) as e:
-                log(f"ninja 源失败：{e}")
-        else:
-            raise RuntimeError("ninja 下载失败")
+        a = tool_artifact("ninja", "windows", "x86_64")
+        ver = str(a["version"])
+        rel = asset_rel("ninja", a)
+        z = p.download_path(rel.rsplit("/", 1)[-1])
+        download_via_prefixes(m.sources("github").get("prefixes", []), rel, z, a["sha256"], "ninja")
         p.ninja_bin.mkdir(parents=True, exist_ok=True)
         extract_zip(z, p.ninja_bin)
         make_symlink(p.ninja_bin / "ninja.exe", p.bin / f"ninja{p.exe}")
@@ -888,8 +1033,7 @@ class PythonTool(ToolBase):
     detect_name = "python" if PLATFORM.is_windows else "python3"
     # python-build-standalone（pbs）：CPython 官方独立构建，钉死构建标识跨机器一致。
     # 薄壳/内核直接下载解压（系统自带 tar），不碰系统 Python、可整体卸载。
-    manifest = tool_manifest(
-        "python",
+    download_sources = DownloadSources(
         urls={
             # pbs 受管解释器下载：完整 base（拼 /<tag>/<file> 即最终 URL）
             "python": {
@@ -919,7 +1063,7 @@ class PythonTool(ToolBase):
         which, _ = self.find_executable()
         return capture([which, "-c", "import sys;print('%d.%d.%d'%sys.version_info[:3])"]) if which else None
 
-    def scan_candidates(self) -> list[Path]:
+    def find_candidates(self) -> list[Path]:
         """装了 Python 但没勾"加入 PATH" 的机器（Windows 官方安装器的默认行为）：
         扫 Program Files / LOCALAPPDATA/Programs 下的 Python3*，新版本在前。"""
         if not PLATFORM.is_windows:
@@ -938,17 +1082,9 @@ class PythonTool(ToolBase):
 
         p = EnvPathLayout(root)
         m = DepsManifest()
-        tag = m.get("python", "pbs_build", default="")
-        # 架构名统一由 ps_setup_platform.machine_arch() 归一化（AMD64/ARM64 与
-        # x86_64/aarch64 都收成发布包用的那两种），这里只拼后缀，不再自带一份映射。
-        arch = machine_arch()
-        triple = f"{arch}-pc-windows-msvc" if PLATFORM.is_windows else f"{arch}-unknown-linux-gnu"
-        if not tag or not triple:
-            raise RuntimeError(f"不支持的架构/清单缺 python.pbs_build（tag={tag!r} triple={triple!r}）")
-        info = m.get("python", "pbs", triple, default=None)
-        if not info:
-            raise RuntimeError(f"清单缺 toolchains.python.pbs.{triple}")
-        fname, want = info["file"], info["sha256"]
+        # 版本/文件名/哈希全部取自 artifacts 里当前平台那一条，不再拼 pbs 的 tag 表
+        a = tool_artifact("python")
+        fname, want = a["file"], a["sha256"]
         pbs_exe = p.pbs_bin / ("python.exe" if p.exe else "python3")
         if pbs_exe.is_file() and capture([str(pbs_exe), "-c", "import sys;print(sys.version_info[:2])"]):
             return pbs_exe
@@ -956,21 +1092,7 @@ class PythonTool(ToolBase):
         tarball = p.download_path(fname)
         py_src = m.sources("python")
         mirrors = [*py_src.get("mirrors", []), py_src.get("official", "")]  # 官方直连兜底
-        rel = f"{tag}/{fname}"
-        ok = False
-        for base in mirrors:
-            url = base.rstrip("/") + "/" + rel
-            log(f"尝试 Python 源：{base.split('/')[2] if '/' in base else base}")
-            try:
-                download(url, tarball, want_sha256=want, connect_timeout=10, max_time=600)
-                ok = True
-                break
-            except (OSError, ValueError, TimeoutError) as e:
-                log(f"  失败：{e}")
-        if not ok:
-            raise RuntimeError(
-                f"受管 Python 下载失败（{fname}，期望 sha256={want}）；可手动下载后放入 {tarball.parent}"
-            )
+        download_via_prefixes(mirrors, asset_rel("python", a), tarball, want, "Python")
 
         try:
             extract_tarball(tarball, p.pbs, strip=False)  # 保留顶层 python/ 目录
@@ -997,7 +1119,7 @@ class PythonTool(ToolBase):
             # pbs 的 install_only 包自带 ensurepip，可直接建 venv
             p.venv.parent.mkdir(parents=True, exist_ok=True)
             log(f"创建 venv：{p.venv}")
-            r = run([str(pbs), "-m", "venv", str(p.venv)])
+            r = run([str(pbs), "-m", "venv", str(p.venv)], timeout=INSTALL_MAX_TIME)
             if r.returncode != 0 or not pip_exe.is_file():
                 shutil.rmtree(p.venv, ignore_errors=True)
                 raise RuntimeError(f"venv 创建失败：{p.venv}（pbs 解释器 {pbs}）")
@@ -1010,8 +1132,7 @@ class PythonTool(ToolBase):
 
 class CcacheTool(ToolBase):
     name = "ccache"
-    manifest = tool_manifest(
-        "ccache",
+    download_sources = DownloadSources(
         urls={"github": {"prefixes": ["https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/"]}},
     )
     check_order = 4
@@ -1057,9 +1178,9 @@ class CcacheTool(ToolBase):
     def detect_version(self, root: Path | None = None) -> str | None:
         """受管 ccache/bin 已在 PATH 最前，which 命中即受管版本，否则回落系统。"""
         which, _ = self.find_executable()
-        return ToolBase._extract_version([which, "--version"], r"ccache version (\S+)") if which else None
+        return ToolBase._parse_version_output([which, "--version"], r"ccache version (\S+)") if which else None
 
-    def scan_candidates(self) -> list[Path]:
+    def find_candidates(self) -> list[Path]:
         """scoop / chocolatey / 独立解压的 ccache 常不在 PATH（scoop 的 shims 才在）。"""
         if not PLATFORM.is_windows:
             return []
@@ -1082,27 +1203,16 @@ class CcacheTool(ToolBase):
         if exe and PLATFORM.is_windows:
             # Windows 上机器里已经有一份达标的 ccache（scoop/choco/独立安装）就沿用，
             # 不再下载一份到 .ps-deps；Linux 仍按原设计把系统 ccache 固化进受管目录。
-            v = ToolBase._extract_version([exe, "--version"], r"ccache version (\S+)")
+            v = ToolBase._parse_version_output([exe, "--version"], r"ccache version (\S+)")
             if v and DepsManifest.test_version(v, m.get("ccache", "version", default="")):
                 log(f"ccache {v} 已就位（沿用本机安装）：{exe}")
                 return
         if PLATFORM.is_windows:
-            ver = (
-                m.get("ccache", "windows_version", default="")
-                or DepsManifest.split_expr(m.get("ccache", "version", default=""))[1]
-            )
-            url_gh = f"https://github.com/ccache/ccache/releases/download/v{ver}/ccache-{ver}-windows-x86_64.zip"
-            want = m.get("ccache", "sha256", "windows-x86_64", default="")
-            z = p.download_path(f"ccache-{ver}-windows-x86_64.zip")
-            for base in [*m.sources("github").get("prefixes", []), ""]:
-                url = (base.rstrip("/") + "/" + url_gh) if base else url_gh
-                try:
-                    download(url, z, want_sha256=want)
-                    break
-                except (OSError, ValueError, TimeoutError) as e:
-                    log(f"ccache 源失败：{e}")
-            else:
-                raise RuntimeError("ccache 下载失败")
+            a = tool_artifact("ccache", "windows", "x86_64")
+            ver = str(a["version"])
+            rel = asset_rel("ccache", a)
+            z = p.download_path(rel.rsplit("/", 1)[-1])
+            download_via_prefixes(m.sources("github").get("prefixes", []), rel, z, a["sha256"], "ccache")
             extract_zip(z, p.ccache)
             inner = p.ccache / f"ccache-{ver}-windows-x86_64"
             if inner.is_dir():  # zip 带顶层目录：摊平到 toolchain/ccache
@@ -1152,8 +1262,7 @@ class RustTool(ToolBase):
     # rustup 安装器只从 archive/<版本>/<目标>/ 取：那是不可变路径，能把 sha256 钉死。
     # sh.rustup.rs / win.rustup.rs 是随版本滚动的短链，钉了哈希下次发版就必然失效，
     # 而不钉哈希等于把任意下载物直接以用户权限执行（供应链投毒）。
-    manifest = tool_manifest(
-        "rust",
+    download_sources = DownloadSources(
         urls={
             "rust": {
                 # update_root 是 archive 与发行站的共同根；dist_server 供工具链下载
@@ -1188,18 +1297,12 @@ class RustTool(ToolBase):
 
     def rustup_installer(self, picked: dict) -> tuple[str, str]:
         """rustup-init 的下载 URL 与期望 sha256；缺哈希直接报错，绝不静默跳过校验。"""
-        ver = self.m.get("rust", "rustup_version", default="")
-        arch = machine_arch()
-        want = (self.m.get("rust", "sha256", default={}) or {}).get(PLATFORM.name, {}).get(arch, "")
-        if not ver or not want:
-            raise RuntimeError(
-                f"清单缺 rustup 安装器校验信息（rustup_version={ver!r}，"
-                f"sha256[{PLATFORM.name}][{arch}] 为空）：拒绝执行未校验的安装器"
-            )
-        triple = f"{arch}-pc-windows-msvc" if PLATFORM.is_windows else f"{arch}-unknown-linux-gnu"
-        name = "rustup-init.exe" if PLATFORM.is_windows else "rustup-init"
+        try:
+            a = tool_artifact("rust")
+        except RuntimeError as e:
+            raise RuntimeError(f"清单缺 rustup 安装器校验信息：拒绝执行未校验的安装器（{e}）") from e
         root = picked.get("update_root") or "https://static.rust-lang.org/rustup"
-        return f"{root.rstrip('/')}/archive/{ver}/{triple}/{name}", want
+        return f"{root.rstrip('/')}/{asset_rel('rust', a)}", a["sha256"]
 
     def detect_version(self, root: Path | None = None) -> str | None:
         """工程钉的 channel 优先（读 rust-toolchain.toml + rustup toolchain 目录），
@@ -1223,11 +1326,11 @@ class RustTool(ToolBase):
                 for d in sorted(toolchains.glob(f"{channel}-*")):
                     cargo = d / "bin" / ("cargo.exe" if PLATFORM.is_windows else "cargo")
                     if cargo.is_file():
-                        return ToolBase._extract_version([str(cargo), "--version"], r"cargo (\S+)")
+                        return ToolBase._parse_version_output([str(cargo), "--version"], r"cargo (\S+)")
         which, _src = self.find_executable()  # 受管 cargo_bin 已在 PATH，系统 cargo 一般也在
-        return ToolBase._extract_version([which, "--version"], r"cargo (\S+)") if which else None
+        return ToolBase._parse_version_output([which, "--version"], r"cargo (\S+)") if which else None
 
-    def scan_candidates(self) -> list[Path]:
+    def find_candidates(self) -> list[Path]:
         """rustup 的默认落点（%USERPROFILE%\\.cargo\\bin）——PATH 被重置后仍能找到。"""
         if not PLATFORM.is_windows:
             return []
@@ -1256,7 +1359,7 @@ class RustTool(ToolBase):
             if rustup.is_file():
                 log(f"补装 rust 工具链 {want}（受管 rustup 已在）")
                 env = {**os.environ, "RUSTUP_HOME": str(p.rustup_home), "CARGO_HOME": str(p.cargo_home)}
-                r = run([str(rustup), "toolchain", "install", want], env=env)
+                r = run([str(rustup), "toolchain", "install", want], env=env, timeout=INSTALL_MAX_TIME)
                 if r.returncode == 0 and self.get_health_record()["ok"]:
                     log(f"rust 工具链就绪：{want}")
                     return
@@ -1281,10 +1384,12 @@ class RustTool(ToolBase):
             raise RuntimeError("rustup-init 缺 sha256：拒绝执行未校验的安装器")
         init = p.download_path("rustup-init.exe" if PLATFORM.is_windows else "rustup-init")
         log(f"安装 rustup + {want} 到 {p.rust}（installer={init_url}，sha256 校验）")
-        download(init_url, init, want_sha256=want_sha, connect_timeout=10, max_time=120)
+        download(
+            init_url, init, want_sha256=want_sha, connect_timeout=DOWNLOAD_CONNECT_TIMEOUT, max_time=RUSTUP_MAX_TIME
+        )
         if not PLATFORM.is_windows:
             init.chmod(0o755)
-        r = run([str(init), *args], env=env)
+        r = run([str(init), *args], env=env, timeout=INSTALL_MAX_TIME)
         if r.returncode != 0 or self.detect_source("cargo", self.root) != "managed":
             raise RuntimeError("rustup 安装失败（见上方输出）")
         log(f"rust 已安装：{capture(['cargo', '--version'])}")
@@ -1306,7 +1411,7 @@ class MsvcTool(ToolBase):
     """
 
     name = "msvc"
-    manifest = tool_manifest("msvc", urls={})  # VS2015 起的 VC 工具集都是 14.x
+    download_sources = DownloadSources(urls={})  # VS2015 起的 VC 工具集都是 14.x
     check_order = 1.5
 
     def applicable(self) -> bool:
@@ -1322,7 +1427,7 @@ class MsvcTool(ToolBase):
             return None
         return txt or None
 
-    def _find(self) -> tuple[Path, str] | None:
+    def _find_install(self) -> tuple[Path, str] | None:
         for vs in _win_vs_installs():
             v = self._vc_version(vs)
             if v:
@@ -1330,17 +1435,17 @@ class MsvcTool(ToolBase):
         return None
 
     def detect_version(self, root: Path | None = None) -> str | None:
-        hit = self._find()
+        hit = self._find_install()
         return hit[1] if hit else None
 
     def resolve_path(self) -> str | None:
-        hit = self._find()
+        hit = self._find_install()
         return str(hit[0]) if hit else None
 
     def get_health_record(self) -> dict:
         """来源固定 system：MSVC 只可能来自系统装的 VS，我们不往 .ps-deps 里装编译器。"""
         expr = self.m.get("msvc", "version", default="")
-        v = self.get_installed_version()
+        v = self.detect_installed_version()
         return {
             "tool": self.name,
             "require": expr,
@@ -1379,35 +1484,35 @@ class MsvcTool(ToolBase):
                 f"VS Build Tools 安装失败（winget 返回 {r.returncode}）；"
                 "手工装法见 https://aka.ms/vs/17/release/vs_buildtools.exe"
             )
-        if not self.get_installed_version():
+        if not self.detect_installed_version():
             raise RuntimeError("winget 报告成功但找不到 VC 工具集；装完请新开终端（环境未刷新）后重跑")
-        log(f"MSVC {self.get_installed_version()} 已就位：{self.resolve_path()}")
+        log(f"MSVC {self.detect_installed_version()} 已就位：{self.resolve_path()}")
 
 
 class QtTool(ToolBase):
     name = "qt"
-    manifest = tool_manifest(
-        "qt",
-        # aqt 的 arch 名随平台变：Linux 是 linux_gcc_64（6.8 起，落盘目录仍是 gcc_64），
-        # Windows 是 win64_msvc2022_64。写成映射而不是单值，否则 Windows 会拿 Linux 名去装。
-        # 版本写下限：install 取 6.8.3 去装，外部自备 Qt（实测 6.12）只要不低于它就算过。
-        # ABI 不在这里存第二份：aqt 的 arch 名只由 ps_setup_platform 的 qt_abi_default()
-        # 提供（Windows 是 win64_msvc2022_64，Linux 是 linux_gcc_64），双份常量必然漂移。
-        urls={
-            # Qt 官方在线安装源（aqt 拉 metadata/包）
-            "qt": {
-                "official": "https://download.qt.io",
-                "mirrors": ["https://mirrors.aliyun.com/qt"],
+    download_sources = (
+        DownloadSources(  # aqt 的 arch 名随平台变：Linux 是 linux_gcc_64（6.8 起，落盘目录仍是 gcc_64），
+            # Windows 是 win64_msvc2022_64。写成映射而不是单值，否则 Windows 会拿 Linux 名去装。
+            # 版本写下限：install 取 6.8.3 去装，外部自备 Qt（实测 6.12）只要不低于它就算过。
+            # ABI 不在这里存第二份：aqt 的 arch 名只由 ps_setup_platform 的 qt_abi_default()
+            # 提供（Windows 是 win64_msvc2022_64，Linux 是 linux_gcc_64），双份常量必然漂移。
+            urls={
+                # Qt 官方在线安装源（aqt 拉 metadata/包）
+                "qt": {
+                    "official": "https://download.qt.io",
+                    "mirrors": ["https://mirrors.aliyun.com/qt"],
+                },
+                # aqtinstall 本身从 pypi 装。
+                "pypi": {
+                    "official": "https://pypi.org/simple",
+                    "mirrors": [
+                        "https://mirrors.aliyun.com/pypi/simple/",
+                        "https://pypi.tuna.tsinghua.edu.cn/simple",
+                    ],
+                },
             },
-            # aqtinstall 本身从 pypi 装。
-            "pypi": {
-                "official": "https://pypi.org/simple",
-                "mirrors": [
-                    "https://mirrors.aliyun.com/pypi/simple/",
-                    "https://pypi.tuna.tsinghua.edu.cn/simple",
-                ],
-            },
-        },
+        )
     )
     check_order = 6
 
@@ -1424,7 +1529,7 @@ class QtTool(ToolBase):
                     return d
         return None
 
-    def get_installed_version(self) -> str | None:
+    def detect_installed_version(self) -> str | None:
         """返回扫描到的 Qt 目录；Qt 没有版本号命令，用目录存在与否判安装。"""
         q = self.get_qt_dir()
         return str(q) if q else None
@@ -1439,7 +1544,7 @@ class QtTool(ToolBase):
         override = os.environ.get("PS_QT_ABI", "").strip()
         if override:
             return override
-        if PLATFORM.is_windows and not MsvcTool(self.m, self.root).get_installed_version():
+        if PLATFORM.is_windows and not MsvcTool(self.m, self.root).detect_installed_version():
             raise RuntimeError(
                 "没找到 MSVC：Windows 的 Qt 预编译包必须与编译器 ABI 配套。\n"
                 "先装编译器：python tools/ps-setup.py install msvc"
@@ -1476,7 +1581,7 @@ class QtTool(ToolBase):
                 cmd += ["--archives", a]
             if base:
                 cmd += ["--base", base]
-            r = run(cmd)
+            r = run(cmd, timeout=INSTALL_MAX_TIME)
             # 成功判据 = 退出码 0 且 Qt6Config.cmake 真的落盘：
             # aqt 偶发下载中断却静默 exit 0，残留半个目录会被当成“已安装”（实测踩过）。
             if r.returncode == 0 and self.get_qt_dir():
@@ -1641,14 +1746,13 @@ class QtTool(ToolBase):
 class SystemTool(ToolBase):
     """系统包层的下载源（apt），不体检、不安装——系统包由人工按提示装。
 
-    manifest 只用于给清单导出提供 apt 源默认值；本类不进 INSTALL_ORDER，
+    download_sources 只给 sources 汇总提供 apt 源默认值；本类不进 INSTALL_ORDER，
     也不体检（check_order=-1），gcc/ninja/ccache 缺了是提示用户 apt-get，不走本类安装。
     """
 
     name = "system"
     check_order = -1  # 不体检：系统组件不归本内核装
-    manifest = ToolManifest(
-        name="system",
+    download_sources = DownloadSources(
         urls={
             "apt": {
                 "official": "http://archive.ubuntu.com/ubuntu",
@@ -1673,23 +1777,133 @@ SOURCE_ORDER = ("pypi", "python", "github", "qt", "rust", "apt")
 
 
 def default_manifest() -> dict:
-    """汇总内置默认清单：toolchains 取各 Tool.manifest.spec()，sources 取各 manifest.urls。
+    """清单只有一份：toolchains 就是 toolchain.json 原样，sources 由各组件下载源汇总。
 
-    版本/sha256/平台文件名与下载源都收在各类持有的同构 ToolManifest 里（改工具只动一处），
-    这里只做汇总：DepsManifest 的唯一来源就是它，没有外部文件可覆盖。
+    不再把 artifacts 摊成 pbs/windows_version/sha256 第二套形状（那正是同一事实存
+    多份的根源）；要产物调 tool_artifact()，要版本调 get(..., "version") 的派生。
+    文件里写了 sources 就覆盖同名 kind，便于临时换镜像。
     """
-    specs = {t.name: t.manifest.spec() for t in TOOL_CLASSES}
-    toolchains = {name: json.loads(json.dumps(specs[name])) for name in MANIFEST_ORDER if name in specs}
+    data = copy.deepcopy(load_manifest())  # 缓存返回的是同一份；下游可能改，先断开引用
+    tc = data["toolchains"]
+    toolchains = {name: tc[name] for name in MANIFEST_ORDER if name in tc}
+    toolchains.update({k: v for k, v in tc.items() if k not in toolchains})
     sources: dict = {}
     for tool in TOOL_CLASSES:
-        for kind, cfg in tool.manifest.urls.items():
+        for kind, cfg in tool.download_sources.urls.items():
             fresh = json.loads(json.dumps(cfg))
             sources[kind] = DepsManifest.merge_dicts(sources[kind], fresh) if kind in sources else fresh
+    for kind, cfg in (data.get("sources") or {}).items():  # 文件里的覆盖优先
+        sources[kind] = DepsManifest.merge_dicts(sources.get(kind, {}), cfg)
     ordered = {name: sources[name] for name in SOURCE_ORDER if name in sources}
+    ordered.update({k: v for k, v in sources.items() if k not in ordered})
     return {"toolchains": toolchains, "sources": ordered}
 
 
 # ---------- 体检汇总与表格 ----------
+
+
+class CcacheProbe:
+    """ccache 实编验收：拿 --print-stats 的命中数前后对比，确认真的命中而不是配了没用。"""
+
+    @staticmethod
+    def hits(ccache: str) -> int:
+        """ccache 的累计命中次数（直连命中 + 预处理后命中）；拿不到统计就当 0。"""
+        out = capture([ccache, "--print-stats"])
+        if not out:
+            return 0
+        hits = 0
+        for key in ("direct_cache_hit", "preprocessed_cache_hit"):
+            mm = re.search(key + r"\s+(\d+)", out)
+            if mm:
+                hits += int(mm.group(1))
+        return hits
+
+    @classmethod
+    def probe(cls, ccache: str, cc: str) -> dict:
+        """用当前编译器实编两次验缓存：首次 CCACHE_RECACHE 强制写，第二次必须命中。
+
+        只有 CMake 知道生成器最终选了哪个编译器，所以 cc 由门禁传进来。
+        cl.exe 必须在 vcvars 环境里才能跑，configure 期没有那个环境，就如实标 skip
+        （缓存目录与禁用开关仍照常校验），不假装通过。
+        """
+        if Path(cc).name.lower() in ("cl", "cl.exe", "clang-cl", "clang-cl.exe"):
+            return {
+                "probe": "skip",
+                "hits_before": 0,
+                "hits_after": 0,
+                "reason": "cl.exe 需要 vcvars 环境，configure 期无法直接调用；命中情况留到首次编译验证",
+            }
+        before = cls.hits(ccache)
+        with tempfile.TemporaryDirectory(prefix="ps-ccache-probe-") as tmp:
+            src = Path(tmp) / "probe.c"
+            src.write_text("int ps_ccache_probe(void) { return 0; }\n", encoding="utf-8")
+            obj = Path(tmp) / ("probe.obj" if PLATFORM.is_windows else "probe.o")
+            args = ["/c", f"/Fo{obj}"] if PLATFORM.is_windows else ["-c", "-o", str(obj)]
+            env = dict(os.environ)
+            env["CCACHE_RECACHE"] = "1"
+            first = run([ccache, cc, *args, str(src)], capture_output=True, text=True, env=env)
+            if first.returncode != 0:
+                tail = (first.stderr or first.stdout).strip()[:300]
+                return {
+                    "probe": "fail",
+                    "hits_before": before,
+                    "hits_after": before,
+                    "reason": f"用 {cc} 编译探针失败：{tail}",
+                }
+            second = run([ccache, cc, *args, str(src)], capture_output=True, text=True)
+            if second.returncode != 0:
+                tail = (second.stderr or second.stdout).strip()[:300]
+                return {
+                    "probe": "fail",
+                    "hits_before": before,
+                    "hits_after": before,
+                    "reason": f"第二次编译探针失败：{tail}",
+                }
+        after = cls.hits(ccache)
+        if after <= before:
+            return {
+                "probe": "fail",
+                "hits_before": before,
+                "hits_after": after,
+                "reason": f"实测没有命中（hits {before} -> {after}）；查 CCACHE_DIR 权限与 CCACHE_DISABLE",
+            }
+        return {"probe": "ok", "hits_before": before, "hits_after": after, "reason": ""}
+
+    @classmethod
+    def state(cls, root: Path, rows: list[dict], cc: str | None) -> dict:
+        """ccache 可用性结论：找得到 + 缓存目录可写 + 没被 CCACHE_DISABLE 关掉 + 有编译器时实编命中。"""
+        p = EnvPathLayout(root)
+        path = next((r["path"] for r in rows if r["tool"] == "ccache" and r["ok"] and r["path"]), "")
+        state = {
+            "ok": False,
+            "path": path,
+            "dir": str(p.ccache_conf_dir),
+            "probe": "skip",
+            "hits_before": 0,
+            "hits_after": 0,
+            "reason": "",
+        }
+        if not path:
+            state["reason"] = "未找到 ccache（python tools/ps-setup.py install ccache）"
+            return state
+        disable = os.environ.get("CCACHE_DISABLE", "")
+        if disable and disable != "0":
+            state["reason"] = f"CCACHE_DISABLE={disable}，缓存被显式关闭"
+            return state
+        try:
+            p.ccache_conf_dir.mkdir(parents=True, exist_ok=True)
+            probe_file = p.ccache_conf_dir / ".ps-write-probe"
+            probe_file.write_text("ok", encoding="utf-8")
+            probe_file.unlink()
+        except OSError as e:
+            state["reason"] = f"CCACHE_DIR 不可写（{p.ccache_conf_dir}）：{e}"
+            return state
+        state["ok"] = True
+        if cc:
+            state.update(cls.probe(path, cc))
+            if state["probe"] == "fail":
+                state["ok"] = False
+        return state
 
 
 class CommandRunner:
@@ -1778,146 +1992,23 @@ class CommandRunner:
             )
         return "\n".join(lines)
 
-    # ---- prepare：一次算出 CMake configure 需要的全部结论（JSON 交接）----
-
-    @staticmethod
-    def _ccache_hits(ccache: str) -> int:
-        """ccache 的累计命中次数（直连命中 + 预处理后命中）；拿不到统计就当 0。"""
-        out = capture([ccache, "--print-stats"])
-        if not out:
-            return 0
-        hits = 0
-        for key in ("direct_cache_hit", "preprocessed_cache_hit"):
-            mm = re.search(key + r"\s+(\d+)", out)
-            if mm:
-                hits += int(mm.group(1))
-        return hits
-
     @classmethod
-    def _ccache_probe(cls, ccache: str, cc: str) -> dict:
-        """用当前编译器实编两次验缓存：首次 CCACHE_RECACHE 强制写，第二次必须命中。
-
-        只有 CMake 知道生成器最终选了哪个编译器，所以 cc 由门禁传进来。
-        cl.exe 必须在 vcvars 环境里才能跑，configure 期没有那个环境，就如实标 skip
-        （缓存目录与禁用开关仍照常校验），不假装通过。
-        """
-        if Path(cc).name.lower() in ("cl", "cl.exe", "clang-cl", "clang-cl.exe"):
-            return {
-                "probe": "skip",
-                "hits_before": 0,
-                "hits_after": 0,
-                "reason": "cl.exe 需要 vcvars 环境，configure 期无法直接调用；命中情况留到首次编译验证",
-            }
-        before = cls._ccache_hits(ccache)
-        with tempfile.TemporaryDirectory(prefix="ps-ccache-probe-") as tmp:
-            src = Path(tmp) / "probe.c"
-            src.write_text("int ps_ccache_probe(void) { return 0; }\n", encoding="utf-8")
-            obj = Path(tmp) / ("probe.obj" if PLATFORM.is_windows else "probe.o")
-            args = ["/c", f"/Fo{obj}"] if PLATFORM.is_windows else ["-c", "-o", str(obj)]
-            env = dict(os.environ)
-            env["CCACHE_RECACHE"] = "1"
-            first = run([ccache, cc, *args, str(src)], capture_output=True, text=True, env=env)
-            if first.returncode != 0:
-                tail = (first.stderr or first.stdout).strip()[:300]
-                return {
-                    "probe": "fail",
-                    "hits_before": before,
-                    "hits_after": before,
-                    "reason": f"用 {cc} 编译探针失败：{tail}",
-                }
-            second = run([ccache, cc, *args, str(src)], capture_output=True, text=True)
-            if second.returncode != 0:
-                tail = (second.stderr or second.stdout).strip()[:300]
-                return {
-                    "probe": "fail",
-                    "hits_before": before,
-                    "hits_after": before,
-                    "reason": f"第二次编译探针失败：{tail}",
-                }
-        after = cls._ccache_hits(ccache)
-        if after <= before:
-            return {
-                "probe": "fail",
-                "hits_before": before,
-                "hits_after": after,
-                "reason": f"实测没有命中（hits {before} -> {after}）；查 CCACHE_DIR 权限与 CCACHE_DISABLE",
-            }
-        return {"probe": "ok", "hits_before": before, "hits_after": after, "reason": ""}
-
-    @classmethod
-    def _ccache_state(cls, root: Path, rows: list[dict], cc: str | None) -> dict:
-        """ccache 可用性结论：找得到 + 缓存目录可写 + 没被 CCACHE_DISABLE 关掉 + 有编译器时实编命中。"""
-        p = EnvPathLayout(root)
-        path = next((r["path"] for r in rows if r["tool"] == "ccache" and r["ok"] and r["path"]), "")
-        state = {
-            "ok": False,
-            "path": path,
-            "dir": str(p.ccache_conf_dir),
-            "probe": "skip",
-            "hits_before": 0,
-            "hits_after": 0,
-            "reason": "",
-        }
-        if not path:
-            state["reason"] = "未找到 ccache（python tools/ps-setup.py install ccache）"
-            return state
-        disable = os.environ.get("CCACHE_DISABLE", "")
-        if disable and disable != "0":
-            state["reason"] = f"CCACHE_DISABLE={disable}，缓存被显式关闭"
-            return state
-        try:
-            p.ccache_conf_dir.mkdir(parents=True, exist_ok=True)
-            probe_file = p.ccache_conf_dir / ".ps-write-probe"
-            probe_file.write_text("ok", encoding="utf-8")
-            probe_file.unlink()
-        except OSError as e:
-            state["reason"] = f"CCACHE_DIR 不可写（{p.ccache_conf_dir}）：{e}"
-            return state
-        state["ok"] = True
-        if cc:
-            state.update(cls._ccache_probe(path, cc))
-            if state["probe"] == "fail":
-                state["ok"] = False
-        return state
-
-    @classmethod
-    def prepare(
+    def _fill_missing(
         cls,
         m: DepsManifest,
         root: Path,
-        cc: str | None = None,
-        allow_install: bool = True,
-        qt_from_cli: bool = False,
-    ) -> dict:
-        """configure 期的唯一入口：体检 → 缺件补装 → 复查 → 算环境变量 → Qt → hooks → ccache。
+        scan: Callable[[], list[dict]],
+        allow_install: bool,
+        messages: list[str],
+        warnings: list[str],
+    ) -> tuple[list[dict], list[str], list[str]]:
+        """缺件则按 INSTALL_ORDER 补装一次，返回 (复查后的 rows, 仍缺的, 装过的)。
 
-        判定口径与 doctor 完全一致（同一个 resolve），这里只是把 doctor / install / resolve /
-        mount 串成一次调用，并把结果整理成 CMake 能直接落地的形状——CMake 只读这份 JSON，
-        不再自己扫盘、读 git config 或各装各的组件。
+        补装后必须重新扫一遍：装了不等于装对（版本不满足、装到别的 ABI 都会留缺）。
         """
-        EnvPathLayout(root).mkdirs()
-        tools = cls.build_tools(m, root)
-        ordered = sorted(
-            (t for t in tools.values() if t.check_order >= 0 and t.applicable()), key=lambda t: t.check_order
-        )
-        messages: list[str] = []
-        warnings: list[str] = []
-        installed: list[str] = []
-        override = os.environ.get("RUSTUP_TOOLCHAIN", "")
-
-        def scan() -> list[dict]:
-            recs = [t.resolve() for t in ordered]
-            if override:
-                # 显式 RUSTUP_TOOLCHAIN 与 src/CMakeLists 的"覆盖即跳过钉版校验"同一口径，
-                # 否则每次 configure 都会去下钉住的那个版本。
-                for rec in recs:
-                    if rec["tool"] == "rust" and not rec["ok"]:
-                        rec["ok"] = True
-                        rec["note"] = f"RUSTUP_TOOLCHAIN={override} 显式覆盖，跳过钉版校验"
-            return recs
-
         rows = scan()
         missing = [r["tool"] for r in rows if not r["ok"]]
+        installed: list[str] = []
         if missing and allow_install:
             messages.append(f"缺少 [{', '.join(missing)}]，按 INSTALL_ORDER 自动安装")
             fails = cls.install_tools(m, root, names=missing)
@@ -1929,53 +2020,14 @@ class CommandRunner:
             missing = [r["tool"] for r in rows if not r["ok"]]
         if missing:
             messages.append(f"仍有缺失：{', '.join(missing)}（python tools/ps-setup.py doctor 看修法）")
+        return rows, missing, installed
 
-        hook_ok, hook_cur = EntryPointMounter.check_git_hooks()
-        hook_action = "already"
-        if not hook_ok:
-            try:
-                EntryPointMounter.mount_hooks(root)
-                hook_action = "mounted"
-            except Exception as e:
-                messages.append(f"Git hooks 挂载失败：{e}")
-            hook_ok, hook_cur = EntryPointMounter.check_git_hooks()
-        if not hook_ok:
-            messages.append("Git hooks 仍未就位（python tools/ps-setup.py mount）")
+    @staticmethod
+    def _env_for(root: Path, rows: list[dict], qt: dict) -> dict:
+        """configure 期要注入的环境：受管 bin 前置、扫描命中的父目录、Qt 前缀、rust 家政。
 
-        qt_tool = cast(QtTool, tools["qt"])
-        qt_row = next(
-            (r for r in rows if r["tool"] == "qt"), {"ok": False, "path": "", "actual": "缺", "source": "none"}
-        )
-        abi = ""
-        if qt_row["path"]:
-            try:
-                abi = qt_tool.abi_name()
-            except RuntimeError as e:
-                warnings.append(f"Qt ABI 无法确定：{e}")
-        qt: dict[str, Any] = {
-            "ok": qt_row["ok"],
-            "path": qt_row["path"],
-            "actual": qt_row["actual"],
-            "source": qt_row["source"],
-            "abi": abi,
-        }
-        if qt_from_cli and qt["path"]:
-            # 前缀由命令行（-DPS_QT_DIR）给出：来源标 cache，CMake 侧据此不覆盖用户的 -D。
-            qt["source"] = "cache"
-            qt_row["source"] = "cache"
-        if qt["path"] and cc:
-            dirname = Path(qt["path"]).name.lower()
-            msvc_cc = Path(cc).name.lower() in ("cl", "cl.exe", "clang-cl", "clang-cl.exe")
-            if msvc_cc and "msvc" not in dirname:
-                warnings.append(
-                    f"Qt 前缀目录名 {dirname} 不像 MSVC ABI（期望 msvc*_64），而当前编译器是 MSVC，"
-                    "链接期可能报 LNK2038/runtime mismatch；换一份 msvc 的 Qt：-DPS_QT_DIR=<…/msvc2022_64>"
-                )
-            elif not msvc_cc and "msvc" in dirname:
-                warnings.append(
-                    f"Qt 前缀目录名 {dirname} 是 MSVC ABI，但当前编译器不是 MSVC（同一份 Qt 不能跨 ABI 复用）"
-                )
-
+        只在此处拼 PATH：CMake 侧不再自己猜目录，避免两边各拼一份导致顺序不同。
+        """
         p = EnvPathLayout(root)
         scanned: list[str] = []
         for rec in rows:
@@ -2002,8 +2054,113 @@ class CommandRunner:
             if rec["tool"] == "rust" and rec["source"] == "managed":
                 env["RUSTUP_HOME"] = str(p.rustup_home)
                 env["CARGO_HOME"] = str(p.cargo_home)
+        return env
 
-        ccache = cls._ccache_state(root, rows, cc)
+    @staticmethod
+    def _scan_rows(ordered: list[ToolBase], override: str) -> list[dict]:
+        """逐项 resolve 出体检记录；显式 RUSTUP_TOOLCHAIN 时按"覆盖即跳过钉版校验"。"""
+        recs = [t.resolve() for t in ordered]
+        if override:
+            # 与 src/CMakeLists 的覆盖口径一致，否则每次 configure 都会去下钉住的那个版本。
+            for rec in recs:
+                if rec["tool"] == "rust" and not rec["ok"]:
+                    rec["ok"] = True
+                    rec["note"] = f"RUSTUP_TOOLCHAIN={override} 显式覆盖，跳过钉版校验"
+        return recs
+
+    @staticmethod
+    def _ensure_hooks(root: Path, messages: list[str]) -> tuple[bool, str, str]:
+        """Git hooks 必须在位：缺就挂一次，再复查；仍缺只记消息，不改变整体结论。"""
+        hook_ok, hook_cur = EntryPointMounter.check_git_hooks()
+        action = "already"
+        if not hook_ok:
+            try:
+                EntryPointMounter.mount_hooks(root)
+                action = "mounted"
+            except Exception as e:
+                messages.append(f"Git hooks 挂载失败：{e}")
+            hook_ok, hook_cur = EntryPointMounter.check_git_hooks()
+        if not hook_ok:
+            messages.append("Git hooks 仍未就位（python tools/ps-setup.py mount）")
+        return hook_ok, hook_cur, action
+
+    @staticmethod
+    def _qt_for(
+        tools: dict[str, ToolBase], rows: list[dict], cc: str | None, qt_from_cli: bool, warnings: list[str]
+    ) -> tuple[dict, dict]:
+        """Qt 这一段结论：路径/来源/ABI，外加 ABI 与编译器不匹配的预警。
+
+        ABI 名必须问 Aqt（只喂安装用），落盘目录名只作提示——两者不是一回事，
+        混在一起会让 6.12 这类改名后的目录被误判。
+        """
+        qt_tool = cast(QtTool, tools["qt"])
+        row = next((r for r in rows if r["tool"] == "qt"), {"ok": False, "path": "", "actual": "缺", "source": "none"})
+        abi = ""
+        if row["path"]:
+            try:
+                abi = qt_tool.abi_name()
+            except RuntimeError as e:
+                warnings.append(f"Qt ABI 无法确定：{e}")
+        qt: dict[str, Any] = {
+            "ok": row["ok"],
+            "path": row["path"],
+            "actual": row["actual"],
+            "source": row["source"],
+            "abi": abi,
+        }
+        if qt_from_cli and qt["path"]:
+            # 前缀由 -DPS_QT_DIR 给出：来源标 cache，CMake 侧据此不覆盖用户的 -D。
+            qt["source"] = "cache"
+            row["source"] = "cache"
+        if qt["path"] and cc:
+            dirname = Path(qt["path"]).name.lower()
+            msvc_cc = Path(cc).name.lower() in ("cl", "cl.exe", "clang-cl", "clang-cl.exe")
+            if msvc_cc and "msvc" not in dirname:
+                warnings.append(
+                    f"Qt 前缀目录名 {dirname} 不像 MSVC ABI（期望 msvc*_64），而当前编译器是 MSVC，"
+                    "链接期可能报 LNK2038/runtime mismatch；换一份 msvc 的 Qt：-DPS_QT_DIR=<…/msvc2022_64>"
+                )
+            elif not msvc_cc and "msvc" in dirname:
+                warnings.append(
+                    f"Qt 前缀目录名 {dirname} 是 MSVC ABI，但当前编译器不是 MSVC（同一份 Qt 不能跨 ABI 复用）"
+                )
+        return qt, row
+
+    # ---- prepare：一次算出 CMake configure 需要的全部结论（JSON 交接）----
+
+    @classmethod
+    def prepare(
+        cls,
+        m: DepsManifest,
+        root: Path,
+        cc: str | None = None,
+        allow_install: bool = True,
+        qt_from_cli: bool = False,
+    ) -> dict:
+        """configure 期的唯一入口：体检 → 缺件补装 → 复查 → 算环境变量 → Qt → hooks → ccache。
+
+        判定口径与 doctor 完全一致（同一个 resolve），这里只是把 doctor / install / resolve /
+        mount 串成一次调用，并把结果整理成 CMake 能直接落地的形状——CMake 只读这份 JSON，
+        不再自己扫盘、读 git config 或各装各的组件。
+        """
+        EnvPathLayout(root).mkdirs()
+        tools = cls.build_tools(m, root)
+        ordered = sorted(
+            (t for t in tools.values() if t.check_order >= 0 and t.applicable()), key=lambda t: t.check_order
+        )
+        messages: list[str] = []
+        warnings: list[str] = []
+        installed: list[str] = []
+        scan = partial(cls._scan_rows, ordered, os.environ.get("RUSTUP_TOOLCHAIN", ""))
+        rows, missing, installed = cls._fill_missing(m, root, scan, allow_install, messages, warnings)
+
+        hook_ok, hook_cur, hook_action = cls._ensure_hooks(root, messages)
+
+        qt, qt_row = cls._qt_for(tools, rows, cc, qt_from_cli, warnings)
+
+        env = cls._env_for(root, rows, qt)
+
+        ccache = CcacheProbe.state(root, rows, cc)
         if ccache["reason"]:
             messages.append(f"ccache：{ccache['reason']}")
         elif ccache["probe"] == "ok":
@@ -2129,7 +2286,7 @@ class CommandRunner:
         系统 Python / 系统 cmake。非交互场景必须 --force；交互场景给确认提示。"""
         tools = cls.build_tools(m, root)
         if names == ["all"]:
-            names = [n for n in INSTALL_ORDER if tools[n].get_installed_version() is not None]
+            names = [n for n in INSTALL_ORDER if tools[n].detect_installed_version() is not None]
             if not names:
                 log("没有已安装的受管组件可卸载")
                 return
@@ -2389,6 +2546,15 @@ MARK_BEGIN = "# >>> ps-setup env >>>"
 MARK_END = "# <<< ps-setup env <<<"
 
 
+def _validate_wt_settings(text: str, guid: str) -> None:
+    """WT settings.json 是 JSONC（带注释），不能 json.loads：
+    只检查括号配平与新键在位，够挡住"插错位置把文件写坏"。"""
+    if text.count("{") != text.count("}"):
+        raise ValueError("花括号不配平")
+    if f'"defaultProfile": "{guid}"' not in text.replace("\n", " "):
+        raise ValueError("defaultProfile 未写入")
+
+
 class EntryPointMounter:
     """入口挂载：git hooks / shell 启动文件 / Windows Terminal fragment / .vscode。
     全部幂等、只追加可卸载，不覆盖用户已有配置。"""
@@ -2515,8 +2681,7 @@ class EntryPointMounter:
                 log(f"标记块已存在，跳过：{f}")
                 done.append(str(f))
                 continue
-            with open(f, "a", encoding="utf-8") as fh:
-                fh.write("\n" + block)
+            write_user_config(f, (text + "\n" + block) if text else block)
             log(f"已写入 {f}")
             done.append(str(f))
         return done
@@ -2557,8 +2722,8 @@ class EntryPointMounter:
                 log(f"{f} 未找到可替换的 defaultProfile，跳过")
                 continue
             try:
-                f.write_text(new, encoding="utf-8")
-            except OSError as e:
+                write_user_config(f, new, validate=lambda t: _validate_wt_settings(t, guid))
+            except (OSError, RuntimeError) as e:
                 log(f"写 {f} 失败（{e}），跳过 WT 默认终端，可在设置里手动选 PlotScope Dev")
                 continue
             log(f"WT 新窗口默认进入 PlotScope Dev：{f}")
@@ -2644,7 +2809,7 @@ class EntryPointMounter:
         f.parent.mkdir(parents=True, exist_ok=True)
         text = json.dumps(cur, ensure_ascii=False, indent=2) + "\n"
         if not f.is_file() or f.read_text(encoding="utf-8") != text:
-            f.write_text(text, encoding="utf-8")
+            write_user_config(f, text, validate=lambda t: json.loads(t))
             log(f"VSCode 默认终端已注册：{f}")
         else:
             log(f"VSCode 配置已就位，跳过：{f}")
@@ -2797,21 +2962,23 @@ class ShellGenerator:
 
     @staticmethod
     def build_template_consts(m: DepsManifest) -> dict:
-        """从清单抽出薄壳模板所需的 pbs 常量与镜像列表，按 sh/ps1 语法分别拼好。"""
-        pbs = m.get("python", "pbs", default={}) or {}
+        """薄壳常量直接取 python 的三条 artifacts（文件名/哈希同处一条），不再从 pbs 摊平表里翻。"""
+        arts = {
+            "linux_x86": tool_artifact("python", "linux", "x86_64"),
+            "linux_a64": tool_artifact("python", "linux", "aarch64"),
+            "win_x86": tool_artifact("python", "windows", "x86_64"),
+        }
+        tags = {str(a["version"]).split("+", 1)[-1] for a in arts.values()}
+        if len(tags) != 1:
+            raise RuntimeError(f"toolchain.json 的 python 产物构建标识不一致：{sorted(tags)}")
         py_src = m.sources("python")
         mirrors = [*py_src.get("mirrors", []), py_src.get("official", "")]  # 官方直连兜底
-        return {
-            "tag": m.get("python", "pbs_build", default=""),
-            "file_linux_x86": pbs.get("x86_64-unknown-linux-gnu", {}).get("file", ""),
-            "sha_linux_x86": pbs.get("x86_64-unknown-linux-gnu", {}).get("sha256", ""),
-            "file_linux_a64": pbs.get("aarch64-unknown-linux-gnu", {}).get("file", ""),
-            "sha_linux_a64": pbs.get("aarch64-unknown-linux-gnu", {}).get("sha256", ""),
-            "file_win_x86": pbs.get("x86_64-pc-windows-msvc", {}).get("file", ""),
-            "sha_win_x86": pbs.get("x86_64-pc-windows-msvc", {}).get("sha256", ""),
-            "mirrors_bash": " ".join(f'"{u}"' for u in mirrors),
-            "mirrors_ps": ", ".join(f'"{u}"' for u in mirrors),  # PowerShell 数组须逗号分隔
-        }
+        c = {"tag": tags.pop(), "mirrors_bash": " ".join(f'"{u}"' for u in mirrors)}
+        c["mirrors_ps"] = ", ".join(f'"{u}"' for u in mirrors)  # PowerShell 数组须逗号分隔
+        for key, a in arts.items():
+            c[f"file_{key}"] = a["file"]
+            c[f"sha_{key}"] = a["sha256"]
+        return c
 
     @staticmethod
     def render(tpl: str, c: dict) -> str:
@@ -2820,24 +2987,53 @@ class ShellGenerator:
             tpl = tpl.replace("{" + k + "}", str(v))
         return tpl
 
-    def generate(self, target: str | None = None, out_dir: Path | None = None) -> list[Path]:
-        """渲染 ps-setup.sh / .ps1 到 tools/；pbs 常量缺失时拒绝生成。"""
-        m = DepsManifest()
-        c = self.build_template_consts(m)
+    def _targets(self, target: str | None) -> list[tuple[str, str]]:
+        """待渲染的 (文件名, 正文) 列表；pbs 常量缺失时拒绝生成。"""
+        c = self.build_template_consts(DepsManifest())
         if not all([c["tag"], c["file_linux_x86"], c["file_win_x86"], c["sha_linux_x86"], c["sha_win_x86"]]):
-            raise RuntimeError("清单缺 python.pbs 常量（pbs_build/文件名/sha256），无法生成薄壳")
-        d = out_dir or REPO.tools
+            raise RuntimeError("清单缺 python 的 artifacts（构建标识/文件名/sha256），无法生成薄壳")
         targets: list[tuple[str, str]] = []
         if target in (None, "sh", "all"):
             targets.append(("ps-setup.sh", self.render(SHELL_SH_TEMPLATE, c)))
         if target in (None, "ps1", "all"):
             targets.append(("ps-setup.ps1", self.render(SHELL_PS1_TEMPLATE, c)))
+        return targets
+
+    @staticmethod
+    def _encode(name: str, body: str, prev: bytes | None) -> bytes:
+        """按文件既有习惯编码：.ps1 带 BOM；既有文件用 CRLF 就继续用 CRLF。
+
+        仓库里的 .ps1 是 CRLF（Windows 侧检出习惯），无条件写 LF 会让
+        gen-shell 每次都产生整文件 diff，漂移校验也就没意义了。
+        """
+        enc = "utf-8-sig" if name.endswith(".ps1") else "utf-8"
+        if prev is not None and b"\r\n" in prev:
+            body = body.replace("\n", "\r\n")
+        return body.encode(enc)
+
+    def verify(self, target: str | None = None) -> list[str]:
+        """只比对不落盘：返回与仓库文件不一致的薄壳名（空列表表示一致）。
+
+        生成物被跟踪却没人拦手改，就永远会漂：pre-commit 与门禁调这个。
+        """
+        bad: list[str] = []
+        for name, body in self._targets(target):
+            f = REPO.tools / name
+            if not f.is_file():
+                bad.append(f"{name}（缺文件）")
+            elif f.read_bytes() != self._encode(name, body, f.read_bytes()):
+                bad.append(name)
+        return bad
+
+    def generate(self, target: str | None = None, out_dir: Path | None = None) -> list[Path]:
+        """渲染 ps-setup.sh / .ps1 到 tools/；pbs 常量缺失时拒绝生成。"""
+        targets = self._targets(target)
+        d = out_dir or REPO.tools
         written = []
         for name, body in targets:
             f = d / name
-            # Windows PowerShell 5.1 只有带 BOM 才按 UTF-8 读 .ps1。
-            enc = "utf-8-sig" if name.endswith(".ps1") else "utf-8"
-            f.write_text(body, encoding=enc)
+            # Windows PowerShell 5.1 只有带 BOM 才按 UTF-8 读 .ps1；编码/换行见 _encode。
+            f.write_bytes(self._encode(name, body, f.read_bytes() if f.is_file() else None))
             if name.endswith(".sh"):
                 f.chmod(0o755)
             log(f"已生成 {f}")
@@ -2861,10 +3057,23 @@ LEGACY_INSTALL_ALIASES = {
 
 
 def exact_versions() -> dict[str, str]:
-    """可交给 CI 使用的确切版本；带下限语义的组件（gcc/ninja/ccache/python）不在此列。"""
+    """可交给 CI 使用的确切版本：只导出「钉死」的组件。
+
+    规则与清单语义一致：裸值（3.31.6）与 "=" 是钉死、要导出；">=" 是下限、不导出
+    （CI 拿不到确切值，安装侧才用）；rust 走 rust-toolchain.toml 的 channel。
+    这样新钉一个组件不用改这里，硬编码名单那套已经出过一次漏导。
+    """
     out: dict[str, str] = {}
-    for name in ("qt", "cmake", "rust"):
-        out[name] = DepsManifest.split_expr(tool_version(name))[1]
+    for name, e in toolchains().items():
+        if "channel_from" in e:
+            out[name] = read_rust_channel(REPO.root / str(e["channel_from"]))
+            continue
+        req = str(e.get("require", ""))
+        if not req:
+            continue
+        op, num = DepsManifest.split_expr(req)
+        if op == "=" or not req.lstrip().startswith((">=", "==")):
+            out[name] = num
     return out
 
 
@@ -2889,10 +3098,11 @@ def _download_first(bases: list[str], rel: str, dest: Path) -> None:
     raise RuntimeError(f"全部源失败：{rel}（最后错误：{last}）")
 
 
-def update_hashes(targets: list[str]) -> int:
-    """重新下载受管产物并回写 toolchain.json 里各 artifacts 的 sha256。
+def update_hashes(targets: list[str], write: bool = False) -> int:
+    """重新下载受管产物，算出 sha256 与清单比对。
 
-    哈希由本命令生成，人不手抄；改版本后 diff 里同一条记录的版本与新哈希一起出现。
+    默认只报告差异、不落盘：镜像被换或中间人换包时，无条件回写等于把远端内容
+    当新真源盖章。确认差异来自你主动改的版本后，再加 --write 回写。
     """
     m = DepsManifest()
     path = REPO.toolchain_json
@@ -2900,71 +3110,189 @@ def update_hashes(targets: list[str]) -> int:
     tc = data["toolchains"]
     picked = targets or ["python", "ninja", "ccache", "rust"]
     tmp = Path(tempfile.mkdtemp(prefix="ps-hash-"))
-    changed: list[str] = []
+    pending: list[str] = []
     gh = [*m.sources("github").get("prefixes", []), ""]
     py = [*m.sources("python").get("mirrors", []), m.sources("python").get("official", "")]
     rust_roots = [m.sources("rust").get("official", {}).get("update_root", "https://static.rust-lang.org/rustup")]
     rust_roots += [x.get("update_root") for x in m.sources("rust").get("mirrors", []) if x.get("update_root")]
-
-    def rel_of(name: str, a: dict) -> str:
-        """产物在下载源上的相对路径；由 artifacts 一条记录自身推出，不查第二张表。"""
-        ver = str(a["version"])
-        if name == "python":
-            # pbs 的 URL 是 <构建标识>/<文件>，构建标识即版本号 "+" 之后那段
-            return f"{ver.split('+', 1)[-1]}/{a['file']}"
-        if name == "ninja":
-            return f"https://github.com/ninja-build/ninja/releases/download/v{ver}/ninja-win.zip"
-        if name == "ccache":
-            return f"https://github.com/ccache/ccache/releases/download/v{ver}/ccache-{ver}-windows-x86_64.zip"
-        triple = f"{a['arch']}-pc-windows-msvc" if a["os"] == "windows" else f"{a['arch']}-unknown-linux-gnu"
-        fname = "rustup-init.exe" if a["os"] == "windows" else "rustup-init"
-        return f"archive/{ver}/{triple}/{fname}"
 
     try:
         for name in picked:
             e = tc.get(name) or {}
             bases = py if name == "python" else (rust_roots if name == "rust" else gh)
             for a in e.get("artifacts") or []:
-                rel = rel_of(name, a)
+                rel = asset_rel(name, a)
                 f = tmp / f"{name}-{a['os']}-{a['arch']}-{rel.rsplit('/', 1)[-1]}"
                 _download_first(bases, rel, f)
                 digest = _sha256_of(f)
                 if digest != a.get("sha256"):
+                    pending.append(f"{name}.{a['os']}-{a['arch']}：{str(a.get('sha256'))[:12]} -> {digest[:12]}")
                     a["sha256"] = digest
-                    changed.append(f"{name}.{a['os']}-{a['arch']}")
                 f.unlink(missing_ok=True)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    if changed:
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        for c in changed:
-            log(f"已更新 {c}")
-    else:
+    if not pending:
         log("哈希无变化")
+        return 0
+    for item in pending:
+        log(f"待更新 {item}")
+    if not write:
+        log("以上差异未落盘：确认包来源无误（自己升级了版本）后，加 --write 回写 toolchain.json")
+        return 0
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    log(f"已回写 {path}（{len(pending)} 条）")
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+@dataclass(frozen=True)
+class CliContext:
+    """子命令的公共上下文：已经读好的清单 + 环境根。"""
+
+    m: DepsManifest
+    root: Path
+
+
+def cmd_check(ctx: CliContext, args: argparse.Namespace, names: list[str]) -> int:
+    if len(names) > 1:
+        raise RuntimeError(f"check 只接受一个组件名，实际给了 {' '.join(names)}")
+    rows, ok = CommandRunner.check(ctx.m, ctx.root, only=names[0] if names else None)
+    if args.json:
+        print(json.dumps({"ok": ok, "ps_deps_root": str(ctx.root), "tools": rows}, ensure_ascii=False, indent=2))
+    else:
+        print(CommandRunner.render_table(rows))
+    return 0 if ok else 1
+
+
+def cmd_resolve(ctx: CliContext, args: argparse.Namespace, names: list[str]) -> int:
+    if len(names) != 1:
+        raise RuntimeError("用法：resolve <name>（单个组件，如 qt / rust / cmake）")
+    rec = CommandRunner.resolve(ctx.m, ctx.root, names[0])
+    if args.json:
+        print(json.dumps(rec, ensure_ascii=False, indent=2))
+    else:
+        print(f"{rec['tool']}: {rec['path'] or '（未找到）'}（{rec['source']}，{rec['actual']}）")
+    return 0 if rec["ok"] else 1
+
+
+def cmd_doctor(ctx: CliContext, args: argparse.Namespace, names: list[str]) -> int:
+    rows, ok = CommandRunner.doctor(ctx.m, ctx.root)
+    if args.json:
+        print(json.dumps({"ok": ok, "ps_deps_root": str(ctx.root), "tools": rows}, ensure_ascii=False, indent=2))
+    else:
+        print(CommandRunner.render_doctor(rows))
+    return 0 if ok else 1
+
+
+def cmd_prepare(ctx: CliContext, args: argparse.Namespace, names: list[str]) -> int:
+    # JSON 走 stdout 或 --out 文件；日志（含子进程输出）让到 stderr，两边不串。
+    with log_to(sys.stderr):
+        rep = CommandRunner.prepare(
+            ctx.m,
+            ctx.root,
+            cc=args.cc or None,
+            allow_install=not args.no_install,
+            qt_from_cli=bool(args.qt_dir),
+        )
+        text = json.dumps(rep, ensure_ascii=False, indent=2)
+        if args.out:
+            Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.out).write_text(text + "\n", encoding="utf-8")
+            log(f"门禁结论：{args.out}")
+        else:
+            print(text)
+            sys.stdout.flush()
+    return 0 if rep["ok"] else 1
+
+
+def cmd_gen_env(ctx: CliContext, args: argparse.Namespace, names: list[str]) -> int:
+    writer = EnvFileWriter(ctx.m, ctx.root)
+    print(f"[ps-setup] 环境文件：{writer.write_sh()}")
+    if PLATFORM.is_windows:
+        print(f"[ps-setup] {writer.write_ps1()}")
+        print(f"[ps-setup] {writer.write_bat()}")
+    return 0
+
+
+def cmd_uninstall(ctx: CliContext, args: argparse.Namespace, names: list[str]) -> int:
+    if not names:
+        raise RuntimeError("用法：uninstall <name|all>（可选：python/cmake/ninja/ccache/rust/qt/all）")
+    if args.dry_run:
+        picks = INSTALL_ORDER if names == ["all"] else names
+        for n in picks:
+            log(f"将卸载 {n}（受管目录：{ctx.root}/toolchain/{n}）")
+        log("dry-run：未改动任何文件")
+        return 0
+    with install_lock(ctx.root):
+        CommandRunner.uninstall(ctx.m, ctx.root, names, force=args.force)
+    return 0
+
+
+def cmd_install(ctx: CliContext, args: argparse.Namespace, names: list[str]) -> int:
+    if args.dry_run:
+        tools = CommandRunner.build_tools(ctx.m, ctx.root)
+        picks = names or list(INSTALL_ORDER)
+        for n in picks:
+            cur = tools[n].detect_installed_version() or "缺"
+            log(f"将安装 {n}（当前 {cur}）")
+        log("dry-run：未改动任何文件")
+        return 0
+    with install_lock(ctx.root):
+        EnvPathLayout(ctx.root).mkdirs()
+        if names:
+            fails = CommandRunner.install_tools(ctx.m, ctx.root, names=names, skip_system=args.skip_system)
+            return 1 if fails else 0
+        CommandRunner.install(ctx.root, skip_system=args.skip_system)
+    return 0
+
+
+def cmd_bootstrap(ctx: CliContext, args: argparse.Namespace, names: list[str]) -> int:
+    with install_lock(ctx.root):
+        CommandRunner.bootstrap(ctx.root)
+    return 0
+
+
+def cmd_mount(ctx: CliContext, args: argparse.Namespace, names: list[str]) -> int:
+    EntryPointMounter.mount_all(ctx.root)
+    return 0
+
+
+def cmd_gen_shell(ctx: CliContext, args: argparse.Namespace, names: list[str]) -> int:
+    gen = ShellGenerator()
+    target = names[0] if names else None
+    if args.check:
+        bad = gen.verify(target)
+        if bad:
+            print("薄壳与清单不一致：" + "、".join(bad) + "；跑 gen-shell 重新生成", file=sys.stderr)
+            return 1
+        log("薄壳与清单一致")
+        return 0
+    gen.generate(target)
+    return 0
+
+
+# 一个子命令一个函数，main 只做参数解析与分发；旧写法 install-<x> 在解析后归一成 install。
+COMMANDS = {
+    "check": cmd_check,
+    "resolve": cmd_resolve,
+    "doctor": cmd_doctor,
+    "prepare": cmd_prepare,
+    "gen-env": cmd_gen_env,
+    "install": cmd_install,
+    "uninstall": cmd_uninstall,
+    "bootstrap": cmd_bootstrap,
+    "mount": cmd_mount,
+    "gen-shell": cmd_gen_shell,
+}
+
+
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="ps-setup", description="开发环境守卫内核（issue IKYGHE + Tool 化重构）")
     ap.add_argument(
         "command",
         nargs="?",
         default="check",
-        choices=[
-            "check",
-            "versions",
-            "resolve",
-            "doctor",
-            "prepare",
-            "gen-env",
-            "install",
-            "uninstall",
-            "bootstrap",
-            "mount",
-            "gen-shell",
-            *LEGACY_INSTALL_ALIASES,
-        ],
+        choices=[*COMMANDS, "versions", *LEGACY_INSTALL_ALIASES],
         help=(
             "check [name]：体检（默认）；versions [--json]：导出版本（CI/打包取确切值，--update-hashes 回写哈希）；"
             "resolve <name>：单项解析（给 CMake 门禁消费，含落点路径）；"
@@ -2972,7 +3300,7 @@ def main(argv: list[str] | None = None) -> int:
             "gen-env：生成 env.sh/env.ps1/env.bat；"
             "install [name ...]：全量/指定组件安装；uninstall [name|all]：卸载受管组件；"
             "bootstrap：一键引导；mount：入口挂载；gen-shell [sh|ps1|all]：重生成薄壳常量；"
-            "install-<name>：单项安装（旧写法兼容）"
+            "gen-shell --check：只比对薄壳是否漂移；install-<name>：单项安装（旧写法兼容）"
         ),
     )
     ap.add_argument(
@@ -2981,7 +3309,11 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="check/install/uninstall 的组件名，可给多个（如 cmake ninja ccache / qt / all）",
     )
+    ap.add_argument("--version", action="version", version=f"ps-setup {app_version()}")
     ap.add_argument("--json", action="store_true", help="以 JSON 输出体检结果（供门禁/CI 消费）")
+    ap.add_argument("--dry-run", action="store_true", help="install/uninstall：只列出将做什么，不改磁盘")
+    ap.add_argument("--write", action="store_true", help="versions --update-hashes：确认后把新哈希回写 toolchain.json")
+    ap.add_argument("--check", action="store_true", help="gen-shell：只比对手改的薄壳是否与清单一致，不落盘")
     ap.add_argument(
         "--update-hashes", action="store_true", help="versions：重新下载受管产物并把 sha256/pbs 哈希回写 toolchain.json"
     )
@@ -2999,7 +3331,49 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--ccache-dir", default="", help="ccache 缓存目录（等价 -DCCACHE_DIR；缺省 $PS_DEPS_ROOT/caches/ccache）"
     )
-    args = ap.parse_args(argv)
+    return ap
+
+
+def cmd_versions(args: argparse.Namespace, names: list[str]) -> int:
+    """versions 只读清单：不碰 PS_DEPS_ROOT、不改 env，stdout 必须是纯数据。"""
+    if args.update_hashes:
+        return update_hashes(names, write=bool(args.write))
+    vals = exact_versions()
+    if args.json:
+        print(json.dumps(vals, ensure_ascii=False, indent=2))
+    else:
+        print(f"{'tool':<6}版本")
+        for k, v in vals.items():
+            print(f"{k:<6}{v}")
+    return 0
+
+
+def error_hint_for(msg: str) -> str:
+    """按错误类别给下一步动作；匹配不上就不加戏。"""
+    hints = (
+        ("缺版本清单", "检查仓库根 toolchain.json 是否被删或未检出"),
+        ("sha256 不符", "包内容与清单不符：先确认镜像是否被替换；自己升级过版本就加 --write 重建哈希"),
+        ("下载失败", "所有镜像与直连都不可用：检查网络/代理，或按提示手动下载后重跑"),
+        ("另一个 ps-setup", "等它结束；确认无进程后删 <root>/.ps-setup.lock"),
+    )
+    for key, hint in hints:
+        if key in msg:
+            return hint
+    return ""
+
+
+def app_version() -> str:
+    """发布版本仍读 versions.env（它只剩 PS_APP_VERSION），缺文件就标 unknown。"""
+    env = REPO.root / "versions.env"
+    try:
+        m = re.search(r"^PS_APP_VERSION=(\S+)", env.read_text(encoding="utf-8"), re.M)
+    except OSError:
+        return "0.0.0-unknown"
+    return m.group(1) if m else "0.0.0-unknown"
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     # 旧写法兼容：install-python → install python
     names = list(args.names)
@@ -3008,18 +3382,8 @@ def main(argv: list[str] | None = None) -> int:
         names = [LEGACY_INSTALL_ALIASES[cmd]]
         cmd = "install"
 
-    # versions 只读清单：不碰 PS_DEPS_ROOT、不改 env，stdout 必须是纯数据。
     if cmd == "versions":
-        if args.update_hashes:
-            return update_hashes(names)
-        vals = exact_versions()
-        if args.json:
-            print(json.dumps(vals, ensure_ascii=False, indent=2))
-        else:
-            print(f"{'tool':<6}版本")
-            for k, v in vals.items():
-                print(f"{k:<6}{v}")
-        return 0
+        return cmd_versions(args, names)
 
     root = Path(args.root).expanduser() if args.root else get_deps_root()
     # -D 的下沉：命令行给出的值优先于环境变量，这里先落进本进程环境，
@@ -3029,103 +3393,31 @@ def main(argv: list[str] | None = None) -> int:
     if args.qt_dir:
         os.environ["PS_QT_DIR"] = str(Path(args.qt_dir).expanduser())
     EnvPathLayout(root).prepend_bin_to_path()  # 受管 bin 目录入进程 PATH，命令一律按名字解析
-    m = DepsManifest()
+    try:
+        m = DepsManifest()  # 第一次真正读清单；缺/坏清单在这里就变成一句话，不是裸栈
+    except RuntimeError as e:
+        print(f"[ps-setup] {e}", file=sys.stderr)
+        return 1
     # --json / prepare 的输出必须纯净（供门禁/CI 消费），日志一律让路。
     if not ((args.json and cmd in ("check", "resolve", "doctor", "prepare")) or cmd == "prepare"):
         log(f"工具链版本：{m.source}")
 
+    handler = COMMANDS.get(cmd)
+    if handler is None:  # argparse 的 choices 已挡住，这里只是兜底
+        raise RuntimeError(f"未知子命令 {cmd}")
     try:
-        if cmd == "check":
-            if len(names) > 1:
-                raise RuntimeError(f"check 只接受一个组件名，实际给了 {' '.join(names)}")
-            rows, ok = CommandRunner.check(m, root, only=names[0] if names else None)
-            if args.json:
-                print(json.dumps({"ok": ok, "ps_deps_root": str(root), "tools": rows}, ensure_ascii=False, indent=2))
-            else:
-                print(CommandRunner.render_table(rows))
-            return 0 if ok else 1
-
-        if cmd == "resolve":
-            if len(names) != 1:
-                raise RuntimeError("用法：resolve <name>（单个组件，如 qt / rust / cmake）")
-            rec = CommandRunner.resolve(m, root, names[0])
-            if args.json:
-                print(json.dumps(rec, ensure_ascii=False, indent=2))
-            else:
-                print(f"{rec['tool']}: {rec['path'] or '（未找到）'}（{rec['source']}，{rec['actual']}）")
-            return 0 if rec["ok"] else 1
-
-        if cmd == "doctor":
-            rows, ok = CommandRunner.doctor(m, root)
-            if args.json:
-                print(json.dumps({"ok": ok, "ps_deps_root": str(root), "tools": rows}, ensure_ascii=False, indent=2))
-            else:
-                print(CommandRunner.render_doctor(rows))
-            return 0 if ok else 1
-
-        if cmd == "prepare":
-            # JSON 走 stdout 或 --out 文件；日志（含子进程输出）让到 stderr，两边不串。
-            with log_to(sys.stderr):
-                rep = CommandRunner.prepare(
-                    m,
-                    root,
-                    cc=args.cc or None,
-                    allow_install=not args.no_install,
-                    qt_from_cli=bool(args.qt_dir),
-                )
-                text = json.dumps(rep, ensure_ascii=False, indent=2)
-                if args.out:
-                    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-                    Path(args.out).write_text(text + "\n", encoding="utf-8")
-                    log(f"门禁结论：{args.out}")
-                else:
-                    print(text)
-                    sys.stdout.flush()
-            return 0 if rep["ok"] else 1
-
-        if cmd == "gen-env":
-            print(f"[ps-setup] 环境文件：{EnvFileWriter(m, root).write_sh()}")
-            if PLATFORM.is_windows:
-                print(f"[ps-setup] {EnvFileWriter(m, root).write_ps1()}")
-                print(f"[ps-setup] {EnvFileWriter(m, root).write_bat()}")
-            return 0
-
-        if cmd == "uninstall":
-            if not names:
-                raise RuntimeError("用法：uninstall <name|all>（可选：python/cmake/ninja/ccache/rust/qt/all）")
-            CommandRunner.uninstall(m, root, names, force=args.force)
-            return 0
-
-        if cmd == "install":
-            EnvPathLayout(root).mkdirs()
-            if names:
-                fails = CommandRunner.install_tools(m, root, names=names, skip_system=args.skip_system)
-                return 1 if fails else 0
-            CommandRunner.install(root, skip_system=args.skip_system)
-            return 0
-
-        if cmd == "bootstrap":
-            CommandRunner.bootstrap(root)
-            return 0
-
-        if cmd == "mount":
-            EntryPointMounter.mount_all(root)
-            return 0
-
-        if cmd == "gen-shell":
-            ShellGenerator().generate(names[0] if names else None)
-            return 0
-
+        return handler(CliContext(m, root), args, names)
     except Exception as e:
         # 不只 RuntimeError：解压损坏包会抛 zipfile.BadZipFile、落盘失败抛 OSError，
         # 这些逃到顶层就是裸 traceback。统一成一行 [ps-setup]；KeyboardInterrupt 不受影响
         # （BaseException 不经过这里）。PS_SETUP_DEBUG=1 时仍重抛，保留完整栈供排查。
         print(f"[ps-setup] {type(e).__name__}: {e}", file=sys.stderr)
+        hint = error_hint_for(str(e))
+        if hint:
+            print(f"[ps-setup] 下一步：{hint}", file=sys.stderr)
         if os.environ.get("PS_SETUP_DEBUG"):
             raise
         return 1
-
-    return 2
 
 
 if __name__ == "__main__":

@@ -869,3 +869,29 @@ jobs:
           SIZE=$(wc -c < "$SHOT" | tr -d ' ')
           [ "$SIZE" -ge 10000 ] || { echo "::error::screenshot suspiciously small: $SIZE bytes"; exit 1; }
           echo "ui-driver screenshot OK: $SIZE bytes" >> "$GITHUB_STEP_SUMMARY"
+
+  ps-setup-smoke:
+    # tools/ps-setup.py 是开发入口，但主 CI 从不执行它（workflow 只读 toolchain.json），
+    # 改了只能靠本地 quick 门禁兜底。这里在两个平台各跑一遍「不需要网络、不装工具」的部分：
+    # --help / versions / 薄壳漂移 / 纯函数单测，顺带覆盖 Windows 侧的 CRLF/BOM 与路径解析。
+    # 真实安装（aqt / rustup / ninja zip）仍不在 CI 里跑，见 PR 的“未验证”一栏。
+    name: ps-setup smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 入口与薄壳（不装任何工具）
+        run: |
+          python tools/ps-setup.py --help
+          python tools/ps-setup.py versions --json
+          python tools/ps-setup.py gen-shell --check
+
+      - name: 纯函数单测
+        run: python -m unittest discover -s tools/tests -p "test_*.py" -v

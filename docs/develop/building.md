@@ -17,7 +17,7 @@
   - `artifacts` —— 实际下载的产物表，一条记录 = 一个可下载物，版本、文件名、哈希同处一条（改版本时三样一起改，哈希不手抄）。没有产物的系统组件（gcc / msvc / cmake / qt）不写这一段。
   - 平台统一用 `os` + `arch` 两个字段（`windows`/`linux`、`x86_64`/`aarch64`），不再有 `windows-x86_64`、`x86_64-unknown-linux-gnu` 这类拼出来的键；
   - `rust` 没有自己的版本号，用 `channel_from` 指向 `src/kernel/rust-toolchain.toml`（rustup 与 CI 的原生入口，`cargo` 直读）；`artifacts` 只描述 rustup 安装器本身。
-- 哈希：`artifacts[].sha256` 由 `python3 tools/ps-setup.py versions --update-hashes` 下载后回算并回写，人不手抄。
+- 哈希：`artifacts[].sha256` 由 `python3 tools/ps-setup.py versions --update-hashes` 下载后回算；默认只列差异，确认来源后加 `--write` 回写，人不手抄。
 - 给 CI / 打包取确切值：`python3 tools/ps-setup.py versions --json`（只输出纯值，不含下限语义的组件）。
 - CI 取单个值：`node tools/ci/toolchain-ver.cjs qt|cmake|ninja|ccache|python|rust`。它只读文件、不执行 ps-setup（CI 里没有仓库外的 deps 根），Qt 读 `toolchain.json`，Rust 读 `src/kernel/rust-toolchain.toml` 的 `channel`，遇到 `>=` 这类门禁范围直接报错退出，避免把区间当可安装版本喂给 action。
 - `versions.env` 当前只剩发布版本 `PS_APP_VERSION` 与 CI 的 `CMakeLists project(VERSION)` 一致性校验；工具链版本已不再从这里取，后续退役该文件（本卡不动打包流程）。

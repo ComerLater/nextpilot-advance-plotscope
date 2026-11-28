@@ -125,6 +125,16 @@ if [ -n "$WF_FILES" ]; then
 else
     ok "无 workflow 改动"
 fi
+# ps-setup 的纯函数单测：不碰网络与用户环境，秒级，改了内核就跑。
+if [ -n "$PYTHON" ] && git diff --name-only "$BASE"...HEAD | grep -qE 'tools/(ps-setup\.py|tests/)'; then
+    "$PYTHON" -m unittest discover -s tools/tests -p 'test_*.py' >"$TMP/preflight-unit.log" 2>&1 \
+        && ok "ps-setup 单测" || bad "ps-setup 单测红（看 $TMP/preflight-unit.log）"
+fi
+# 薄壳（ps-setup.sh/.ps1）是产物却入库，改了清单/脚本就必须与之一致，否则手改会长期漂移。
+if [ -n "$PYTHON" ] && git diff --name-only "$BASE"...HEAD | grep -qe 'tools/ps-setup.py' -e 'toolchain.json'; then
+    "$PYTHON" tools/ps-setup.py gen-shell --check >"$TMP/preflight-shell.log" 2>&1 \
+        && ok "薄壳与清单一致" || bad "薄壳漂移（跑 python tools/ps-setup.py gen-shell 后重提交）"
+fi
 
 bold "3) 整文件重排告警"
 if [ "${ALLOW_REFORMAT:-0}" = "1" ]; then
