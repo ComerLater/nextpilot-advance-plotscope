@@ -183,7 +183,8 @@ class SA_RIBBON_EXPORT SARibbonBar : public QMenuBar
     Q_PROPERTY(bool enableShowPanelTitle READ isEnableShowPanelTitle WRITE setEnableShowPanelTitle)
     Q_PROPERTY(bool enableIconRightText READ isEnableIconRightText WRITE setEnableIconRightText)
     Q_PROPERTY(bool tabOnTitle READ isTabOnTitle WRITE setTabOnTitle)
-    Q_PROPERTY(SARibbonPanel::PanelLayoutMode panelLayoutMode READ panelLayoutMode WRITE setPanelLayoutMode)
+    Q_PROPERTY(SARibbonPanel::PanelLayoutMode panelLayoutMode READ panelLayoutMode WRITE setPanelLayoutMode NOTIFY
+                   panelLayoutModeChanged)
 
 public:
 enum RibbonStyleFlag
@@ -608,6 +609,24 @@ Q_SIGNALS:
 
     /**
      * \if ENGLISH
+     * @brief Signal triggered when the panel layout mode (and therefore the row count) changes
+     * @details Emitted once per change, before the ribbon performs its relayout, so embedded
+     *          widgets can adapt their own sizeHint in time for the same layout pass.
+     *          Row count: ThreeRowMode = 3, TwoRowMode = 2, SingleRowMode = 1.
+     * @param nowMode New panel layout mode after change
+     * \endif
+     *
+     * \if CHINESE
+     * @brief 面板布局模式（也就是行数）发生变化后触发此信号
+     * @details 每次变化只发一次，且在 ribbon 重新布局之前发出，嵌入的控件可以在同一次布局中
+     *          及时调整自己的 sizeHint。行数：ThreeRowMode = 3，TwoRowMode = 2，SingleRowMode = 1。
+     * @param nowMode 变更之后的面板布局模式
+     * \endif
+     */
+    void panelLayoutModeChanged(SARibbonPanel::PanelLayoutMode nowMode);
+
+    /**
+     * \if ENGLISH
      * @brief Signal triggered when title bar height changes
      * @param oldHeight Old title bar height
      * @param newHeight New title bar height
@@ -669,6 +688,8 @@ protected Q_SLOTS:
 
 private:
     int tabIndex(SARibbonCategory* obj);
+    // Push the current style state (row mode / word wrap / panel title / icon-right-text ...) to one category
+    void applyRibbonStyleToCategory(SARibbonCategory* category);
     void paintInLooseStyle(const QRect& paintRect);
     void paintInCompactStyle(const QRect& paintRect);
 
