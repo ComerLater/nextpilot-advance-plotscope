@@ -1,4 +1,5 @@
-# ADS —— Qt Advanced Docking System（LGPL-2.1，5.1.1，vendored 源码）
+# ADS —— Qt Advanced Docking System（LGPL-2.1，vendored 源码）
+# 基线提交与裁剪清单见 VENDOR.md；版本号 5.1.1 只是上游最近一个 tag，不代表内容。
 # 只编共享库：LGPL 要求用户可替换，故不静态链进主程序。
 file(GLOB ADS_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
 list(APPEND ADS_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/ads.qrc")
