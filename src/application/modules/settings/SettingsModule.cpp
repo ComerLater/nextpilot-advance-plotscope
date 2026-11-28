@@ -1,3 +1,4 @@
+#include "ErrorCodes.h"
 #include "SettingsModule.h"
 
 #include "IIntentExecutor.h"
@@ -182,6 +183,5 @@ void SettingsModule::onDetach()
 
 #include "SettingsModule.moc"
 
-#include "ErrorCodes.h"
 // 编译期自注册：新增模块无需改 App / 宿主。
 PS_REGISTER_EXTENSION(SettingsModule)

@@ -180,14 +180,14 @@ jobs:
           set -o pipefail
           LOG="$RUNNER_TEMP/build.log"
           TARGETS=(${{ steps.params.outputs.targets }})
-          if ! { echo "__PS_BUILD_LOG_START__"; cmake --build build -j"$(nproc)" --target "${TARGETS[@]}"; } 2>&1 | tee "$LOG"; then
+          if ! { echo "__PS_BUILD_LOG_START__"; cmake --build build -j"$(nproc)" --target "${TARGETS[@]}" -- -k 0; } 2>&1 | tee "$LOG"; then
             { echo '```'; tail -80 "$LOG"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
             TAIL_LOG="$RUNNER_TEMP/build.tail"
             marker=$(grep -n '__PS_BUILD_LOG_START__' "$LOG" | tail -1 | cut -d: -f1)
             marker=${marker:-0}
             tail -n +"$(( marker + 1 ))" "$LOG" > "$TAIL_LOG"
             PATTERN='error:|error C[0-9]|fatal error|FAILED:|ld: |Undefined symbols|undefined reference'
-            grep -nE "$PATTERN" "$TAIL_LOG" | head -10 | while IFS=: read -r ln _; do
+            grep -nE "$PATTERN" "$TAIL_LOG" | head -40 | while IFS=: read -r ln _; do
               ctx=$(sed -n "${ln},$(( ln + 2 ))p" "$TAIL_LOG" | cut -c1-160 | tr '\n' ' ' | sed 's/[[:space:]]*$//')
               echo "::error::${ctx}"
             done

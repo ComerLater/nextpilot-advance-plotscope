@@ -1,3 +1,4 @@
+#include "ErrorCodes.h"
 #include "InteractionHub.h"
 #include "ScriptModule.h"
 
@@ -662,6 +663,5 @@ void ScriptModule::onAttach(IUiContext &ui)
 
 #include "ScriptModule.moc"
 
-#include "ErrorCodes.h"
 // 编译期自注册：新增脚本模块无需改 App / 宿主。
 PS_REGISTER_EXTENSION(ScriptModule)

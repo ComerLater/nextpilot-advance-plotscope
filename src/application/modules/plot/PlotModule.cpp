@@ -1,3 +1,4 @@
+#include "ErrorCodes.h"
 #include "DerivedSeriesHub.h"
 #include "PlotModule.h"
 
@@ -908,6 +909,5 @@ void PlotModule::onDetach()
 
 #include "PlotModule.moc"
 
-#include "ErrorCodes.h"
 // 编译期自注册：新增绘图模块无需改 App / 宿主。
 PS_REGISTER_EXTENSION(PlotModule)
