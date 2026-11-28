@@ -3,6 +3,8 @@
 #include "SettingsEditorWidget.h"
 #include "ErrorCodes.h"
 #include "ShellContributions.h"
+#include "command/CommandService.h"
+#include "UiSlotHub.h"
 
 #include <QDebug>
 
@@ -74,10 +76,11 @@ foundation::Result<intent::IntentResult> WorkbenchCommandHandler::execute(const 
 }
 
 WorkbenchServices::WorkbenchServices(nextpilot::plotscope::context::AppContext &appCtx,
-                                     nextpilot::plotscope::intent::JobRecorder &recorder, host::RuntimeHost &hostRef,
-                                     QObject *parent)
+                                     nextpilot::plotscope::intent::JobRecorder &recorder,
+                                     command::CommandService &commands, registry::UiSlotHub &slotHub,
+                                     nextpilot::plotscope::context::IngestPipeline &ingest, QObject *parent)
     : QObject(parent), m_datasetAccess(datasetHub(appCtx), this), m_sourceAccess(sourceHub(appCtx), this),
-      m_ingestAccess(appCtx, hostRef.ingestPipeline(), this), m_recorderAccess(recorder), m_playbackAccess(),
+      m_ingestAccess(appCtx, ingest, this), m_recorderAccess(recorder), m_playbackAccess(),
       m_workspace(
           m_datasetAccess, m_sourceAccess, m_ingestAccess, m_recorderAccess, m_playbackAccess, appCtx.settings(),
           appCtx.derivedHub(),
@@ -115,22 +118,16 @@ WorkbenchServices::WorkbenchServices(nextpilot::plotscope::context::AppContext &
                           appCtx.registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension)))
                   .reports.find(id);
           }),
-      m_commands(
-          [&hostRef](const QString &id, nextpilot::plotscope::intent::IIntentHandler *h) {
-              // commandId == Intent.op：用保留前缀注入 RuntimeHost 系统级池，
-              // 保证执行链仍只有 RuntimeHost::execute 一条（旧 GUI/脚本路径不退化）。
-              hostRef.registerSystemHandler(QStringLiteral("cmd/") + id, h);
-          },
-          this),
-      m_scriptCaps(appCtx.interactions(), appCtx, hostRef, &recorder, [&hostRef]() { return hostRef.registeredOps(); }),
-      m_panelsService(appCtx), m_formatHints(appCtx), m_themeService(appCtx, hostRef),
-      m_slotsService(hostRef.uiSlotsMutable()), m_ribbonService(appCtx, m_slotsService, m_viewRegistry),
-      m_viewsService(m_viewRegistry), m_editorsService(m_viewRegistry),
+      m_commands(commands),
+      m_scriptCaps(appCtx.interactions(), appCtx, commands, &recorder, [&commands]() { return commands.commandIds(); }),
+      m_panelsService(appCtx), m_formatHints(appCtx), m_themeService(appCtx, slotHub), m_slotsService(slotHub),
+      m_ribbonService(appCtx, m_slotsService, m_viewRegistry), m_viewsService(m_viewRegistry),
+      m_editorsService(m_viewRegistry),
       m_configurationService(appCtx.settings(),
                              (*static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
                                  appCtx.registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension))),
                              {},
-                             [&hostRef](const QString &key, const QJsonValue &value) {
+                             [&commands](const QString &key, const QJsonValue &value) {
                                  // 主题项：设置页写 theme（落盘 app/theme）后，转发 theme.set 让 ThemeManager 经
                                  // 既有 themeChanged 路径换肤；ThemeManager 仍读完整键 app/theme，不新增写入通道。
                                  if (key != QLatin1String("theme") || !value.isString())
@@ -138,7 +135,7 @@ WorkbenchServices::WorkbenchServices(nextpilot::plotscope::context::AppContext &
                                  intent::Intent t;
                                  t.op = QStringLiteral("theme.set");
                                  t.params[QStringLiteral("theme")] = value.toString();
-                                 const auto themeResult = hostRef.execute(t);
+                                 const auto themeResult = commands.execute(t);
                                  if (!themeResult.ok())
                                      qWarning() << QStringLiteral("ValueChangedHook: theme.set 失败: %1 %2")
                                                        .arg(themeResult.error().code, themeResult.error().message);
@@ -203,8 +200,9 @@ WorkbenchServices::WorkbenchServices(nextpilot::plotscope::context::AppContext &
             .mountContribution(coreCfg);
         // 执行体：工作台内置命令 handler（workbench.* 保留前缀独占，扩展 handler 让出）。
         // 同时注册成服务（workbench.commands）：e2e 可断言"命令执行后页签能回答 ResourceRef"。
-        m_workbenchHandler = new WorkbenchCommandHandler(m_editorsService, appCtx, hostRef, this);
-        hostRef.registerSystemHandler(QStringLiteral("@system/workbench"), m_workbenchHandler);
+        m_workbenchHandler = new WorkbenchCommandHandler(m_editorsService, appCtx, commands, this);
+        commands.registerSystemHandler(QStringLiteral("workbench.actions"), m_workbenchHandler,
+                                       {QStringLiteral("workbench.action.openSettings")});
         m_services.registerSingleton(QStringLiteral("workbench.commands"), m_workbenchHandler,
                                      QStringLiteral("assembly"), 1,
                                      nextpilot::plotscope::instantiation::ServiceTypeTag<
@@ -217,10 +215,9 @@ WorkbenchServices::WorkbenchServices(nextpilot::plotscope::context::AppContext &
     m_services.registerSingleton(
         QStringLiteral("vscode.window"), &m_window, QStringLiteral("assembly"), 1,
         nextpilot::plotscope::instantiation::ServiceTypeTag<nextpilot::plotscope::workbench::IWindow>::value());
-    // ICommands 是 CommandsAdapter 的第二基类（QObject 在前）。registerSingleton 存 void*、
-    // getService<T> 用 static_cast<T*>(void*) 取回——该转换不做基类偏移调整，
-    // 因此这里必须存【接口子对象地址】而不是派生对象起始地址，否则取回的 ICommands*
-    // 实际指向 QObject 子对象，虚调用全乱。其余服务都是单继承首基类，无此问题。
+    // CommandService 同时实现 ICommands 与 IIntentExecutor（两个基类）。registerSingleton 存
+    // void*、getService<T> 用 static_cast<T*>(void*) 取回，不做基类偏移调整——因此这里必须
+    // 存【接口子对象地址】，而不是派生对象起始地址。
     auto *commandsIface = static_cast<nextpilot::plotscope::workbench::ICommands *>(&m_commands);
     m_services.registerSingleton(
         QStringLiteral("vscode.commands"), commandsIface, QStringLiteral("assembly"), 1,
@@ -263,9 +260,8 @@ WorkbenchServices::WorkbenchServices(nextpilot::plotscope::context::AppContext &
                                  QStringLiteral("assembly"), 1,
                                  nextpilot::plotscope::instantiation::ServiceTypeTag<
                                      nextpilot::plotscope::workbench::IConfigurationService>::value());
-    // 壳读回 MenuRegistry（VSCode 菜单注册表）：经 host 注入，壳不自行构造。
-    hostRef.setMenuRegistry(&m_menuRegistry);
     // 壳级标准动作（骨架 Ribbon 入口）落 MenuRegistry；声明清单归 host::ShellContributions。
+    // MenuRegistry 归本容器持有，壳经 menuRegistry() 读回。
     nextpilot::plotscope::host::declareShellActions(m_menuRegistry);
 
     // 壳骨架的页/组与动作同源：走 contributes 数据面（owner=app.skeleton），

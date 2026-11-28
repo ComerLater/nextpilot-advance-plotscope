@@ -55,12 +55,13 @@ int main(int argc, char *argv[])
     MainWindow window(application.context(), plotScopeProductSpec());
 
     // 与 gui_main 同序：壳内置视图（声明半 + provider 半）→ data 模块视图装配 → build。
-    CHECK(nextpilot::plotscope::assembly::declareBuiltinWorkbenchViews(application.host().services()));
-    CHECK(nextpilot::plotscope::gui::installBuiltinWorkbenchViewProviders(application.host().services()));
-    CHECK(nextpilot::plotscope::data::installDataViewFactories(application.host().services(), &application.context(),
-                                                               &application.host()));
+    CHECK(nextpilot::plotscope::assembly::declareBuiltinWorkbenchViews(&application.services()));
+    CHECK(nextpilot::plotscope::gui::installBuiltinWorkbenchViewProviders(&application.services()));
+    CHECK(nextpilot::plotscope::data::installDataViewFactories(&application.services(), &application.context(),
+                                                               &&application.commands()));
 
-    window.build(application.host());
+    window.build(&application.services(), application.commands(), &application.extensions(),
+                 application.menuRegistry());
     window.resize(1280, 800);
 
     auto *binder = window.binder();
@@ -86,7 +87,7 @@ int main(int argc, char *argv[])
     Intent load;
     load.op = QStringLiteral("data.load");
     load.params[QStringLiteral("path")] = fixture;
-    const auto loaded = application.host().execute(load);
+    const auto loaded = application.commands().execute(load);
     CHECK(loaded);
     // start 早于 finish：只测终态等于没测。
     const int startIdx = progressEvents.indexOf(QStringLiteral("加载中…"));
@@ -132,7 +133,7 @@ int main(int argc, char *argv[])
         Intent rel;
         rel.op = QStringLiteral("data.reload");
         rel.params[QStringLiteral("id")] = sourceId;
-        const auto r = application.host().execute(rel);
+        const auto r = application.commands().execute(rel);
         CHECK(r);
         const int newDsId = r.value().payload.toMap().value(QStringLiteral("dataset")).toInt();
         CHECK(newDsId == loadedDsId);
@@ -144,7 +145,7 @@ int main(int argc, char *argv[])
     // 退出前先拆模块：本函数里 window 先于 application 析构，而 ~App 还会再跑一次
     // deactivateAll。不先拆，那次 deactivateAll 就落到已析构的 ExtensionService 上
     // （云端实测 SIGSEGV：~App → ~RuntimeHost → deactivateAll → getActivatedExtensions）。
-    application.host().deactivateAll();
+    application.stop();
 
     fprintf(stdout, "[shell+data] 模块段通过\n");
     return 0;

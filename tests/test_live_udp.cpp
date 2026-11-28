@@ -88,7 +88,7 @@ int main(int argc, char **argv)
     connect.params[QStringLiteral("parser")] = QStringLiteral("custom-protocol");
     connect.params[QStringLiteral("template")] = tpl;
     connect.params[QStringLiteral("name")] = QStringLiteral("live-test");
-    const auto cr = app.host().execute(connect);
+    const auto cr = app.commands().execute(connect);
     CHECK(cr);
     if (!cr)
         return 1; // 连不上就没有后续断言的意义
@@ -108,11 +108,11 @@ int main(int argc, char **argv)
     rs1.params[QStringLiteral("format")] = QStringLiteral("raw");
     rs1.params[QStringLiteral("backend")] = QStringLiteral("file");
     rs1.params[QStringLiteral("endpoint")] = rawPath;
-    CHECK(app.host().execute(rs1));
+    CHECK(app.commands().execute(rs1));
     Intent rs2 = rs1;
     rs2.params[QStringLiteral("format")] = QStringLiteral("mcap");
     rs2.params[QStringLiteral("endpoint")] = mcapPath;
-    const auto rr2 = app.host().execute(rs2);
+    const auto rr2 = app.commands().execute(rs2);
     CHECK(rr2);
 
     // 第三路：raw × udp（后端正交的另一半）。本机绑一个 socket 收包，
@@ -123,7 +123,7 @@ int main(int argc, char **argv)
     Intent rs3 = rs1;
     rs3.params[QStringLiteral("backend")] = QStringLiteral("udp");
     rs3.params[QStringLiteral("endpoint")] = QStringLiteral("127.0.0.1:%1").arg(sinkPort);
-    const auto rr3 = app.host().execute(rs3);
+    const auto rr3 = app.commands().execute(rs3);
     CHECK(rr3);
     if (rr2)
         CHECK(rr2.value().payload.toMap().value(QStringLiteral("format")).toString()
@@ -153,7 +153,7 @@ int main(int argc, char **argv)
     Intent pause;
     pause.op = QStringLiteral("data.pause");
     pause.params[QStringLiteral("id")] = srcId;
-    CHECK(app.host().execute(pause));
+    CHECK(app.commands().execute(pause));
     for (int k = 20; k < 25; ++k)
     {
         QByteArray frame(8, '\0');
@@ -168,7 +168,7 @@ int main(int argc, char **argv)
     // 速率统计：20 包 / ~1s → hz>0 且 kb_s>0
     Intent stats;
     stats.op = QStringLiteral("data.live.stats");
-    const auto sr = app.host().execute(stats);
+    const auto sr = app.commands().execute(stats);
     CHECK(sr);
     if (sr)
     {
@@ -189,7 +189,7 @@ int main(int argc, char **argv)
     // 录制：两路（raw + mcap）× file 后端，落盘大小与 list 状态都要对。
     Intent rl;
     rl.op = QStringLiteral("data.record.list");
-    const auto rlr = app.host().execute(rl);
+    const auto rlr = app.commands().execute(rl);
     CHECK(rlr);
     if (rlr)
         CHECK(rlr.value().payload.toList().size() == 3); // raw/file + mcap/file + raw/udp
@@ -197,7 +197,7 @@ int main(int argc, char **argv)
     Intent rsp;
     rsp.op = QStringLiteral("data.record.stop");
     rsp.params[QStringLiteral("source")] = srcId;
-    const auto rspr = app.host().execute(rsp);
+    const auto rspr = app.commands().execute(rsp);
     CHECK(rspr);
     if (rspr)
     {
@@ -276,7 +276,7 @@ int main(int argc, char **argv)
         ld.params[QStringLiteral("path")] = mcapPath;
         ld.params[QStringLiteral("format")] = QStringLiteral("mcap");
         const int dsBefore = plotscope_test::datasetHub(ctx).count();
-        const auto ldr = app.host().execute(ld);
+        const auto ldr = app.commands().execute(ld);
         CHECK(ldr);
         std::printf("reload: datasets %d -> %d\n", dsBefore, plotscope_test::datasetHub(ctx).count());
         if (!ldr)
@@ -310,7 +310,7 @@ int main(int argc, char **argv)
     // 源清单 + 重连：list 能看到 live 源；重连后继续收包（计数累计）
     Intent listIntent;
     listIntent.op = QStringLiteral("data.source.list");
-    const auto lr = app.host().execute(listIntent);
+    const auto lr = app.commands().execute(listIntent);
     CHECK(lr);
     if (lr)
     {
@@ -324,7 +324,7 @@ int main(int argc, char **argv)
     Intent re;
     re.op = QStringLiteral("data.reconnect");
     re.params[QStringLiteral("id")] = srcId;
-    CHECK(app.host().execute(re));
+    CHECK(app.commands().execute(re));
     for (int k = 0; k < 5; ++k)
     {
         QByteArray frame(8, '\0');
@@ -336,7 +336,7 @@ int main(int argc, char **argv)
     pump(600);
     Intent stats2;
     stats2.op = QStringLiteral("data.live.stats");
-    if (const auto s2 = app.host().execute(stats2))
+    if (const auto s2 = app.commands().execute(stats2))
     {
         const QVariantList rows = s2.value().payload.toList();
         if (!rows.isEmpty())
@@ -346,7 +346,7 @@ int main(int argc, char **argv)
     Intent dis;
     dis.op = QStringLiteral("data.disconnect");
     dis.params[QStringLiteral("id")] = srcId;
-    const auto dr = app.host().execute(dis);
+    const auto dr = app.commands().execute(dis);
     CHECK(dr);
     if (dr)
     {
@@ -383,7 +383,7 @@ int main(int argc, char **argv)
         tc.params[QStringLiteral("name")] = QStringLiteral("tcp-test");
 
         quint16 tcpPort = 0;
-        std::optional<decltype(app.host().execute(tc))> tcResult;
+        std::optional<decltype(app.commands().execute(tc))> tcResult;
         for (int attempt = 0; attempt < 4; ++attempt)
         {
             QTcpServer probe;
@@ -393,7 +393,7 @@ int main(int argc, char **argv)
             probe.close();
 
             tc.params[QStringLiteral("url")] = QStringLiteral("tcp://0.0.0.0:%1").arg(tcpPort);
-            tcResult = app.host().execute(tc);
+            tcResult = app.commands().execute(tc);
             if (*tcResult)
                 break;
         }
@@ -420,7 +420,7 @@ int main(int argc, char **argv)
             Intent td;
             td.op = QStringLiteral("data.disconnect");
             td.params[QStringLiteral("id")] = tid;
-            CHECK(app.host().execute(td));
+            CHECK(app.commands().execute(td));
             if (const Dataset *tdsPtr = plotscope_test::datasetHub(ctx).get(tds))
             {
                 int rows = 0;
@@ -440,23 +440,23 @@ int main(int argc, char **argv)
         bad1.op = QStringLiteral("data.connect");
         bad1.params[QStringLiteral("url")] = QStringLiteral("tcp://127.0.0.1:70000");
         bad1.params[QStringLiteral("parser")] = QStringLiteral("custom-protocol");
-        CHECK(!app.host().execute(bad1));
+        CHECK(!app.commands().execute(bad1));
 
         Intent bad2; // 未知解析器
         bad2.op = QStringLiteral("data.connect");
         bad2.params[QStringLiteral("url")] = QStringLiteral("udp://0.0.0.0:14560");
         bad2.params[QStringLiteral("parser")] = QStringLiteral("no-such-parser");
-        CHECK(!app.host().execute(bad2));
+        CHECK(!app.commands().execute(bad2));
 
         Intent bad3; // config 缺 value
         bad3.op = QStringLiteral("data.config");
         bad3.params[QStringLiteral("key")] = QStringLiteral("bufferBytes");
-        CHECK(!app.host().execute(bad3));
+        CHECK(!app.commands().execute(bad3));
 
         Intent bad4; // 不存在的 live 会话
         bad4.op = QStringLiteral("data.live.stats");
         bad4.params[QStringLiteral("id")] = 9999;
-        const auto r4 = app.host().execute(bad4);
+        const auto r4 = app.commands().execute(bad4);
         CHECK(r4); // stats 只过滤不报错，返回空列表
         if (r4)
             CHECK(r4.value().payload.toList().isEmpty());
@@ -479,7 +479,7 @@ int main(int argc, char **argv)
             sc.params[QStringLiteral("parser")] = QStringLiteral("custom-protocol");
             sc.params[QStringLiteral("template")] = tpl;
             sc.params[QStringLiteral("name")] = QStringLiteral("serial-test");
-            const auto scr = app.host().execute(sc);
+            const auto scr = app.commands().execute(sc);
             CHECK(scr);
             if (scr)
             {
@@ -497,7 +497,7 @@ int main(int argc, char **argv)
                 Intent sd;
                 sd.op = QStringLiteral("data.disconnect");
                 sd.params[QStringLiteral("id")] = sid;
-                CHECK(app.host().execute(sd));
+                CHECK(app.commands().execute(sd));
                 if (const Dataset *sdsPtr = plotscope_test::datasetHub(ctx).get(sds))
                 {
                     int rows = 0;
@@ -528,14 +528,14 @@ int main(int argc, char **argv)
             Intent ld;
             ld.op = QStringLiteral("data.load");
             ld.params[QStringLiteral("path")] = csvPath;
-            return app.host().execute(ld);
+            return app.commands().execute(ld);
         };
         CHECK(loadCsv());
         CHECK(loadCsv()); // 第二次应命中缓存（同一份文件、size+mtime 未变）
 
         Intent cs;
         cs.op = QStringLiteral("data.cache.stats");
-        const auto cr = app.host().execute(cs);
+        const auto cr = app.commands().execute(cs);
         CHECK(cr);
         if (cr)
         {
@@ -554,8 +554,8 @@ int main(int argc, char **argv)
 
         Intent cc;
         cc.op = QStringLiteral("data.clearCache");
-        CHECK(app.host().execute(cc));
-        const auto cr2 = app.host().execute(cs);
+        CHECK(app.commands().execute(cc));
+        const auto cr2 = app.commands().execute(cs);
         CHECK(cr2);
         if (cr2)
             CHECK(cr2.value().payload.toMap().value(QStringLiteral("entries")).toInt() == 0);
@@ -576,7 +576,7 @@ int main(int argc, char **argv)
         ld.op = QStringLiteral("data.load");
         ld.params[QStringLiteral("path")] = csvPath;
         ld.params[QStringLiteral("nocache")] = true;
-        const auto lr = app.host().execute(ld);
+        const auto lr = app.commands().execute(ld);
         CHECK(lr);
         const QVariant lp = lr.value().payload;
         int dsId = lp.toInt();
@@ -589,7 +589,7 @@ int main(int argc, char **argv)
             ex.op = QStringLiteral("data.export");
             ex.params[QStringLiteral("dataset")] = dsId;
             ex.params[QStringLiteral("path")] = path;
-            const auto er = app.host().execute(ex);
+            const auto er = app.commands().execute(ex);
             if (!er)
                 return -1;
             QFile ef(path);

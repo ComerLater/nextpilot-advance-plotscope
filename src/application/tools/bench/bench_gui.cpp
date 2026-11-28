@@ -20,7 +20,6 @@
 
 #include "Dataset.h"
 #include "Intent.h"
-#include "RuntimeHost.h"
 
 #include <QApplication>
 #include <QElapsedTimer>
@@ -90,7 +89,8 @@ int main(int argc, char *argv[])
 
     App application;
     MainWindow window(application.context());
-    window.build(application.host());
+    window.build(&application.services(), application.commands(), &application.extensions(),
+                 application.menuRegistry());
     window.resize(1600, 900);
     window.show();
     QApplication::processEvents();
@@ -101,7 +101,7 @@ int main(int argc, char *argv[])
     Intent load;
     load.op = QStringLiteral("data.load");
     load.params[QStringLiteral("path")] = path;
-    const auto loaded = application.host().execute(load);
+    const auto loaded = application.commands().execute(load);
     const qint64 loadMs = timer.elapsed();
     if (!loaded)
     {

@@ -7,7 +7,6 @@
 #include "InstantiationService.h"
 #include "ICommands.h"
 #include "CommandAdapter.h"
-#include "RuntimeHost.h"
 
 using nextpilot::plotscope::instantiation::InstantiationService;
 using namespace nextpilot::plotscope::foundation;

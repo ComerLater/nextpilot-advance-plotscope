@@ -14,7 +14,6 @@ namespace nextpilot::plotscope::parser {
 class IMessageParser;
 }
 namespace nextpilot::plotscope::host {
-class RuntimeHost; // onAttach 的旧状态栏订阅用（A2b 迁；A1b 恒为空指针）
 }
 namespace nextpilot::plotscope::uischema {
 class IScriptCapabilities; // initialize 注册 view action 后留存，onDetach 注销
@@ -52,7 +51,6 @@ private:
     // 数据表格查看器入口（data.table.open）在 initialize 注册，
     // 运行时经 m_ui 按需创建中央页签面板（GUI 环境才有值）。
     nextpilot::plotscope::host::IUiContext *m_ui = nullptr;
-    nextpilot::plotscope::host::RuntimeHost *m_host = nullptr;
     nextpilot::plotscope::uischema::IScriptCapabilities *m_caps = nullptr; // initialize 留存，onDetach 用
     QVector<QPair<QString, QString>> m_driverMetas; // initialize 缓存的格式驱动 {id, displayName}
     // 数据集增删订阅（vscode.workspace 的 onDidAddDocument/onDidRemoveDocument），

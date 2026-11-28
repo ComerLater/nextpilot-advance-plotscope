@@ -11,7 +11,6 @@
 #include "DatasetRegistry.h"
 #include "Dataset.h"
 #include "Intent.h"
-#include "RuntimeHost.h"
 #include "SettingsStore.h"
 #include "SourceRegistry.h"
 #include "Transform.h"

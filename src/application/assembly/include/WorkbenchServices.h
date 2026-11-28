@@ -1,7 +1,7 @@
 #pragma once
 
 // A1b §1.4 装配层组合：持有 InstantiationService，构造各 adapter，注册 3 条 VSCode 服务。
-// 组合根（App）拥有本对象；RuntimeHost 通过引用拿到 InstantiationService 传给模块。
+// 组合根（App）拥有本对象；模块经服务容器按 VSCode 名字取服务。
 //
 // 只注册 3 条：vscode.workspace / vscode.window / vscode.commands。
 // 5 个 access 是 IWorkspace 成员，不单独注册（§1.3）。
@@ -12,7 +12,6 @@
 #include "IDisposable.h"
 #include "Intent.h"
 #include "NullWindow.h"
-#include "RuntimeHost.h"
 
 #include <QPointer>
 #include <memory>
@@ -21,7 +20,8 @@ namespace nextpilot::plotscope::assembly {
 namespace inst = nextpilot::plotscope::instantiation;
 namespace wb = nextpilot::plotscope::workbench;
 namespace intent = nextpilot::plotscope::intent;
-namespace host = nextpilot::plotscope::host;
+namespace command = nextpilot::plotscope::command;
+namespace registry = nextpilot::plotscope::registry;
 
 // 工作台内置命令执行体：认领 workbench.* 保留前缀的内置命令
 // （§3.0.9 内置命令最小集，本笔交付 openSettings）。扩展 handler 让出该前缀，
@@ -53,14 +53,15 @@ class WorkbenchServices : public QObject
 {
     Q_OBJECT
 public:
+    // 只收被引用的注册表/服务本体（全部由组合根 App 持有），不引入中间宿主对象。
     WorkbenchServices(nextpilot::plotscope::context::AppContext &appCtx,
-                      nextpilot::plotscope::intent::JobRecorder &recorder, host::RuntimeHost &hostRef,
+                      nextpilot::plotscope::intent::JobRecorder &recorder, command::CommandService &commands,
+                      registry::UiSlotHub &slotHub, nextpilot::plotscope::context::IngestPipeline &ingest,
                       QObject *parent = nullptr);
 
     inst::InstantiationService &services() { return m_services; }
 
-    // 模块声明灌回入口（裁定 52442006 Step 3）：App 组合根接线到 RuntimeHost，
-    // host.activate 收集 contributes 后调它——壳不再灌回。
+    // 模块声明灌回入口：扩展激活收集 contributes 后调它——壳不再灌回。
     wb::IContributionsInstaller *contributionsInstaller() { return &m_contribInstaller; }
 
     // VSCode MenuRegistry 的读取入口（RibbonPart 等按 MenuId 取条目）。
@@ -75,7 +76,7 @@ private:
     RecorderAdapter m_recorderAccess;
     PlaybackAdapter m_playbackAccess;
     WorkspaceAdapter m_workspace;
-    CommandsAdapter m_commands;
+    command::CommandService &m_commands;
     ScriptCapabilitiesAdapter m_scriptCaps;
     // 壳读回三服务（A8b-M2 裁定 52441633 §三）：壳经 workbench 接口读回，
     // src/application/gui 不再出现 ExtensionRegistry / toolbox()。

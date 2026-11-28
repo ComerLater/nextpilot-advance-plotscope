@@ -60,7 +60,7 @@ QVariantMap runBatch(App &application, const QVariantMap &params, Result<IntentR
     Intent bi;
     bi.op = QStringLiteral("data.batch.run");
     bi.params = params;
-    Result<IntentResult> r = application.host().execute(bi);
+    Result<IntentResult> r = application.commands().execute(bi);
     if (rOut)
         *rOut = r;
     if (!r)

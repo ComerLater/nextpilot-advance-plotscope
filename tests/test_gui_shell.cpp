@@ -9,7 +9,6 @@
 
 #include "App.h"
 #include "AppContext.h"
-#include "RuntimeHost.h"
 #include "MainWindow.h"
 #include "ShellBinder.h"
 #include "BuiltinWorkbenchViews.h"
@@ -52,10 +51,11 @@ int main(int argc, char *argv[])
     MainWindow window(application.context(), plotScopeProductSpec());
 
     // 壳内置工作台视图（装配层声明半 + gui 侧 provider 注册半），与 gui_main 同序。
-    CHECK(nextpilot::plotscope::assembly::declareBuiltinWorkbenchViews(application.host().services()));
-    CHECK(nextpilot::plotscope::gui::installBuiltinWorkbenchViewProviders(application.host().services()));
+    CHECK(nextpilot::plotscope::assembly::declareBuiltinWorkbenchViews(&application.services()));
+    CHECK(nextpilot::plotscope::gui::installBuiltinWorkbenchViewProviders(&application.services()));
 
-    window.build(application.host());
+    window.build(&application.services(), application.commands(), &application.extensions(),
+                 application.menuRegistry());
     window.resize(1280, 800);
 
     // --- A) 产品身份来自 ProductSpec，壳零硬编码 ---
@@ -80,7 +80,7 @@ int main(int argc, char *argv[])
     // data/plot/script/protocol/analysis/report 六页归各业务模块，业务出壳后本就不该出现。
     // 所以这里断言"壳拥有的正好是这 3 页"，而不是全产品的 9 页——后者是模块挂回后的事。
     {
-        auto *ribbonSvc = application.host().services()->getService<IRibbonService>(QStringLiteral("ribbon.readback"));
+        auto *ribbonSvc = &application.services()->getService<IRibbonService>(QStringLiteral("ribbon.readback"));
         CHECK(ribbonSvc != nullptr);
         const auto pages = ribbonSvc->ribbonPages();
         CHECK(pages.size() == 3);
@@ -108,7 +108,7 @@ int main(int argc, char *argv[])
 
     // --- E) 菜单面：壳标准动作落 MenuRegistry（menubar/<pageId>），不靠业务 ---
     {
-        auto *menus = application.host().menuRegistry();
+        auto *menus = &application.commands().menuRegistry();
         CHECK(menus != nullptr);
         // 壳骨架动作（新建/打开/导出/退出/设置等）落在文件页与视图页。
         int shellItems = 0;

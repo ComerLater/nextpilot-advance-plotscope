@@ -13,7 +13,7 @@
 // 本类只做"意图层能力暴露 + 工具目录"，MCP server 本身在第三梯队暂缓——
 // 后续 MCP bridge 直接消费 ai.tools.list / ai.tool.call 即可，无需改宿主。
 //
-// 系统级 handler，归 RuntimeHost 持有；所有 ai.* 意图集中一处。
+// 系统命令 handler，由组合根注册进 CommandService；所有 ai.* 意图集中一处。
 class AIToolsHandler final : public nextpilot::plotscope::intent::IIntentHandler
 {
 public:

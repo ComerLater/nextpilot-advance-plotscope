@@ -178,28 +178,28 @@ int main(int argc, char *argv[])
     // 后注册 provider（gui 侧）——两半都**先于** window.build：build 内
     // defaultPanels 走 views 声明与 provider。第③步必带：任一注册失败写启动期
     // error 诊断（AppContext + stderr），不许静默。
-    if (!nextpilot::plotscope::assembly::declareBuiltinWorkbenchViews(application.host().services()))
+    if (!nextpilot::plotscope::assembly::declareBuiltinWorkbenchViews(&application.services()))
         reportAssemblyFailure(application.context(), "declareBuiltinWorkbenchViews");
-    if (!nextpilot::plotscope::gui::installBuiltinWorkbenchViewProviders(application.host().services()))
+    if (!nextpilot::plotscope::gui::installBuiltinWorkbenchViewProviders(&application.services()))
         reportAssemblyFailure(application.context(), "installBuiltinWorkbenchViewProviders");
 #ifdef PS_HAS_DATA_GUI
-    if (!nextpilot::plotscope::data::installDataViewFactories(application.host().services(), &application.context(),
-                                                              &application.host()))
+    if (!nextpilot::plotscope::data::installDataViewFactories(&application.services(), &application.context(),
+                                                              &application.commands()))
         reportAssemblyFailure(application.context(), "installDataViewFactories");
 #endif
 #ifdef PS_HAS_PLOT_GUI
-    if (!nextpilot::plotscope::plot::installPlotViewFactories(application.host().services(), &application.context(),
-                                                              &application.host()))
+    if (!nextpilot::plotscope::plot::installPlotViewFactories(&application.services(), &application.context(),
+                                                              &application.commands()))
         reportAssemblyFailure(application.context(), "installPlotViewFactories");
 #endif
 #ifdef PS_HAS_SCRIPT_GUI
-    if (!nextpilot::plotscope::script::installScriptViewFactories(application.host().services(), &application.context(),
-                                                                  &application.host()))
+    if (!nextpilot::plotscope::script::installScriptViewFactories(&application.services(), &application.context(),
+                                                                  &application.commands()))
         reportAssemblyFailure(application.context(), "installScriptViewFactories");
 #endif
 #ifdef PS_HAS_AUTOMOTIVE_GUI
     if (!nextpilot::plotscope::ext::automotive::installAutomotiveViewFactories(
-            application.host().services(), &application.context(), &application.host()))
+            &application.services(), &application.context(), &application.commands()))
         reportAssemblyFailure(application.context(), "installAutomotiveViewFactories");
 #endif
 #ifdef PS_HAS_REPORT_GUI
@@ -210,23 +210,30 @@ int main(int argc, char *argv[])
     // "pure virtual method called" 直接 abort）。故在 host 之后声明一个守卫，
     // 让本块退出时先拆模块、再让 host 死亡。
     nextpilot::plotscope::gui::ReportExportHost reportExportHost(application.context());
-    application.host().services()->registerSingleton(
+    &application.services()->registerSingleton(
         QStringLiteral("report.exportHost"), &reportExportHost, QStringLiteral("assembly"), 1,
         nextpilot::plotscope::instantiation::ServiceTypeTag<nextpilot::plotscope::report::IReportExportHost>::value());
     struct DeactivateBeforeHostDeath
     {
         nextpilot::plotscope::app::App &app;
-        ~DeactivateBeforeHostDeath() { app.host().deactivateAll(); }
+        ~DeactivateBeforeHostDeath()
+        {
+            if (auto *ext = &app.extensions())
+                for (const QString &id : ext->getActivatedExtensions())
+                    ext->deactivateExtension(id);
+        }
     } deactivateGuard{application};
 #endif
 
     nextpilot::plotscope::gui::MainWindow window(application.context(), productSpec);
-    window.build(application.host());
+    window.build(&application.services(), application.commands(), &application.extensions(),
+                 application.menuRegistry());
 
     // 对话框启动器注入（A2d 第⑤步）：壳零 libs/registry 引用——按 id 触发的
     // 对话框动作由组合根经装配层助手（DialogLaunch.h）落到模块呈现层注册的启动器。
     window.setDialogLauncher([&window, &application](const QString &actionId) {
-        nextpilot::plotscope::assembly::launchDialogById(actionId, &window, application.context(), application.host());
+        nextpilot::plotscope::assembly::launchDialogById(actionId, &window, application.context(),
+                                                         &application.commands());
         return true;
     });
 
@@ -234,14 +241,14 @@ int main(int argc, char *argv[])
     // 装配层用 public getter 拿 CommandRegistry*，扩展服务只按声明摆放、不解释 id。
     // 裁定 52441633 §四：只传 AppContext，扩展注册表的获取留在装配层，
     // gui 目录不再出现扩展注册表的获取路径（§9 e) 判据）。
-    application.extensions().bindCommands(window.commandRegistry(), application.host());
+    application.extensions().bindCommands(window.commandRegistry());
 
     int loadFailures = 0;
     auto loadOneReported = [&](const QString &path) {
         nextpilot::plotscope::intent::Intent intent;
         intent.op = QStringLiteral("data.load");
         intent.params[QStringLiteral("path")] = path;
-        const auto result = application.host().execute(intent);
+        const auto result = application.commands().execute(intent);
         if (!result)
         {
             ++loadFailures;
@@ -290,7 +297,7 @@ int main(int argc, char *argv[])
                 {
                     nextpilot::plotscope::intent::Intent restore;
                     restore.op = QStringLiteral("data.workspace.restore");
-                    const auto rr = application.host().execute(restore);
+                    const auto rr = application.commands().execute(restore);
                     if (!rr)
                     {
                         ++loadFailures;
@@ -310,7 +317,7 @@ int main(int argc, char *argv[])
     {
         QTimer::singleShot(0, &window, [&application] {
             nextpilot::plotscope::foundation::Result<QVariant> out{QVariant()};
-            application.host().dispatchViewAction(QStringLiteral("playback.play"), {}, out);
+            application.context().interactions().dispatchViewAction(QStringLiteral("playback.play"), {}, out);
         });
     }
 

@@ -297,30 +297,35 @@ int main(int argc, char **argv)
     // 「新增 module / extension 不修改其他代码」的直接证明。
     App application;
     FakeReportExportHost fakeReportHost(application.context());
-    application.host().services()->registerSingleton(
+    &application.services()->registerSingleton(
         QStringLiteral("report.exportHost"), &fakeReportHost, QStringLiteral("test"), 1,
         nextpilot::plotscope::instantiation::ServiceTypeTag<nextpilot::plotscope::report::IReportExportHost>::value());
     const auto errors = application.startup(true);
     CHECK(errors.isEmpty());
-    CHECK(application.host().activeIds().size() == 9); // 8 内置（含 mod.report / mod.workspace）+ 1 探针
-    CHECK(application.host().isActive(QStringLiteral("mod.probe")));
+    CHECK(application.extensions().getActivatedExtensions().size() ==
+          9); // 8 内置（含 mod.report / mod.workspace）+ 1 探针
+    CHECK(application.extensions().isActivated(QStringLiteral("mod.probe")));
     // 内置模块：数据/绘图/脚本/设置 + 本轮补齐的协议/分析/报告。
-    CHECK(application.host().isActive(QStringLiteral("mod.settings")));
-    CHECK(application.host().isActive(QStringLiteral("mod.protocol")));
-    CHECK(application.host().isActive(QStringLiteral("mod.analysis")));
-    CHECK(application.host().isActive(QStringLiteral("mod.report")));
-    CHECK(application.host().isActive(QStringLiteral("mod.workspace")));
+    CHECK(application.extensions().isActivated(QStringLiteral("mod.settings")));
+    CHECK(application.extensions().isActivated(QStringLiteral("mod.protocol")));
+    CHECK(application.extensions().isActivated(QStringLiteral("mod.analysis")));
+    CHECK(application.extensions().isActivated(QStringLiteral("mod.report")));
+    CHECK(application.extensions().isActivated(QStringLiteral("mod.workspace")));
 
     // IKYDH2：卸载 mod.report 摘除 report.export（替换 host 实现，与 GUI 同路径）。
     {
         const int actionsBefore = application.context().interactions().count();
         CHECK(application.context().interactions().keysAsStrings().contains(QStringLiteral("report.export")));
-        CHECK(application.host().deactivate(QStringLiteral("mod.report")));
+        CHECK(application.extensions().deactivateExtension(QStringLiteral("mod.report")));
         CHECK(!application.context().interactions().keysAsStrings().contains(QStringLiteral("report.export")));
-        CHECK(application.host().activate(QStringList(), nullptr).isEmpty());
+        CHECK(application.extensions()
+                  .activateByEvent(QStringLiteral("onStartupFinished"), QStringList(), nullptr)
+                  .isEmpty());
         CHECK(application.context().interactions().keysAsStrings().contains(QStringLiteral("report.export")));
         CHECK(application.context().interactions().count() == actionsBefore);
-        CHECK(application.host().activate(QStringList(), nullptr).isEmpty());
+        CHECK(application.extensions()
+                  .activateByEvent(QStringLiteral("onStartupFinished"), QStringList(), nullptr)
+                  .isEmpty());
         CHECK(application.context().interactions().count() == actionsBefore);
         CHECK(fakeReportHost.installed());
         fprintf(stdout, "[ok] 卸载并重激活 report 模块后 report.export 恢复，且不叠加\n");
@@ -330,7 +335,7 @@ int main(int argc, char **argv)
     {
         Intent ping;
         ping.op = QStringLiteral("probe.ping");
-        const auto pong = application.host().execute(ping);
+        const auto pong = application.commands().execute(ping);
         CHECK(pong);
         CHECK(pong.value().payload.toString() == QStringLiteral("pong"));
     }
@@ -344,7 +349,7 @@ int main(int argc, char **argv)
         v.params.insert(QStringLiteral("template"),
                         QStringLiteral(R"({"name":"arch_tpl","mode":"bin","layout":"sequential",
                             "segments":[{"name":"a","type":"u8"}]})"));
-        const auto r = application.host().execute(v);
+        const auto r = application.commands().execute(v);
         CHECK(r.ok());
         CHECK(r.value().payload.toMap().value(QStringLiteral("ok")).toBool());
 
@@ -352,7 +357,7 @@ int main(int argc, char **argv)
         Intent bad = v;
         bad.params.insert(QStringLiteral("template"),
                           QStringLiteral(R"({"name":"x","segments":[{"name":"a","type":"u8"}]})"));
-        const auto rb = application.host().execute(bad);
+        const auto rb = application.commands().execute(bad);
         CHECK(rb.ok()); // 意图本身成功执行
         CHECK(!rb.value().payload.toMap().value(QStringLiteral("ok")).toBool());
         CHECK(!rb.value().payload.toMap().value(QStringLiteral("issues")).toStringList().isEmpty());
@@ -514,7 +519,7 @@ int main(int argc, char **argv)
 
         // UI 插槽：壳级页/组在 host 层 ShellContributions 唯一声明；业务页/组由模块
         // onAttach 自声明，headless 不调 onAttach，因此这里只看到壳的文件/视图两页。
-        const auto &slotReg = application.host().uiSlots();
+        const auto &slotReg = application.slotHub();
         fprintf(stdout, "[debug] RibbonPage count=%d\n", slotReg.slotsOfKind(SlotKind::RibbonPage).size());
         for (const auto &s : slotReg.slotsOfKind(SlotKind::RibbonPage))
             fprintf(stdout, "[debug]   page=%s\n", qPrintable(s.slotId));
@@ -549,7 +554,7 @@ int main(int argc, char **argv)
     // 旧 DockPanel / Canvas / Menu 三类零消费者槽已删除。遍历全部已声明槽：
     // 任何 kind 不在白名单、或 area 不属于 ribbon.* 命名的槽都视为死槽，即失败。
     {
-        const auto &slotReg = application.host().uiSlots();
+        const auto &slotReg = application.slotHub();
         for (const UiSlot &s : slotReg.allSlots())
         {
             CHECK(s.kind == SlotKind::RibbonPage || s.kind == SlotKind::RibbonGroup);
@@ -572,7 +577,7 @@ int main(int argc, char **argv)
     }
 
     // 2) 意图执行：CSV 扩展产出 Dataset（一张 CSV = 一张表）
-    Result<IntentResult> loaded = application.host().execute(loadIntent(csv));
+    Result<IntentResult> loaded = application.commands().execute(loadIntent(csv));
     assert(loaded);
     const DatasetId id = loaded.value().payload.toInt();
     const Dataset *ds = plotscope_test::datasetHub(application.context()).get(id);
@@ -661,7 +666,7 @@ int main(int argc, char **argv)
         ui.op = QStringLiteral("data.load");
         ui.params[QStringLiteral("path")] = ulg;
         ui.params[QStringLiteral("format")] = QStringLiteral("ulog");
-        Result<IntentResult> uloaded = application.host().execute(ui);
+        Result<IntentResult> uloaded = application.commands().execute(ui);
         if (!uloaded)
             fprintf(stderr, "[diag] ULog 加载失败: %s / %s\n", uloaded.error().code.toUtf8().constData(),
                     uloaded.error().message.toUtf8().constData());
@@ -732,7 +737,7 @@ int main(int argc, char **argv)
     }
 
     // 3) 意图执行：plot 模块按 table.column 编译出 PlotSpec
-    Result<IntentResult> rendered = application.host().execute(renderIntent(id, QStringLiteral("demo.pitch")));
+    Result<IntentResult> rendered = application.commands().execute(renderIntent(id, QStringLiteral("demo.pitch")));
     assert(rendered);
     const QVariantMap spec = rendered.value().payload.toMap();
     assert(spec.value(QStringLiteral("type")).toString() == QStringLiteral("timeseries"));
@@ -755,7 +760,7 @@ int main(int argc, char **argv)
 
         application.recorder().clear();
         application.recorder().setRecording(true);
-        Result<IntentResult> sr = application.host().execute(runScript);
+        Result<IntentResult> sr = application.commands().execute(runScript);
         application.recorder().setRecording(false);
         assert(sr);
         fprintf(stdout, "[ok] Lua 脚本通过 ps 门面执行成功（headless，无 QWidget）\n");
@@ -776,7 +781,7 @@ int main(int argc, char **argv)
         QVariantMap replayedSpec;
         for (int i = 0; i < recorded.size(); ++i)
         {
-            Result<IntentResult> rr = application.host().execute(recorded.at(i));
+            Result<IntentResult> rr = application.commands().execute(recorded.at(i));
             assert(rr);
             if (recorded.at(i).op == QStringLiteral("data.load"))
                 replayedId = rr.value().payload.toInt();
@@ -800,7 +805,7 @@ int main(int argc, char **argv)
         };
         // data.load 成功后自动记入最近文件（settings 持久化）。
         Intent recent = mk(QStringLiteral("data.recent"));
-        Result<IntentResult> rr = application.host().execute(recent);
+        Result<IntentResult> rr = application.commands().execute(recent);
         CHECK(rr);
         const QStringList recents = rr.value().payload.toStringList();
         CHECK(recents.contains(csv));
@@ -811,7 +816,7 @@ int main(int argc, char **argv)
         Intent exp = mk(QStringLiteral("data.export"));
         exp.params[QStringLiteral("dataset")] = id;
         exp.params[QStringLiteral("path")] = outCsv;
-        Result<IntentResult> er = application.host().execute(exp);
+        Result<IntentResult> er = application.commands().execute(exp);
         if (!er)
             fprintf(stderr, "[diag] data.export 失败: %s / %s\n", er.error().code.toUtf8().constData(),
                     er.error().message.toUtf8().constData());
@@ -828,7 +833,7 @@ int main(int argc, char **argv)
         // data.reload：重载活动源，重新走 data.load（有 sources 支撑）。
         application.context().setActiveSourceId(plotscope_test::sourceHub(application.context()).ids().first());
         Intent rel = mk(QStringLiteral("data.reload"));
-        Result<IntentResult> rer = application.host().execute(rel);
+        Result<IntentResult> rer = application.commands().execute(rel);
         if (!rer)
             fprintf(stderr, "[diag] data.reload 失败: %s / %s\n", rer.error().code.toUtf8().constData(),
                     rer.error().message.toUtf8().constData());
@@ -837,7 +842,7 @@ int main(int argc, char **argv)
 
         // data.clearCache：删除 .psc 缓存（无缓存时返回 0 也算成功）。
         Intent cc = mk(QStringLiteral("data.clearCache"));
-        Result<IntentResult> cr = application.host().execute(cc);
+        Result<IntentResult> cr = application.commands().execute(cc);
         CHECK(cr);
         CHECK(cr.value().payload.toInt() >= 0);
         fprintf(stdout, "[ok] data.clearCache：解析缓存清理成功（清掉 %d 个）\n", cr.value().payload.toInt());
@@ -846,7 +851,7 @@ int main(int argc, char **argv)
         {
             Intent rr = mk(QStringLiteral("data.remove"));
             rr.params[QStringLiteral("id")] = -9999;
-            Result<IntentResult> rm = application.host().execute(rr);
+            Result<IntentResult> rm = application.commands().execute(rr);
             CHECK(!rm);
             fprintf(stdout, "[ok] data.remove：无效源 id 明确失败，不误删\n");
         }
@@ -899,16 +904,16 @@ int main(int argc, char **argv)
             fprintf(stdout, "[ok] 派生配方只存算子+参数，不存结果数组\n");
 
             // data.workspace.list / save：可读、可 flush。
-            Result<IntentResult> wl = application.host().execute(mk(QStringLiteral("data.workspace.list")));
+            Result<IntentResult> wl = application.commands().execute(mk(QStringLiteral("data.workspace.list")));
             CHECK(wl);
             CHECK(!wl.value().payload.toByteArray().isEmpty());
-            Result<IntentResult> ws = application.host().execute(mk(QStringLiteral("data.workspace.save")));
+            Result<IntentResult> ws = application.commands().execute(mk(QStringLiteral("data.workspace.save")));
             CHECK(ws);
             fprintf(stdout, "[ok] data.workspace.list/save：配置可读可落盘\n");
 
             // data.workspace.restore：重放 data.load（record=false 不重复记录）。
             const int sourcesBefore = cfg.sources.size();
-            Result<IntentResult> wr = application.host().execute(mk(QStringLiteral("data.workspace.restore")));
+            Result<IntentResult> wr = application.commands().execute(mk(QStringLiteral("data.workspace.restore")));
             CHECK(wr);
             const QVariantMap stat = wr.value().payload.toMap();
             CHECK(stat.value(QStringLiteral("sources")).toInt() >= 1);
@@ -920,9 +925,9 @@ int main(int argc, char **argv)
     }
 
     // 4) 卸载隔离：关掉绘图模块后，CSV 仍能加载，数据不消失
-    CHECK(application.host().deactivate(QStringLiteral("mod.plot")));
-    CHECK(!application.host().isActive(QStringLiteral("mod.plot")));
-    Result<IntentResult> stillLoads = application.host().execute(loadIntent(csv));
+    CHECK(application.extensions().deactivateExtension(QStringLiteral("mod.plot")));
+    CHECK(!application.extensions().isActivated(QStringLiteral("mod.plot")));
+    Result<IntentResult> stillLoads = application.commands().execute(loadIntent(csv));
     assert(stillLoads);
     assert(plotscope_test::datasetHub(application.context()).get(id) != nullptr);
     fprintf(stdout, "[ok] 卸载 plot 模块后 CSV 仍可用，数据未丢失\n");
@@ -934,7 +939,7 @@ int main(int argc, char **argv)
     // M2.8：toolbox.count() 已改为 RegistryNode 口径（packs 表数，diag.registries 用）；
     // 这里的本意是"恰好剩一个驱动（ulog）"，改用 drivers().size() 保持原断言语义。
     CHECK(toolbox.drivers().size() == 5); // 剩 ulog + mdf4 + blf + apbin + rosbag2（csv 及其包已原子撤销）
-    Result<IntentResult> noHandler = application.host().execute(loadIntent(csv));
+    Result<IntentResult> noHandler = application.commands().execute(loadIntent(csv));
     CHECK(!noHandler);
     CHECK(noHandler.error().code == QStringLiteral("eformat"));
     fprintf(stdout, "[ok] 从工具箱撤销 CSV 驱动后能力被精确撤销（eformat）\n");
@@ -947,12 +952,12 @@ int main(int argc, char **argv)
         ui.op = QStringLiteral("data.load");
         ui.params[QStringLiteral("path")] = ulg;
         ui.params[QStringLiteral("format")] = QStringLiteral("ulog");
-        Result<IntentResult> stillLoads = application.host().execute(ui); // CSV 已撤，ULog 仍在
+        Result<IntentResult> stillLoads = application.commands().execute(ui); // CSV 已撤，ULog 仍在
         CHECK(stillLoads);
         CHECK(toolbox.unregisterDriver(QStringLiteral("ulog")));
         // 注意：撤销 csv 时已按包原子撤掉 pack.common（csv + custom-protocol），
         // 这里无需也不能再单独撤 custom-protocol。
-        Result<IntentResult> noUlog = application.host().execute(ui);
+        Result<IntentResult> noUlog = application.commands().execute(ui);
         CHECK(!noUlog && noUlog.error().code == QStringLiteral("eformat"));
         // M2.8：count() 已改 packs 口径，此处断言"驱动全撤"改用 drivers().size()。
         CHECK(toolbox.drivers().size() == 4); // 只剩 mdf4 + blf + apbin + rosbag2
@@ -1253,7 +1258,7 @@ int main(int argc, char **argv)
     {
         App isolated{};
         CHECK(isolated.startup(true).isEmpty());
-        CHECK(isolated.host().isActive(QStringLiteral("mod.data")));
+        CHECK(isolated.extensions().isActivated(QStringLiteral("mod.data")));
 
         const int before{isolated.context().interactions().count()};
         Result<QVariant> live{QVariant()};
@@ -1261,13 +1266,15 @@ int main(int argc, char **argv)
                                                                    live));
         CHECK(!live.ok());
 
-        CHECK(isolated.host().deactivate(QStringLiteral("mod.data")));
+        CHECK(isolated.extensions().deactivateExtension(QStringLiteral("mod.data")));
         CHECK(isolated.context().interactions().count() == before - 1);
         Result<QVariant> gone{QVariant()};
         CHECK(!isolated.context().interactions().dispatchViewAction(QStringLiteral("data.table.open"), QVariantMap(),
                                                                     gone));
 
-        CHECK(isolated.host().activate().isEmpty());
+        CHECK(isolated.extensions()
+                  .activateByEvent(QStringLiteral("onStartupFinished"), QStringList(), nullptr)
+                  .isEmpty());
         CHECK(isolated.context().interactions().count() == before);
         Result<QVariant> back{QVariant()};
         CHECK(isolated.context().interactions().dispatchViewAction(QStringLiteral("data.table.open"), QVariantMap(),
@@ -1276,7 +1283,7 @@ int main(int argc, char **argv)
 
         // 命令表注销闭环：plot 的命令在 initialize() 注册（不经过 if(ui)），headless 可测。
         // 卸载后 executeCommand 返回 E_NO_COMMAND，重激活后恢复。
-        auto *hostServices = isolated.host().services();
+        auto *hostServices = &isolated.services();
         CHECK(hostServices != nullptr);
         auto *cmds =
             hostServices->getService<nextpilot::plotscope::workbench::ICommands>(QStringLiteral("vscode.commands"));
@@ -1288,14 +1295,16 @@ int main(int argc, char **argv)
             CHECK(cmds->executeCommand(id, QVariantMap()).error().code != QStringLiteral("E_NO_COMMAND"));
 
         // 卸载摘净声明式贡献；重激活不重复灌入。
-        CHECK(isolated.host().deactivate(QStringLiteral("mod.plot")));
+        CHECK(isolated.extensions().deactivateExtension(QStringLiteral("mod.plot")));
         for (const QString &id : plotCommands)
             CHECK(cmds->executeCommand(id, QVariantMap()).error().code == QStringLiteral("E_NO_COMMAND"));
         auto *registry = static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
             isolated.context().registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension));
         CHECK(!registry->isContributionMounted(QStringLiteral("mod.plot")));
 
-        CHECK(isolated.host().activate().isEmpty());
+        CHECK(isolated.extensions()
+                  .activateByEvent(QStringLiteral("onStartupFinished"), QStringList(), nullptr)
+                  .isEmpty());
         CHECK(registry->isContributionMounted(QStringLiteral("mod.plot")));
         for (const QString &id : plotCommands)
             CHECK(cmds->executeCommand(id, QVariantMap()).error().code != QStringLiteral("E_NO_COMMAND"));
@@ -1310,7 +1319,7 @@ int main(int argc, char **argv)
     // 收尾：先显式拆模块，再让栈上的 fakeReportHost 析构。App 析构时也会 deactivateAll
     // （幂等），但 application 早于 fakeReportHost 声明、晚于它析构——不在这里先拆，
     // ~App 的 deactivateAll 就会对着已析构的 fake host 做虚调用（Debug 下 pure virtual abort）。
-    application.host().deactivateAll();
+    application.stop();
 
     fprintf(stdout, "\n全部架构契约测试通过\n");
     return 0;

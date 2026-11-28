@@ -12,7 +12,10 @@
 
 #include "MainWindow.h"
 #include "AppContext.h"
-#include "RuntimeHost.h"
+#include "command/CommandService.h"
+#include "MenuRegistry.h"
+#include "ShellContributions.h"
+#include "UiSlotHub.h"
 #include "ProductSpec.h"
 #include "ViewRegistry.h"
 
@@ -105,17 +108,20 @@ int main(int argc, char *argv[])
 
     // 直接用 libs 层运行态：不走 ps_app（ps_app 会装配完整产品的模块与知识包）。
     nextpilot::plotscope::context::AppContext ctx; // 空路径 = 内存设置，不落盘
-    nextpilot::plotscope::host::RuntimeHost host(ctx);
+    // 裸壳零服务装配：只有壳自己的注册表（插槽声明 + 菜单动作）与命令执行体。
+    nextpilot::plotscope::registry::UiSlotHub slots(ctx.registryTree());
+    nextpilot::plotscope::command::CommandService commands;
+    nextpilot::plotscope::registry::MenuRegistry menus;
+    nextpilot::plotscope::host::declareShellContributions(slots);
+    nextpilot::plotscope::host::declareShellActions(menus);
 
     nextpilot::plotscope::gui::MainWindow window(ctx, spec);
-    window.build(host);
+    window.build(nullptr, commands, nullptr, menus);
 
     if (parser.isSet(contribOpt))
     {
         // A2c 反证面：裸壳零声明（壳不代声明业务视图，A2c 打回线 2）。
-        auto *views = host.services() ? host.services()->getService<nextpilot::plotscope::registry::ViewRegistry>(
-                                            QStringLiteral("views.registry"))
-                                      : nullptr;
+        auto *views = static_cast<nextpilot::plotscope::registry::ViewRegistry *>(nullptr);
         int count = 0;
         if (views)
         {

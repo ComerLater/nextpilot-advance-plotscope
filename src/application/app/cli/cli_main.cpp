@@ -243,7 +243,7 @@ int main(int argc, char **argv)
 
     if (command == QStringLiteral("--list-modules"))
     {
-        for (const auto &info : application.host().availableExtensions())
+        for (const auto &info : application.extensions().getExtensions())
         {
             fprintf(stdout, "%-16s %s\n", u8(info.identifier), u8(info.dependencies.join(QLatin1Char(','))));
         }
@@ -310,7 +310,7 @@ int main(int argc, char **argv)
     if (command == QStringLiteral("--list-slots"))
     {
         // 模块/骨架声明插槽，工具箱的 UI 贡献填内容。
-        const auto &slotReg = application.host().uiSlots();
+        const auto &slotReg = application.slotHub();
         for (const nextpilot::plotscope::registry::UiSlot &slot : slotReg.allSlots())
         {
             const auto actions = slotReg.actionsIn(slot.slotId);
@@ -355,7 +355,7 @@ int main(int argc, char **argv)
                     u8(nextpilot::plotscope::context::ParserCatalog::suffixes().join(QLatin1Char(','))));
             return 1;
         }
-        Result<IntentResult> r = application.host().execute(intent);
+        Result<IntentResult> r = application.commands().execute(intent);
         if (!r)
         {
             fprintf(stderr, "error[%s]: %s\n", u8(r.error().code), u8(r.error().message));
@@ -396,7 +396,7 @@ int main(int argc, char **argv)
         for (int i = 0; i < job.size(); ++i)
         {
             const Intent &intent = job.at(i);
-            Result<IntentResult> r = application.host().execute(intent);
+            Result<IntentResult> r = application.commands().execute(intent);
             if (!r)
             {
                 fprintf(stderr, "intent %d (%s) failed[%s]: %s\n", i, u8(intent.op), u8(r.error().code),
@@ -430,7 +430,7 @@ int main(int argc, char **argv)
             application.recorder().setRecording(true);
         }
 
-        Result<IntentResult> r = application.host().execute(makeScriptIntent(args.at(2)));
+        Result<IntentResult> r = application.commands().execute(makeScriptIntent(args.at(2)));
         if (!r)
         {
             fprintf(stderr, "script run failed[%s]: %s\n", u8(r.error().code), u8(r.error().message));
@@ -474,7 +474,7 @@ int main(int argc, char **argv)
         if (!pattern.isEmpty())
             bi.params[QStringLiteral("pattern")] = pattern;
 
-        Result<IntentResult> r = application.host().execute(bi);
+        Result<IntentResult> r = application.commands().execute(bi);
         if (!r)
         {
             fprintf(stderr, "batch run failed[%s]: %s\n", u8(r.error().code), u8(r.error().message));

@@ -1,7 +1,8 @@
 #include "ExtensionService.h"
+#include "IWorkbenchContribution.h"
 
 #include "command/CommandRegistry.h"
-#include "RuntimeHost.h"
+#include "command/CommandService.h"
 #include "Intent.h"
 
 #include <QPointer>
@@ -51,28 +52,27 @@ private:
     QHash<QString, int> m_triggered;
 };
 
-ExtensionService::ExtensionService(ctx::AppContext &appCtx, host::RuntimeHost &runtime,
+ExtensionService::ExtensionService(ctx::AppContext &appCtx, command::CommandService &commands,
                                    nextpilot::plotscope::instantiation::InstantiationService &services,
                                    wb::IContributionsInstaller *installer)
-    : m_appCtx(appCtx), m_host(runtime), m_services(services), m_installer(installer),
+    : m_appCtx(appCtx), m_commands(commands), m_services(services), m_installer(installer),
       m_registry(
           *static_cast<registry::ExtensionRegistry *>(appCtx.registryTree().find(registry::RegistryKind::Extension)))
 {
 }
 
-void ExtensionService::attachViewRegistry(host::RuntimeHost &runtime)
+void ExtensionService::attachViewRegistry()
 {
     // App 构造先注册 views.registry 再 bind（时序由组合根保证）；取不到保持 nullptr。
-    if (auto *services = runtime.services())
-        m_views = services->getService<registry::ViewRegistry>(QStringLiteral("views.registry"));
+    m_views = m_services.getService<registry::ViewRegistry>(QStringLiteral("views.registry"));
 }
 
-void ExtensionService::bindCommands(CommandRegistry *commands, host::RuntimeHost &runtime)
+void ExtensionService::bindCommands(CommandRegistry *commands)
 {
     if (!commands)
         return;
 
-    attachViewRegistry(runtime);
+    attachViewRegistry();
     // 扩展包的 viewsContainers/views：mount 时登记在唯一扩展注册表，
     // 这里按 owner 灌进 ViewRegistry——扩展 contributes 与扩展包 manifest 汇同一张表。
     if (m_views)
@@ -102,10 +102,10 @@ void ExtensionService::bindCommands(CommandRegistry *commands, host::RuntimeHost
 
     if (!m_handler)
     {
-        // QObject 父给 runtime（生命周期随宿主），但 handler 只借用扩展表引用——
-        // 两者都在 App 生命周期内存活，本服务先于二者析构即可。
-        m_handler = new ContributedCommandHandler(m_registry, &runtime);
-        runtime.registerSystemHandler(QStringLiteral("@system/extensions"), m_handler);
+        // QObject 父给本服务；handler 只借用扩展表引用，两者都在 App 生命周期内存活。
+        m_handler = new ContributedCommandHandler(m_registry, this);
+        m_commands.registerSystemHandler(QStringLiteral("workbench.contributions"), m_handler,
+                                         {QStringLiteral("contributes.commands")});
     }
 
     for (const auto &c : m_registry.contributedCommands())
@@ -118,7 +118,7 @@ void ExtensionService::bindCommands(CommandRegistry *commands, host::RuntimeHost
         d.category = c.category;
         d.icon = c.icon;
         d.provider = m_registry.ownerOfCommand(c.command);
-        d.intentOp = c.command; // 执行走 RuntimeHost → 本服务 handler
+        d.intentOp = c.command; // 执行走 CommandService → 本服务 handler
         if (commands->add(d))
             m_bound.insert(c.command, d.provider);
     }
@@ -312,16 +312,14 @@ QHash<QString, QString> ExtensionService::activateByEvent(const QString &activat
             errors.insert(id, QStringLiteral("工厂返回空"));
             continue;
         }
-        instance->setParent(&m_host); // 所有权归宿主，delete 时整棵子树回收
-        m_host.beginInitExtension(id);
-        // 扩展只收服务容器，不再收宿主本体。
+        // 所有权归本服务：deactivate 时 delete 整棵子树回收。
+        instance->setParent(this);
+        // 扩展只收服务容器，命令注册走 ICommands（commandId 即命令身份，无归属洗牌）。
         instance->initialize(m_services);
-        m_host.endInitExtension();
 
         ActiveExtension ax;
         ax.description = entry.first;
         ax.instance = instance;
-        ax.handlers = m_host.initExtensionHandlers();
         m_active.insert(id, std::move(ax));
 
         // 收集声明式 contributes（initialize 后数据已就绪）。owner 用扩展 identifier。
@@ -345,8 +343,6 @@ bool ExtensionService::deactivateExtension(const QString &extensionId)
         return false;
 
     it->instance->onDetach();
-    for (nextpilot::plotscope::intent::IIntentHandler *h : it->handlers)
-        m_host.unregisterHandler(h);
     delete it->instance; // QObject 子树自动销毁其创建的 UI 与信号连接
     m_registry.unmountContribution(extensionId);
     m_active.erase(it);

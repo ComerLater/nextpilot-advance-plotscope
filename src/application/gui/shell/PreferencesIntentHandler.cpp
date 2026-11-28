@@ -1,15 +1,16 @@
 #include "PreferencesIntentHandler.h"
 #include "Intent.h"
 
-#include "RuntimeHost.h"
+#include "command/CommandService.h"
 
 using namespace nextpilot::plotscope::intent;
-using namespace nextpilot::plotscope::host;
+using namespace nextpilot::plotscope::command;
 
 namespace nextpilot::plotscope::gui
 {
 
-PreferencesIntentHandler::PreferencesIntentHandler(RuntimeHost &host, QObject *parent) : QObject(parent), m_host(host)
+PreferencesIntentHandler::PreferencesIntentHandler(CommandService &commands, QObject *parent)
+    : QObject(parent), m_commands(commands)
 {
 }
 
@@ -26,7 +27,7 @@ foundation::Result<IntentResult> PreferencesIntentHandler::execute(const Intent 
     Intent open;
     open.op = QStringLiteral("workbench.action.openSettings");
     open.params = intent.params;
-    return m_host.execute(open);
+    return m_commands.execute(open);
 }
 
 } // namespace nextpilot::plotscope::gui

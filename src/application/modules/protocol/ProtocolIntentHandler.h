@@ -34,7 +34,7 @@ public:
     nextpilot::plotscope::foundation::Result<nextpilot::plotscope::intent::IntentResult> execute(
         const nextpilot::plotscope::intent::Intent &intent) override;
 
-    // 供测试直连：不经过 RuntimeHost 也能跑同一份逻辑。
+    // 供测试直连：不经过 CommandService 也能跑同一份逻辑。
     static QStringList supportedOps();
 
 private:

@@ -85,7 +85,7 @@ QJsonObject executeIntent(app::App &application, const QString &op, const QVaria
     Intent intent;
     intent.op = op;
     intent.params = params;
-    const auto res = application.host().execute(intent);
+    const auto res = application.commands().execute(intent);
     if (!res)
     {
         if (outError)

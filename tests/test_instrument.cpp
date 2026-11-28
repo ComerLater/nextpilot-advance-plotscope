@@ -14,7 +14,6 @@
 #include "Dataset.h"
 #include "IngestPipeline.h"
 #include "Intent.h"
-#include "RuntimeHost.h"
 #include "ParserHub.h"
 
 #include <QApplication>
@@ -127,13 +126,14 @@ int main(int argc, char *argv[])
 
     App application;
     MainWindow window(application.context());
-    window.build(application.host());
+    window.build(&application.services(), application.commands(), &application.extensions(),
+                 application.menuRegistry());
     window.resize(1280, 800);
 
     const int dsId = buildInstrumentDataset(plotscope_test::datasetHub(application.context()));
     CHECK(dsId >= 0);
 
-    InstrumentView view(application.host());
+    InstrumentView view(&application.commands());
     view.resize(360, 300);
 
     // --- 1) 姿态仪：roll/pitch 两个角色 ---
@@ -146,7 +146,7 @@ int main(int argc, char *argv[])
             {QStringLiteral("roll"), QStringLiteral("attitude.roll")},
             {QStringLiteral("pitch"), QStringLiteral("attitude.pitch")},
         };
-        const auto result = application.host().execute(intent);
+        const auto result = application.commands().execute(intent);
         CHECK(result);
         const QVariantMap scalars = result.value().payload.toMap().value(QStringLiteral("scalars")).toMap();
         CHECK(scalars.contains(QStringLiteral("roll")));
@@ -168,7 +168,7 @@ int main(int argc, char *argv[])
         intent.params[QStringLiteral("dataset")] = dsId;
         intent.params[QStringLiteral("kind")] = QStringLiteral("compass");
         intent.params[QStringLiteral("roles")] = roles;
-        const auto result = application.host().execute(intent);
+        const auto result = application.commands().execute(intent);
         CHECK(result);
         CHECK(result.value().payload.toMap().value(QStringLiteral("scalars")).toMap().contains(QStringLiteral("yaw")));
 
@@ -186,7 +186,7 @@ int main(int argc, char *argv[])
         intent.params[QStringLiteral("dataset")] = dsId;
         intent.params[QStringLiteral("kind")] = QStringLiteral("gauge");
         intent.params[QStringLiteral("roles")] = roles;
-        const auto result = application.host().execute(intent);
+        const auto result = application.commands().execute(intent);
         CHECK(result);
         const QVariantList range = result.value().payload.toMap().value(QStringLiteral("range")).toList();
         CHECK(range.size() == 2);
@@ -209,7 +209,7 @@ int main(int argc, char *argv[])
         intent.params[QStringLiteral("dataset")] = dsId;
         intent.params[QStringLiteral("kind")] = QStringLiteral("track");
         intent.params[QStringLiteral("roles")] = roles;
-        const auto result = application.host().execute(intent);
+        const auto result = application.commands().execute(intent);
         CHECK(result);
         CHECK(!seriesOf(result.value(), QStringLiteral("lon")).isEmpty());
         CHECK(!seriesOf(result.value(), QStringLiteral("lat")).isEmpty());
@@ -232,7 +232,7 @@ int main(int argc, char *argv[])
         intent.params[QStringLiteral("dataset")] = dsId;
         intent.params[QStringLiteral("kind")] = QStringLiteral("traj3d");
         intent.params[QStringLiteral("roles")] = roles;
-        const auto result = application.host().execute(intent);
+        const auto result = application.commands().execute(intent);
         CHECK(result);
         CHECK(!seriesOf(result.value(), QStringLiteral("x")).isEmpty());
         CHECK(!seriesOf(result.value(), QStringLiteral("z")).isEmpty());
@@ -251,7 +251,7 @@ int main(int argc, char *argv[])
         intent.params[QStringLiteral("dataset")] = dsId;
         intent.params[QStringLiteral("kind")] = QStringLiteral("waterfall");
         intent.params[QStringLiteral("channels")] = channels;
-        const auto result = application.host().execute(intent);
+        const auto result = application.commands().execute(intent);
         CHECK(result);
         const QVariantList out = result.value().payload.toMap().value(QStringLiteral("channels")).toList();
         CHECK(out.size() == 3);
@@ -268,20 +268,20 @@ int main(int argc, char *argv[])
         badKind.op = QStringLiteral("plot.instrument");
         badKind.params[QStringLiteral("dataset")] = dsId;
         badKind.params[QStringLiteral("kind")] = QStringLiteral("hologram");
-        CHECK(!application.host().execute(badKind));
+        CHECK(!application.commands().execute(badKind));
 
         Intent missing;
         missing.op = QStringLiteral("plot.instrument");
         missing.params[QStringLiteral("dataset")] = dsId;
         missing.params[QStringLiteral("kind")] = QStringLiteral("gauge");
         missing.params[QStringLiteral("roles")] = QVariantMap{{QStringLiteral("value"), QStringLiteral("nope.nope")}};
-        CHECK(!application.host().execute(missing));
+        CHECK(!application.commands().execute(missing));
 
         Intent noDataset;
         noDataset.op = QStringLiteral("plot.instrument");
         noDataset.params[QStringLiteral("dataset")] = 9999;
         noDataset.params[QStringLiteral("kind")] = QStringLiteral("gauge");
-        CHECK(!application.host().execute(noDataset));
+        CHECK(!application.commands().execute(noDataset));
         OK("错误语义：未知类型 / 缺通道 / 无数据集 均返回失败");
     }
 
@@ -294,12 +294,12 @@ int main(int argc, char *argv[])
         h.params[QStringLiteral("dataset")] = dsId;
         h.params[QStringLiteral("kind")] = QStringLiteral("histogram");
         h.params[QStringLiteral("roles")] = valueRole;
-        CHECK(application.host().execute(h));
+        CHECK(application.commands().execute(h));
 
         // 频谱：同一序列做 DFT。
         Intent f = h;
         f.params[QStringLiteral("kind")] = QStringLiteral("fft");
-        CHECK(application.host().execute(f));
+        CHECK(application.commands().execute(f));
 
         // 柱状：trace 三通道末值成柱。
         Intent b;
@@ -308,11 +308,11 @@ int main(int argc, char *argv[])
         b.params[QStringLiteral("kind")] = QStringLiteral("bar");
         b.params[QStringLiteral("channels")] =
             QVariantList{QStringLiteral("trace.a"), QStringLiteral("trace.b"), QStringLiteral("trace.c")};
-        const auto barResult = application.host().execute(b);
+        const auto barResult = application.commands().execute(b);
         CHECK(barResult);
         CHECK(barResult.value().payload.toMap().value(QStringLiteral("channels")).toList().size() == 3);
 
-        InstrumentView specView(application.host());
+        InstrumentView specView(&application.commands());
         specView.resize(360, 300);
         specView.renderInstrument(dsId, QStringLiteral("histogram"), valueRole, {}, {});
         CHECK(specView.currentKind() == QStringLiteral("histogram"));
@@ -327,32 +327,31 @@ int main(int argc, char *argv[])
 
     // --- 8) editor provider：plot.instrument editor 化（A2c），经 ResourceRef 打开 ---
     // 工厂表自注册已删；装配 plot 的 views/editor 声明 + provider 后走 IEditorService。
-    CHECK(nextpilot::plotscope::plot::installPlotViewFactories(application.host().services(),
-                                                               &application.context(), &application.host()));
-    auto *plotEditorSvc =
-        application.host().services()
-            ? application.host().services()->getService<nextpilot::plotscope::workbench::IEditorService>(
-                  QStringLiteral("editor.readback"))
-            : nullptr;
+    CHECK(nextpilot::plotscope::plot::installPlotViewFactories(&application.services(), &application.context(),
+                                                               &&application.commands()));
+    auto *plotEditorSvc = &application.services()
+                              ? &application.services()->getService<nextpilot::plotscope::workbench::IEditorService>(
+                                    QStringLiteral("editor.readback"))
+                              : nullptr;
     CHECK(plotEditorSvc != nullptr);
     nextpilot::plotscope::registry::ResourceRef inkRef;
     inkRef.uri = QStringLiteral("plot://instrument/gauge");
     inkRef.mime = QStringLiteral("application/x-plot-instrument");
     inkRef.title = QStringLiteral("#gauge");
     QWidget *panel = plotEditorSvc->openEditor(QStringLiteral("plot.instrument"), inkRef, application.context(),
-                                               application.host(), nullptr);
+                                               &application.commands(), nullptr);
     auto *factoryView = qobject_cast<InstrumentView *>(panel);
     CHECK(factoryView != nullptr);
     // 复用语义（§7 判据）：同 ref 复用同一实例；不同 ref（kind 不同）各开一页签。
     QWidget *panelAgain = plotEditorSvc->openEditor(QStringLiteral("plot.instrument"), inkRef, application.context(),
-                                                    application.host(), nullptr);
+                                                    &application.commands(), nullptr);
     CHECK(panelAgain == panel);
     nextpilot::plotscope::registry::ResourceRef inkRef2;
     inkRef2.uri = QStringLiteral("plot://instrument/compass");
     inkRef2.mime = QStringLiteral("application/x-plot-instrument");
     inkRef2.title = QStringLiteral("#compass");
     QWidget *panel2 = plotEditorSvc->openEditor(QStringLiteral("plot.instrument"), inkRef2, application.context(),
-                                                application.host(), nullptr);
+                                                &application.commands(), nullptr);
     CHECK(panel2 != nullptr && panel2 != panel);
     OK("editor 化：plot.instrument 经 ResourceRef 打开，同 ref 复用 / 异 ref 各开");
 
@@ -401,7 +400,7 @@ int main(int argc, char *argv[])
             pipe.finish(1);
             const int realId = bound.value();
 
-            InstrumentView realView(application.host());
+            InstrumentView realView(&application.commands());
             realView.resize(360, 300);
 
             const QVariantMap attitudeRoles{{QStringLiteral("roll"), QStringLiteral("attitude.roll")},

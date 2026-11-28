@@ -6,7 +6,6 @@
 #include "ICommands.h"
 #include "CommandAdapter.h"
 #include "Intent.h"
-#include "RuntimeHost.h"
 
 #include <cstdio>
 

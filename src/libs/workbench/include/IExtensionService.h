@@ -4,8 +4,8 @@
 // 的 `class ExtensionService implements IExtensionService`；activationEvents 的编排细节
 // 对位 `src/vs/workbench/services/extensions/common/extensionsActivator.ts`（ExtensionsActivator）。
 //
-// 分层：装配层（assembly::ExtensionService）实现本接口；RuntimeHost 只持抽象指针转发，
-// 不反向依赖装配层。激活/反激活/拓扑/实例归属全部归实现方，宿主退化为执行/服务/注册表面。
+// 分层：装配层（assembly::ExtensionService）实现本接口；调用方（壳/组合根/测试）只持抽象
+// 指针，不反向依赖装配层。激活/反激活/拓扑/实例归属全部归实现方。
 
 #include "ExtensionDescription.h"
 #include "Intent.h"

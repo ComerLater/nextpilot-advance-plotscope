@@ -55,10 +55,11 @@ int main(int argc, char *argv[])
 
     App application;
     // A2c：plot.workspace editor 化——build 内 openEditor 须先有 provider（声明+注册）。
-    CHECK(nextpilot::plotscope::plot::installPlotViewFactories(application.host().services(),
-                                                               &application.context(), &application.host()));
+    CHECK(nextpilot::plotscope::plot::installPlotViewFactories(&application.services(), &application.context(),
+                                                               &&application.commands()));
     MainWindow window(application.context());
-    window.build(application.host());
+    window.build(&application.services(), application.commands(), &application.extensions(),
+                 application.menuRegistry());
     window.resize(1280, 800);
 
     ShellBinder *binder = window.binder();
@@ -361,7 +362,7 @@ int main(int argc, char *argv[])
         Intent load;
         load.op = QStringLiteral("data.load");
         load.params[QStringLiteral("path")] = fixture;
-        const auto loaded = application.host().execute(load);
+        const auto loaded = application.commands().execute(load);
         CHECK(loaded);
         const int dsId = loaded.value().payload.toMap().value(QStringLiteral("dataset")).toInt();
         CHECK(dsId >= 0);
@@ -526,7 +527,7 @@ int main(int argc, char *argv[])
         Intent loadLate;
         loadLate.op = QStringLiteral("data.load");
         loadLate.params[QStringLiteral("path")] = lateOrigin;
-        const auto lateLoaded = application.host().execute(loadLate);
+        const auto lateLoaded = application.commands().execute(loadLate);
         CHECK(lateLoaded);
 
         CHECK(workspace->pendingBindCount() == 0);
@@ -550,13 +551,13 @@ int main(int argc, char *argv[])
             Intent rm;
             rm.op = QStringLiteral("data.remove");
             rm.params[QStringLiteral("id")] = lateSrcId;
-            application.host().execute(rm);
+            application.commands().execute(rm);
             CHECK(application.context().workspace().sources().sourceByOrigin(lateOrigin) < 0);
             // demand 语义：登记→源移除→需求仍在；源重新登记→需求不变
             //（释放是绑定方职责，不由源生命周期自动清理）。
             application.context().workspace().sources().demandOrigin(lateOrigin);
             CHECK(plotscope_test::sourceHub(application.context()).demandCount(lateOrigin) == 1);
-            application.host().execute(loadLate);
+            application.commands().execute(loadLate);
             CHECK(plotscope_test::sourceHub(application.context()).demandCount(lateOrigin) == 1);
             application.context().workspace().sources().releaseOrigin(lateOrigin);
             CHECK(plotscope_test::sourceHub(application.context()).demandCount(lateOrigin) == 0);
@@ -582,7 +583,7 @@ int main(int argc, char *argv[])
         Intent loadA;
         loadA.op = QStringLiteral("data.load");
         loadA.params[QStringLiteral("path")] = originA;
-        const auto la = application.host().execute(loadA);
+        const auto la = application.commands().execute(loadA);
         CHECK(la);
         const int srcA = application.context().workspace().sources().sourceByOrigin(originA);
         CHECK(srcA >= 0);
@@ -634,7 +635,7 @@ int main(int argc, char *argv[])
         Intent rmA;
         rmA.op = QStringLiteral("data.remove");
         rmA.params[QStringLiteral("id")] = srcA;
-        application.host().execute(rmA);
+        application.commands().execute(rmA);
         CHECK(application.context().workspace().sources().sourceOfDataset(dsA) < 0);
         CHECK(rbCanvas->seriesCount() == 1);
         CHECK(workspace->rebindStaleCurves() == 0);
@@ -652,7 +653,7 @@ int main(int argc, char *argv[])
         Intent loadB;
         loadB.op = QStringLiteral("data.load");
         loadB.params[QStringLiteral("path")] = originB;
-        const auto lb = application.host().execute(loadB);
+        const auto lb = application.commands().execute(loadB);
         CHECK(lb);
         const int srcB = application.context().workspace().sources().sourceByOrigin(originB);
         CHECK(srcB >= 0);
@@ -693,7 +694,7 @@ int main(int argc, char *argv[])
         Intent lA;
         lA.op = QStringLiteral("data.load");
         lA.params[QStringLiteral("path")] = pA;
-        const auto a = application.host().execute(lA);
+        const auto a = application.commands().execute(lA);
         CHECK(a);
         const int srcA12 = application.context().workspace().sources().sourceByOrigin(pA);
         CHECK(srcA12 >= 0);
@@ -701,7 +702,7 @@ int main(int argc, char *argv[])
         Intent lB;
         lB.op = QStringLiteral("data.load");
         lB.params[QStringLiteral("path")] = pB;
-        const auto b = application.host().execute(lB);
+        const auto b = application.commands().execute(lB);
         CHECK(b);
         const int srcB12 = application.context().workspace().sources().sourceByOrigin(pB);
         CHECK(srcB12 >= 0);
@@ -861,7 +862,7 @@ int main(int argc, char *argv[])
             Intent load14;
             load14.op = QStringLiteral("data.load");
             load14.params[QStringLiteral("path")] = fixture14;
-            CHECK(application.host().execute(load14));
+            CHECK(application.commands().execute(load14));
             src14 = application.context().workspace().sources().sourceByOrigin(fixture14);
         }
         CHECK(src14 >= 0);

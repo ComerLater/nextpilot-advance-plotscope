@@ -18,7 +18,10 @@
 #include "ThemeManager.h"
 
 #include "AppContext.h"
-#include "RuntimeHost.h"
+#include "command/CommandService.h"
+#include "IExtensionService.h"
+#include "InstantiationService.h"
+#include "MenuRegistry.h"
 #include "InstantiationService.h"
 #include "IFormatHints.h"
 #include "IThemeService.h"
@@ -166,7 +169,7 @@ MainWindow::~MainWindow()
 
 // 视图页开关动作：按 IViewsService 的声明动态注册，壳内不出现任何业务 viewId 字面量。
 // 动作 id = "view.toggleDock." + viewId；标签/图标取声明（名称空则回退 viewId）。
-// 调用时机：host.activate(...) 之后、rebuildRibbon() 之前——声明此时才齐。
+// 调用时机：扩展激活（IExtensionService::activateByEvent）之后、rebuildRibbon() 之前——声明此时才齐。
 void MainWindow::declareViewToggleSlots()
 {
     if (!m_viewsService || !m_menuRegistry || !m_ribbonService)
@@ -201,17 +204,20 @@ void MainWindow::declareViewToggleSlots()
     }
 }
 
-void MainWindow::build(RuntimeHost &host)
+void MainWindow::build(nextpilot::plotscope::instantiation::InstantiationService *services,
+                       nextpilot::plotscope::command::CommandService &commands,
+                       nextpilot::plotscope::workbench::IExtensionService *extensions,
+                       nextpilot::plotscope::registry::MenuRegistry &menus)
 {
-    m_host = &host;
-    m_menuRegistry = host.menuRegistry();
+    m_commandService = &commands;
+    m_extensionService = extensions;
+    m_menuRegistry = &menus;
 
     // 壳读回服务（裁定 52441633 §三 + 52442006 Step 4）：格式提示/扩展主题 token/
     // Ribbon 页组/视图声明都经 workbench 接口；实现由装配层注册进服务容器。
     // 未装配（bare 壳反证冒烟/极简装配）时保持 nullptr，各读回点退化为空。
     using namespace nextpilot::plotscope::instantiation;
     using namespace nextpilot::plotscope::workbench;
-    InstantiationService *services = host.services();
     if (services)
     {
         m_formatHints = services->getService<IFormatHints>(QStringLiteral("format.hints"));
@@ -237,7 +243,8 @@ void MainWindow::build(RuntimeHost &host)
     });
     // 视图标题栏动作由 ViewPane 直接读 MenuRegistry 的 view/title 条目；
     // when 作用域注入 `view`=当前 viewId，标题/图标/执行路径归命令层。
-    m_context = new GuiContext(this, m_binder, m_appCtx, &host, m_viewsService, m_editorService, m_themeService, this);
+    m_context = new GuiContext(this, m_binder, m_appCtx, m_commandService, m_viewsService, m_editorService,
+                               m_themeService, this);
     // 状态栏：先接好信号，模块 onAttach（activate 内）声明状态项时即可排布（验收 7）。
     setupStatusBar();
 
@@ -261,7 +268,7 @@ void MainWindow::build(RuntimeHost &host)
     m_binder->setSettingsHandler([this]() {
         Intent intent;
         intent.op = QStringLiteral("preferences.open");
-        (void)m_host->execute(intent);
+        (void)m_commandService->execute(intent);
     });
 
     // 报告导出的 viewAction "report.export" 由 report 模块呈现层注册（装配层
@@ -292,9 +299,9 @@ void MainWindow::build(RuntimeHost &host)
     //    ribbon 换肤由绑定器订阅后套用——守 ARCHITECTURE §7"绑定器是唯一知道
     //    SARibbon/ADS 的地方"。注册为系统级 handler，theme.* 意图走与按钮/脚本
     //    同一条执行路径；headless 无此 handler，会诚实报"无模块能处理意图"。
-    m_theme = new ThemeManager(host.app().settings(), &host);
+    m_theme = new ThemeManager(m_appCtx.settings(), this);
     refreshThemeTokens();
-    host.registerSystemHandler(QStringLiteral("@system/theme"), m_theme);
+    m_commandService->registerSystemHandler(QStringLiteral("theme"), m_theme);
     QObject::connect(m_theme, &ThemeManager::themeChanged, this,
                      [this](ThemeManager::Theme theme) {
                          if (m_binder)
@@ -310,11 +317,13 @@ void MainWindow::build(RuntimeHost &host)
     // 2.2) 「文件 → 设置」= 工作台内置 Settings editor 页签（非模态对话框）。
     //   preferences.open 处理器只转派到 workbench.action.openSettings，
     //   最终执行体唯一（IEditorService::openEditor）；壳不碰编辑器服务、不造对话框。
-    m_preferencesHandler = new PreferencesIntentHandler(host, this);
-    host.registerSystemHandler(QStringLiteral("@system/preferences"), m_preferencesHandler);
+    m_preferencesHandler = new PreferencesIntentHandler(*m_commandService, this);
+    m_commandService->registerSystemHandler(QStringLiteral("preferences"), m_preferencesHandler,
+                                            {QStringLiteral("preferences.open")});
 
     // 3) 装模块（GUI 模式：会调用 onAttach，模块可自带界面入口）
-    host.activate(QStringList(), m_context);
+    if (m_extensionService)
+        m_extensionService->activateByEvent(QStringLiteral("onStartupFinished"), QStringList(), m_context);
 
     // A8b-M2 裁定 52442006 Step 3：灌回已搬装配层（activate 内经 IContributionsInstaller），
     // 灌回后由壳重建一次 ribbon 与 ActivityBar——原 GuiContext::installContributions 尾部的
@@ -364,10 +373,9 @@ void MainWindow::build(RuntimeHost &host)
 
     // 3.1) ribbon 动作 -> 意图：外壳只把动作 id 交出去，不解释语义。
     //
-    // 意图由宿主执行（RuntimeHost 实现了 IIntentExecutor），
+    // 意图由 CommandService 执行（命令表与系统命令同一入口），
     // 于是 GUI 点击与 CLI/脚本执行走**同一条意图路径**。
-    m_binder->setIntentDispatcher([&host, this](const QString &actionId,
-                                                const QString &intentOp, const QString &actionData) {
+    m_binder->setIntentDispatcher([this](const QString &actionId, const QString &intentOp, const QString &actionData) {
         // 少数动作需要 GUI 交互（选文件），外壳按 **id** 特判；
         // 其余动作一律用 UiAction 声明的 **intentOp** 走意图层——与 CLI/脚本同一条路径。
         // 注意两者不可混用：id 是 UI 元素标识，intentOp 才是要发的意图 op。
@@ -392,12 +400,12 @@ void MainWindow::build(RuntimeHost &host)
         // 工作区预设：需要输入/选择预设名，外壳按 id 特判，落盘与重建仍走意图层。
         if (actionId == QStringLiteral("workspace.open"))
         {
-            openWorkspacePreset(host);
+            openWorkspacePreset();
             return;
         }
         if (actionId == QStringLiteral("workspace.save"))
         {
-            saveWorkspacePreset(host);
+            saveWorkspacePreset();
             return;
         }
         // 报告导出 GUI 交互（选路径）归 report 模块呈现层（D18a）：按 id 触发启动器。
@@ -432,7 +440,7 @@ void MainWindow::build(RuntimeHost &host)
             Intent script;
             script.op = QStringLiteral("script.run");
             script.params[QStringLiteral("path")] = path;
-            const auto sr = host.execute(script);
+            const auto sr = m_commandService->execute(script);
             if (!sr)
                 m_statusbar->showMessage(QStringLiteral("脚本失败: %1").arg(sr.error().message));
             else
@@ -542,7 +550,7 @@ void MainWindow::build(RuntimeHost &host)
             QString id = actionId.mid(QStringLiteral("data.source.").size());
             if (id.startsWith(QStringLiteral("common.")))
                 id = id.mid(QStringLiteral("common.").size());
-            openDataWithFormat(host, id);
+            openDataWithFormat(id);
             return;
         }
 
@@ -615,7 +623,7 @@ void MainWindow::build(RuntimeHost &host)
         Intent intent;
         intent.op = intentOp;
         intent.params = params;
-        const Result<IntentResult> r = host.execute(intent);
+        const Result<IntentResult> r = m_commandService->execute(intent);
         if (!r)
             m_statusbar->showMessage(QStringLiteral("动作失败: %1").arg(r.error().message));
     });
@@ -624,7 +632,7 @@ void MainWindow::build(RuntimeHost &host)
     m_binder->rebuildRibbon();
 
     // 5) 命令层：统一命令、命令面板与键位（依赖 ribbon 动作已建好）
-    buildCommandLayer(host);
+    buildCommandLayer();
     // 命令注册表注入视图标题栏部件：标题/图标/执行路径走命令层。
     m_binder->setCommandRegistry(m_commands.get());
 
@@ -675,7 +683,7 @@ void MainWindow::rebuildGridMenu()
     });
 }
 
-void MainWindow::saveWorkspacePreset(RuntimeHost &host)
+void MainWindow::saveWorkspacePreset()
 {
     bool ok = false;
     const QString name = QInputDialog::getText(this, QStringLiteral("保存工作区"),
@@ -688,7 +696,7 @@ void MainWindow::saveWorkspacePreset(RuntimeHost &host)
     Intent intent;
     intent.op = QStringLiteral("workspace.preset.save");
     intent.params[QStringLiteral("name")] = name;
-    const Result<IntentResult> r = host.execute(intent);
+    const Result<IntentResult> r = m_commandService->execute(intent);
     if (!r)
     {
         m_statusbar->showMessage(QStringLiteral("保存失败: %1").arg(r.error().message));
@@ -701,12 +709,12 @@ void MainWindow::saveWorkspacePreset(RuntimeHost &host)
                                  .arg(payload.value(QStringLiteral("pages")).toInt()));
 }
 
-void MainWindow::openWorkspacePreset(RuntimeHost &host)
+void MainWindow::openWorkspacePreset()
 {
     // 先问有哪些预设（同一份目录由模块扫），再让用户选，最后按名整体打开。
     Intent listIntent;
     listIntent.op = QStringLiteral("workspace.preset.list");
-    const Result<IntentResult> listed = host.execute(listIntent);
+    const Result<IntentResult> listed = m_commandService->execute(listIntent);
     if (!listed)
     {
         m_statusbar->showMessage(QStringLiteral("读取预设列表失败: %1").arg(listed.error().message));
@@ -730,7 +738,7 @@ void MainWindow::openWorkspacePreset(RuntimeHost &host)
     Intent intent;
     intent.op = QStringLiteral("workspace.preset.open");
     intent.params[QStringLiteral("name")] = name;
-    const Result<IntentResult> r = host.execute(intent);
+    const Result<IntentResult> r = m_commandService->execute(intent);
     if (!r)
     {
         m_statusbar->showMessage(QStringLiteral("打开失败: %1").arg(r.error().message));
@@ -739,7 +747,7 @@ void MainWindow::openWorkspacePreset(RuntimeHost &host)
     m_statusbar->showMessage(QStringLiteral("已打开工作区 %1").arg(name));
 }
 
-void MainWindow::openDataWithFormat(RuntimeHost &host, const QString &formatId)
+void MainWindow::openDataWithFormat(const QString &formatId)
 {
     // 点图库里的加载器，直接弹该格式的文件对话框。格式提示（显示名/过滤串）经
     // IFormatHints 读回（裁定 52441633 §三），壳不直连 IMessageParser。
@@ -761,7 +769,7 @@ void MainWindow::openDataWithFormat(RuntimeHost &host, const QString &formatId)
         intent.op = QStringLiteral("data.load");
         intent.params[QStringLiteral("path")] = path;
         intent.params[QStringLiteral("format")] = formatId;
-        const Result<IntentResult> r = host.execute(intent);
+        const Result<IntentResult> r = m_commandService->execute(intent);
         if (!r)
         {
             m_statusbar->showMessage(QStringLiteral("载入失败: %1").arg(r.error().message));
@@ -855,12 +863,12 @@ void MainWindow::restoreSessionSnapshot()
         sourcesDoc.insert(QStringLiteral("sources"), sources);
         WorkspaceDataConfig cfg = WorkspaceDataConfig::fromJson(sourcesDoc);
         QString err;
-        if (cfg.save(m_appCtx.settings(), &err) && mode == QStringLiteral("full") && m_host != nullptr)
+        if (cfg.save(m_appCtx.settings(), &err) && mode == QStringLiteral("full") && m_commandService != nullptr)
         {
             Intent restore;
             restore.op = QStringLiteral("data.workspace.restore");
             restore.params[QStringLiteral("includeLive")] = false;
-            m_host->execute(restore);
+            m_commandService->execute(restore);
         }
     }
 
@@ -926,9 +934,9 @@ void MainWindow::showEvent(QShowEvent *event)
 
 void MainWindow::applyWorkspaceUiConfig()
 {
-    if (!m_binder || !m_host)
+    if (!m_binder || !m_commandService)
         return;
-    auto &settings = m_host->app().settings();
+    auto &settings = m_appCtx.settings();
 
     const QVariant order = settings.scopedValue(SettingsScope::Workspace,
                                                 QStringLiteral("ui.activityBar.order"));
@@ -951,9 +959,9 @@ void MainWindow::applyWorkspaceUiConfig()
 
 void MainWindow::saveWorkspaceUiConfig()
 {
-    if (!m_binder || !m_host)
+    if (!m_binder || !m_commandService)
         return;
-    auto &settings = m_host->app().settings();
+    auto &settings = m_appCtx.settings();
     settings.setScopedValue(SettingsScope::Workspace, QStringLiteral("ui.activityBar.order"),
                             m_binder->activityIds());
     settings.setScopedValue(SettingsScope::Workspace, QStringLiteral("ui.activityBar.visible"),
@@ -999,7 +1007,7 @@ void MainWindow::toggleSideBar()
     m_statusbar->showMessage(visible ? QStringLiteral("侧栏已显示") : QStringLiteral("侧栏已隐藏"));
 }
 
-void MainWindow::buildCommandLayer(RuntimeHost &host)
+void MainWindow::buildCommandLayer()
 {
     if (m_commands || !m_binder)
         return;
@@ -1014,8 +1022,8 @@ void MainWindow::buildCommandLayer(RuntimeHost &host)
         });
 
     // shell UI 命令 op 注册为系统级意图，与模块业务意图走同一条执行路径。
-    host.registerSystemHandler(
-        QStringLiteral("@system/shell"),
+    m_commandService->registerSystemHandler(
+        QStringLiteral("shell"),
         new ShellIntentHandler([this](const QString &op, QString *error) { return runShellAction(op, error); }, this));
 
     // 命令接缝注入上下文：模块呈现层（右键/标题栏/设置页）没法反向依赖外壳，
@@ -1093,7 +1101,7 @@ bool MainWindow::executeCommand(const command::CommandDescriptor &command, QStri
         intent.op = command.intentOp;
         if (!command.data.isEmpty())
             intent.params.insert(QStringLiteral("data"), command.data);
-        if (m_host && m_host->execute(intent))
+        if (m_commandService && m_commandService->execute(intent))
             return true;
         if (error)
             *error = QStringLiteral("命令无法执行: %1").arg(command.intentOp);
@@ -1495,10 +1503,9 @@ void MainWindow::openKeybindingDialog()
 
 void MainWindow::applyKeybindingConfig()
 {
-    if (!m_keybindings || !m_host)
+    if (!m_keybindings || !m_commandService)
         return;
-    const QVariant raw =
-        m_host->app().settings().scopedValue(SettingsScope::Workspace, QStringLiteral("ui.keybindings"));
+    const QVariant raw = m_appCtx.settings().scopedValue(SettingsScope::Workspace, QStringLiteral("ui.keybindings"));
     QJsonObject object = QJsonDocument::fromJson(raw.toString().toUtf8()).object();
     QHash<QString, QString> overrides;
     for (auto it = object.constBegin(); it != object.constEnd(); ++it)
@@ -1508,14 +1515,14 @@ void MainWindow::applyKeybindingConfig()
 
 void MainWindow::saveKeybindingConfig()
 {
-    if (!m_keybindings || !m_host)
+    if (!m_keybindings || !m_commandService)
         return;
     QJsonObject object;
     const QHash<QString, QString> overrides = m_keybindings->overrides();
     for (auto it = overrides.constBegin(); it != overrides.constEnd(); ++it)
         object.insert(it.key(), it.value());
-    m_host->app().settings().setScopedValue(SettingsScope::Workspace, QStringLiteral("ui.keybindings"),
-                                            QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)));
+    m_appCtx.settings().setScopedValue(SettingsScope::Workspace, QStringLiteral("ui.keybindings"),
+                                       QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)));
 }
 
 void MainWindow::rebuildKeybindingActions()
@@ -1649,21 +1656,19 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 
 void MainWindow::saveState()
 {
-    if (!m_binder || !m_host)
+    if (!m_binder || !m_commandService)
         return;
     // 窗口状态属于 Workspace 作用域：跨会话可恢复，但不属于某个具体工作区。
-    m_host->app().settings().setJson(SettingsScope::Workspace,
-                                     QStringLiteral("window/state"), m_binder->captureState());
+    m_appCtx.settings().setJson(SettingsScope::Workspace, QStringLiteral("window/state"), m_binder->captureState());
     saveWorkspaceUiConfig();
-    m_host->app().settings().flush();
+    m_appCtx.settings().flush();
 }
 
 void MainWindow::restoreState()
 {
-    if (!m_binder || !m_host)
+    if (!m_binder || !m_commandService)
         return;
-    const QJsonObject state = m_host->app().settings().json(SettingsScope::Workspace,
-                                                            QStringLiteral("window/state"));
+    const QJsonObject state = m_appCtx.settings().json(SettingsScope::Workspace, QStringLiteral("window/state"));
     if (!state.isEmpty())
         m_binder->applyState(state);
     // 首次运行也要应用 Workspace UI 配置的默认/显式值。
@@ -1672,7 +1677,8 @@ void MainWindow::restoreState()
 
 bool MainWindow::hasSavedState() const
 {
-    return m_host && !m_host->app().settings().json(SettingsScope::Workspace, QStringLiteral("window/state")).isEmpty();
+    return m_commandService &&
+           !m_appCtx.settings().json(SettingsScope::Workspace, QStringLiteral("window/state")).isEmpty();
 }
 
 } // namespace nextpilot::plotscope::gui

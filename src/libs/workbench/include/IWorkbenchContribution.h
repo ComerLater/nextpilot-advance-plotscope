@@ -3,7 +3,7 @@
 // 工作台贡献契约（居 libs/workbench）：IWorkbenchContribution / IUiContext。
 // 纯接口面——运行时（装载、生命周期）在 assembly::ExtensionService（对位
 // AbstractExtensionService.activateExtension）。A1b（IKXUTD）：initialize 只收
-// 服务容器 InstantiationService&；扩展不再拿 RuntimeHost / AppContext，按 VSCode
+// 服务容器 InstantiationService&；扩展不再拿宿主/AppContext，按 VSCode
 // 名字取服务。
 
 #include "InstantiationService.h"

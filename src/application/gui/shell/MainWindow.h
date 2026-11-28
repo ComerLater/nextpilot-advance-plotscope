@@ -34,10 +34,15 @@ class QLabel;
 
 #include <QShowEvent>
 
-namespace nextpilot::plotscope::host
-{
-class RuntimeHost;
-} // namespace nextpilot::plotscope::host
+namespace nextpilot::plotscope::command {
+class CommandService;
+}
+namespace nextpilot::plotscope::instantiation {
+class InstantiationService;
+}
+namespace nextpilot::plotscope::registry {
+class MenuRegistry;
+}
 
 class QEvent;
 class QMenu;
@@ -48,6 +53,7 @@ namespace nextpilot::plotscope::workbench
 class IFormatHints;
 class IThemeService;
 class IRibbonService;
+class IExtensionService;
 class IViewsService;
 class IEditorService;
 }
@@ -101,7 +107,13 @@ public:
     ~MainWindow() override;
 
     // 启动装配：建骨架、声明插槽、装载模块（GUI 模式）。
-    void build(nextpilot::plotscope::host::RuntimeHost &host);
+    // 启动装配：建骨架、声明插槽、装载模块（GUI 模式）。
+    // services / extensions 可为空（裸壳反证冒烟：零服务、零模块）；
+    // 命令执行与菜单注册表必需（壳自己也要派发动作）。
+    void build(nextpilot::plotscope::instantiation::InstantiationService *services,
+               nextpilot::plotscope::command::CommandService &commands,
+               nextpilot::plotscope::workbench::IExtensionService *extensions,
+               nextpilot::plotscope::registry::MenuRegistry &menus);
 
     // 对话框启动器注入（A2d 第⑤步）：组合根（gui_main）把按 id 触发的启动回调
     // 注进来，壳只存回调、零 libs/registry 引用；未注入（测试/极简装配）时
@@ -146,12 +158,12 @@ private:
 
     // 来源库项：按指定格式驱动直接弹文件对话框（跳过格式选择步骤），
     // 选中的文件逐条走 data.load 意图——与通用导入、CLI/脚本同一条加载路径。
-    void openDataWithFormat(nextpilot::plotscope::host::RuntimeHost &host, const QString &formatId);
+    void openDataWithFormat(const QString &formatId);
 
     // 工作区预设：保存 = 输入名字后把源清单与画布布局写进 .psw；
     // 打开 = 列出现有预设选一个，按名整体重建。两步都落到 mod.workspace 的意图。
-    void saveWorkspacePreset(nextpilot::plotscope::host::RuntimeHost &host);
-    void openWorkspacePreset(nextpilot::plotscope::host::RuntimeHost &host);
+    void saveWorkspacePreset();
+    void openWorkspacePreset();
 
     // 「网格」大按钮的下拉菜单：每次展开前按当前画布状态重建勾选项。
     void rebuildGridMenu();
@@ -176,7 +188,7 @@ private:
     void restoreSessionSnapshot();
 
     // 命令层：统一命令 + Palette + keybinding。
-    void buildCommandLayer(nextpilot::plotscope::host::RuntimeHost &host);
+    void buildCommandLayer();
     void registerSlotCommands();
     // 状态栏（验收 7 / D8 推模式）：订阅 GuiContext 的信号，按 side/priority 排布 QLabel。
     void setupStatusBar();
@@ -203,7 +215,9 @@ private:
     nextpilot::plotscope::context::AppContext &m_appCtx;
     // 产品身份快照：装配层注入，壳只读；不含任何产品分支判断。
     const nextpilot::plotscope::registry::ProductSpec m_spec;
-    nextpilot::plotscope::host::RuntimeHost *m_host = nullptr; // 用于取设置（状态持久化）
+    // 服务面借用指针：命令执行归 CommandService、扩展生命周期归 IExtensionService。
+    nextpilot::plotscope::command::CommandService *m_commandService = nullptr;
+    nextpilot::plotscope::workbench::IExtensionService *m_extensionService = nullptr;
     ShellBinder *m_binder = nullptr;
     StatusbarPart *m_statusbar = nullptr; // 借用，归 ShellBinder
     QMenu *m_gridMenu = nullptr;   // 「网格」大按钮的下拉（X/Y 网格线开关）

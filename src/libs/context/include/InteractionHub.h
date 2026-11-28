@@ -30,7 +30,7 @@ using nextpilot::plotscope::uischema::TransformScriptOps;
 // 交互注册表：容纳"注册 + 派发"型扩展点（viewAction / property / transform）。
 // 这些是运行时路由行为，不是静态运行态数据，故独立于 AppContext。
 // 只用 core 类型，headless、无 QWidget、不含模块依赖。
-// 实例归 RuntimeHost 持有；需要取用的模块经 AppContext::interactions() 访问。
+// 实例归 AppContext 持有；需要取用的模块经 AppContext::interactions() 访问。
 class InteractionHub : public nextpilot::plotscope::registry::RegistryNode
 {
 public:

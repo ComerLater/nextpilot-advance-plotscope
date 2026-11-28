@@ -13,7 +13,6 @@
 #include "ICommands.h"
 #include "IScriptCapabilities.h"
 #include "ResourceRef.h"
-#include "RuntimeHost.h"
 #include "Result.h"
 #include "ViewRegistry.h"
 
@@ -311,31 +310,6 @@ void DataModule::onAttach(IUiContext &ui)
 {
     // A8b-M2：声明已迁至 contributes()，宿主统一灌回；onAttach 只保留运行时服务。
     m_ui = &ui;
-
-    // 数据源数量：订阅 DatasetRegistry 增删信号，推模式更新（不轮询）。
-    if (m_host)
-    {
-        IDatasetAccess &hub = m_host->app().workspace().dataset();
-        const auto refreshCount = [this, &hub]() {
-            if (m_ui)
-                m_ui->updateStatus(QStringLiteral("data.source.count"),
-                                   QStringLiteral("数据源: %1").arg(hub.ids().size()));
-        };
-        m_datasetCountSub = hub.onDidAddDocument([refreshCount](const QString &) { refreshCount(); });
-        m_datasetCountSub2 = hub.onDidRemoveDocument([refreshCount](const QString &) { refreshCount(); });
-        refreshCount();
-
-        AppContext &appCtx = m_host->app();
-        QObject::connect(&appCtx, &AppContext::dataLoadStarted, this, [this]() {
-            if (m_ui)
-                m_ui->updateStatus(QStringLiteral("data.loading.progress"), QStringLiteral("加载中…"));
-        });
-        QObject::connect(&appCtx, &AppContext::dataLoadFinished, this, [this](bool ok) {
-            if (m_ui)
-                m_ui->updateStatus(QStringLiteral("data.loading.progress"),
-                                   ok ? QStringLiteral("空闲") : QStringLiteral("加载失败"));
-        });
-    }
 
     // 数据集树视图（运行时服务）：A2b 笔2b 第③步——声明与 provider 都归本模块
     // （viewId "data.datasetTree"、owner "data"、容器 area sidebar），落区由

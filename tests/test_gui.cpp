@@ -67,7 +67,6 @@
 #include "DataSource.h"
 #include "Source.h"
 #include "Intent.h"
-#include "RuntimeHost.h"
 #include "UiSlotHub.h"
 
 #include <QAction>
@@ -188,24 +187,25 @@ int main(int argc, char *argv[])
     // A2b 笔2b 第②步返工（复审必修 2）：先声明（assembly）、后注册 provider
     // （gui 侧）——两半都先于 build，build 内 defaultPanels 走 views 声明与 provider。
     // 第③步：data 两点装配 + 任一注册失败出诊断（必带，不许静默）。
-    CHECK(nextpilot::plotscope::assembly::declareBuiltinWorkbenchViews(application.host().services()));
-    CHECK(nextpilot::plotscope::gui::installBuiltinWorkbenchViewProviders(application.host().services()));
-    CHECK(nextpilot::plotscope::data::installDataViewFactories(application.host().services(), &application.context(),
-                                                               &application.host()));
-    CHECK(nextpilot::plotscope::plot::installPlotViewFactories(application.host().services(), &application.context(),
-                                                               &application.host()));
-    CHECK(nextpilot::plotscope::script::installScriptViewFactories(application.host().services(),
-                                                                   &application.context(), &application.host()));
+    CHECK(nextpilot::plotscope::assembly::declareBuiltinWorkbenchViews(&application.services()));
+    CHECK(nextpilot::plotscope::gui::installBuiltinWorkbenchViewProviders(&application.services()));
+    CHECK(nextpilot::plotscope::data::installDataViewFactories(&application.services(), &application.context(),
+                                                               &&application.commands()));
+    CHECK(nextpilot::plotscope::plot::installPlotViewFactories(&application.services(), &application.context(),
+                                                               &&application.commands()));
+    CHECK(nextpilot::plotscope::script::installScriptViewFactories(&application.services(), &application.context(),
+                                                                   &&application.commands()));
     CHECK(nextpilot::plotscope::ext::automotive::installAutomotiveViewFactories(
-        application.host().services(), &application.context(), &application.host()));
-    application.host().services()->registerSingleton(
+        &application.services(), &application.context(), &&application.commands()));
+    &application.services()->registerSingleton(
         QStringLiteral("report.exportHost"), &reportExportHost, QStringLiteral("assembly"), 1,
         nextpilot::plotscope::instantiation::ServiceTypeTag<nextpilot::plotscope::report::IReportExportHost>::value());
-    window.build(application.host());
+    window.build(&application.services(), application.commands(), &application.extensions(),
+                 application.menuRegistry());
     // A2d 第⑤步：对话框启动器由组合根注入（与 gui_main 同款）——壳零 registry 引用。
     window.setDialogLauncher([&window, &application](const QString &actionId) {
         nextpilot::plotscope::registry::DialogLauncherHub::launch(actionId, &window, application.context(),
-                                                                  application.host());
+                                                                  &application.commands());
         return true;
     });
     // IKYDH2：report.export 由 ReportModule 生命周期托管（install 于 initialize，
@@ -236,26 +236,29 @@ int main(int argc, char *argv[])
             return made;
         };
         CHECK(vreg.registerViewProvider(QStringLiteral("probe.view.a"), countingFactory, QStringLiteral("probe.ext")));
-        QWidget *p1 = views.openView(QStringLiteral("probe.view.a"), application.context(), application.host(), &host);
+        QWidget *p1 =
+            views.openView(QStringLiteral("probe.view.a"), application.context(), &application.commands(), &host);
         CHECK(p1 != nullptr);
         CHECK(created == 1);
-        QWidget *p2 = views.openView(QStringLiteral("probe.view.a"), application.context(), application.host(), &host);
+        QWidget *p2 =
+            views.openView(QStringLiteral("probe.view.a"), application.context(), &application.commands(), &host);
         CHECK(p2 == p1);                // 同一 id 返回同一控件
         CHECK(created == 1);            // 复用不再构造
         CHECK(p1->isHidden() == false); // show() 置前后即便父未可见，isHidden 也为 false
         // 同一 viewId、不同 parent → 各自独立实例，不复用错父窗口的控件。
         QWidget otherHost;
         QWidget *p3 =
-            views.openView(QStringLiteral("probe.view.a"), application.context(), application.host(), &otherHost);
+            views.openView(QStringLiteral("probe.view.a"), application.context(), &application.commands(), &otherHost);
         CHECK(p3 != nullptr);
         CHECK(p3 != p1);     // 不同 parent → 不同控件
         CHECK(created == 2); // 新 parent 触发第二次构造
         CHECK(p3->parentWidget() == &otherHost);
-        QWidget *p4 = views.openView(QStringLiteral("probe.view.a"), application.context(), application.host(), &host);
+        QWidget *p4 =
+            views.openView(QStringLiteral("probe.view.a"), application.context(), &application.commands(), &host);
         CHECK(p4 == p1);     // 回到原 parent 仍复用原实例
         CHECK(created == 2); // 不再构造
         // 未注册 viewId → nullptr（并 qWarning 出诊断）。
-        CHECK(views.openView(QStringLiteral("probe.view.unregistered"), application.context(), application.host(),
+        CHECK(views.openView(QStringLiteral("probe.view.unregistered"), application.context(), &application.commands(),
                              &host) == nullptr);
         OK("openView 复用置前 + 按 parent 隔离：二次同指针、跨 parent 各自实例、isHidden=false");
     }
@@ -267,7 +270,7 @@ int main(int argc, char *argv[])
         // 域，模块不认识 QWidget，headless 里也不该出现任何界面语义。
         // 壳级动作现在只落 MenuRegistry（menubar/<pageId>，VSCode appendMenuItem 口径）；
         // 读回按 group 聚合，不再经插槽容器。
-        auto *menus = application.host().menuRegistry();
+        auto *menus = &application.commands().menuRegistry();
         CHECK(menus != nullptr);
         const auto fileItems = menus->getMenuItems(MenuId::menubar(QStringLiteral("ribbon.page.file")));
         bool hasSettingsAction = false;
@@ -289,13 +292,12 @@ int main(int argc, char *argv[])
     // 页/组经 contributes → IRibbonService 读回；动作只落 MenuRegistry
     // （menubar/<pageId>，按 IMenuItem.group 聚合）。壳不再维护插槽容器。
     {
-        auto *ribbonSvc =
-            application.host().services()
-                ? application.host().services()->getService<nextpilot::plotscope::workbench::IRibbonService>(
-                      QStringLiteral("ribbon.readback"))
-                : nullptr;
+        auto *ribbonSvc = &application.services()
+                              ? &application.services()->getService<nextpilot::plotscope::workbench::IRibbonService>(
+                                    QStringLiteral("ribbon.readback"))
+                              : nullptr;
         CHECK(ribbonSvc != nullptr);
-        auto *menus = application.host().menuRegistry();
+        auto *menus = &application.commands().menuRegistry();
         CHECK(menus != nullptr);
         const auto pages = ribbonSvc->ribbonPages();
         CHECK(!pages.isEmpty());
@@ -381,7 +383,7 @@ int main(int argc, char *argv[])
 
         // 真实进度链路（P2）：摄取管道 progressChanged 必须被 data 模块订阅并推到状态栏，
         // total>0 显示百分比、total=0 显示已读字节数。此前只有 start/finish 两端点占位。
-        IngestPipeline &ingest = application.host().ingestPipeline();
+        IngestPipeline &ingest = &application.commands().ingestPipeline();
         Q_EMIT ingest.progressChanged(1, 42, 100);
         CHECK(ui->statusText(QStringLiteral("data.loading.progress")) == QStringLiteral("加载 42%"));
         Q_EMIT ingest.progressChanged(1, 512, 0);
@@ -400,7 +402,7 @@ int main(int argc, char *argv[])
         // resourceRef 是 settings: 资源），而不是只回显命令名——命令处理器空转也过不了这关。
         Intent openIntent;
         openIntent.op = QStringLiteral("preferences.open");
-        const auto openResult = application.host().execute(openIntent);
+        const auto openResult = application.commands().execute(openIntent);
 
         CHECK(openResult);
         CHECK(openResult.value().payload.toString() == QStringLiteral("workbench.action.openSettings"));
@@ -451,7 +453,7 @@ int main(int argc, char *argv[])
 
         FailingEditorService failingEditors;
         nextpilot::plotscope::assembly::WorkbenchCommandHandler failingHandler(failingEditors, application.context(),
-                                                                               application.host());
+                                                                               &application.commands());
         Intent openIntent;
         openIntent.op = QStringLiteral("workbench.action.openSettings");
         openIntent.params[QStringLiteral("section")] = QStringLiteral("core.data"); // 带 section 也不误诊为分组错
@@ -475,7 +477,7 @@ int main(int argc, char *argv[])
         Intent sectionIntent;
         sectionIntent.op = QStringLiteral("preferences.open");
         sectionIntent.params[QStringLiteral("section")] = QStringLiteral("core.data");
-        const auto sectionResult = application.host().execute(sectionIntent);
+        const auto sectionResult = application.commands().execute(sectionIntent);
 
         CHECK(sectionResult);
         nextpilot::plotscope::assembly::SettingsEditorWidget *sectionTab = nullptr;
@@ -520,7 +522,7 @@ int main(int argc, char *argv[])
         Intent missIntent;
         missIntent.op = QStringLiteral("preferences.open");
         missIntent.params[QStringLiteral("section")] = QStringLiteral("core.no.such.group");
-        const auto missResult = application.host().execute(missIntent);
+        const auto missResult = application.commands().execute(missIntent);
 
         CHECK(missResult);
         nextpilot::plotscope::assembly::SettingsEditorWidget *missTab = nullptr;
@@ -566,7 +568,7 @@ int main(int argc, char *argv[])
     }
 
     // --- 1) 模块在 GUI 环境下全部激活（静态自注册生效）---
-    const auto active = application.host().activeIds();
+    const auto active = application.extensions().getActivatedExtensions();
     CHECK(active.contains(QStringLiteral("mod.data")));
     CHECK(active.contains(QStringLiteral("mod.plot")));
     CHECK(active.contains(QStringLiteral("mod.script")));
@@ -579,12 +581,12 @@ int main(int argc, char *argv[])
     CHECK(window.menuWidget() != nullptr);
     // 插槽声明了页签/分组；动作由模块在 onAttach 里登记
     // 页/组声明读回（contributes.ribbonPages/ribbonGroups）；动作读回（MenuRegistry 的 menubar/<pageId>）。
-    auto *ribbonSvc = application.host().services()
-                          ? application.host().services()->getService<nextpilot::plotscope::workbench::IRibbonService>(
+    auto *ribbonSvc = &application.services()
+                          ? &application.services()->getService<nextpilot::plotscope::workbench::IRibbonService>(
                                 QStringLiteral("ribbon.readback"))
                           : nullptr;
     CHECK(ribbonSvc != nullptr);
-    auto *menusReg = application.host().menuRegistry();
+    auto *menusReg = &application.commands().menuRegistry();
     CHECK(menusReg != nullptr);
     const auto groupActions = [&](const QString &groupId) {
         QList<IMenuItem> out;
@@ -819,11 +821,10 @@ int main(int argc, char *argv[])
     // A2d 第①步：旧面板工厂表已删（A2c 收工时表已恒空），守卫升级为
     // "12 个业务 id 全走 views/editor 声明且 owner 归模块"——断言见下。
     // A2c 判据：plot.properties 归位 owner plot。
-    auto *plotViewsSvc =
-        application.host().services()
-            ? application.host().services()->getService<nextpilot::plotscope::workbench::IViewsService>(
-                  QStringLiteral("views.readback"))
-            : nullptr;
+    auto *plotViewsSvc = &application.services()
+                             ? &application.services()->getService<nextpilot::plotscope::workbench::IViewsService>(
+                                   QStringLiteral("views.readback"))
+                             : nullptr;
     CHECK(plotViewsSvc && plotViewsSvc->viewForId(QStringLiteral("plot.properties")).owner == QStringLiteral("plot"));
 
     // A2c 补充（owner 断言覆盖面）：其余 view / editor 声明的归属也一并锁住，防后续改名
@@ -840,11 +841,10 @@ int main(int argc, char *argv[])
             CHECK(plotViewsSvc &&
                   plotViewsSvc->viewForId(QString::fromLatin1(ov.id)).owner == QString::fromLatin1(ov.owner));
 
-        auto *editorsSvc =
-            application.host().services()
-                ? application.host().services()->getService<nextpilot::plotscope::workbench::IEditorService>(
-                      QStringLiteral("editor.readback"))
-                : nullptr;
+        auto *editorsSvc = &application.services()
+                               ? &application.services()->getService<nextpilot::plotscope::workbench::IEditorService>(
+                                     QStringLiteral("editor.readback"))
+                               : nullptr;
         CHECK(editorsSvc != nullptr);
         if (editorsSvc)
         {
@@ -880,11 +880,10 @@ int main(int argc, char *argv[])
     // A2d 第②步：旧包面板声明面（Pack.panels）退场后，领域面板只剩
     // contributes.views 单一声明通道——这里锁住 owner 归属与 headless 可查。
     {
-        auto *autoViewsSvc =
-            application.host().services()
-                ? application.host().services()->getService<nextpilot::plotscope::workbench::IViewsService>(
-                      QStringLiteral("views.readback"))
-                : nullptr;
+        auto *autoViewsSvc = &application.services()
+                                 ? &application.services()->getService<nextpilot::plotscope::workbench::IViewsService>(
+                                       QStringLiteral("views.readback"))
+                                 : nullptr;
         CHECK(autoViewsSvc &&
               autoViewsSvc->viewForId(QStringLiteral("automotive.canBrowser")).owner == QStringLiteral("automotive"));
         OK("领域面板：扩展包 contributes.views 声明（headless 可见）+ 呈现层 provider 装配，壳经 IViewsService 消费");
@@ -952,14 +951,13 @@ int main(int argc, char *argv[])
     // SecondarySidebar / bottom→Panel）；editor 进中央页签且标题正确；
     // 同一 view 二次 openView 仍是同一实例。缺一条打回②。
     {
-        auto *viewsSvc =
-            application.host().services()
-                ? application.host().services()->getService<nextpilot::plotscope::workbench::IViewsService>(
-                      QStringLiteral("views.readback"))
-                : nullptr;
+        auto *viewsSvc = &application.services()
+                             ? &application.services()->getService<nextpilot::plotscope::workbench::IViewsService>(
+                                   QStringLiteral("views.readback"))
+                             : nullptr;
         CHECK(viewsSvc != nullptr);
-        auto *reg = application.host().services()
-                        ? application.host().services()->getService<nextpilot::plotscope::registry::ViewRegistry>(
+        auto *reg = &application.services()
+                        ? &application.services()->getService<nextpilot::plotscope::registry::ViewRegistry>(
                               QStringLiteral("views.registry"))
                         : nullptr;
         CHECK(reg != nullptr);
@@ -1297,7 +1295,7 @@ int main(int argc, char *argv[])
     Intent load;
     load.op = QStringLiteral("data.load");
     load.params[QStringLiteral("path")] = fixture;
-    const auto loaded = application.host().execute(load);
+    const auto loaded = application.commands().execute(load);
     CHECK(loaded);
     // 真实摄取走完：IIngest 三事件通道（start → …progress… → finish）顺序回归。
     // 监工评论 52436915：onDidStartLoad / onDidFinishLoad 各至少触发一次，且 start 早于 finish；
@@ -1361,7 +1359,7 @@ int main(int argc, char *argv[])
         Intent rel;
         rel.op = QStringLiteral("data.reload");
         rel.params[QStringLiteral("id")] = sourceId;
-        const auto r = application.host().execute(rel);
+        const auto r = application.commands().execute(rel);
         CHECK(r);
         // 重载后数据集 id 不变（稳定 id 机制）。
         const int newDsId = r.value().payload.toMap().value(QStringLiteral("dataset")).toInt();
@@ -1405,11 +1403,10 @@ int main(int argc, char *argv[])
         // A2b 笔2b 第③步判据：
         //  a) 声明命中：data.datasetTree owner == "data"（模块自声明，壳不代声明）；
         //  b) 不同 ref 各开一页签（复用语义归 provider：uri 相等才复用）。
-        auto *viewsSvc =
-            application.host().services()
-                ? application.host().services()->getService<nextpilot::plotscope::workbench::IViewsService>(
-                      QStringLiteral("views.readback"))
-                : nullptr;
+        auto *viewsSvc = &application.services()
+                             ? &application.services()->getService<nextpilot::plotscope::workbench::IViewsService>(
+                                   QStringLiteral("views.readback"))
+                             : nullptr;
         CHECK(viewsSvc != nullptr);
         CHECK(viewsSvc->viewForId(QStringLiteral("data.datasetTree")).owner == QStringLiteral("data"));
 
@@ -1527,7 +1524,7 @@ int main(int argc, char *argv[])
     {
         Intent st;
         st.op = QStringLiteral("script.py.status");
-        const Result<IntentResult> str = application.host().execute(st);
+        const Result<IntentResult> str = application.commands().execute(st);
         CHECK(str && str.value().payload.toMap().value(QStringLiteral("available")).toBool());
         const bool pyNumpy = str.value().payload.toMap().value(QStringLiteral("numpy")).toBool();
         if (!pyNumpy)
@@ -1564,13 +1561,13 @@ int main(int argc, char *argv[])
             Intent ei;
             ei.op = QStringLiteral("script.py.exec");
             ei.params = ep;
-            const Result<IntentResult> er = application.host().execute(ei);
+            const Result<IntentResult> er = application.commands().execute(ei);
             CHECK(
                 er &&
                 er.value().payload.toMap().value(QStringLiteral("new")).toMap().contains(QStringLiteral("py_derived")));
             Intent wi;
             wi.op = QStringLiteral("script.py.writeback");
-            const Result<IntentResult> wr = application.host().execute(wi);
+            const Result<IntentResult> wr = application.commands().execute(wi);
             CHECK(wr);
             const int v2Id = wr.value().payload.toMap().value(QStringLiteral("dataset")).toInt();
             CHECK(v2Id >= 0 && v2Id != loadedDsId);
@@ -1614,7 +1611,7 @@ int main(int argc, char *argv[])
         der.params[QStringLiteral("table")] = tableName;
         der.params[QStringLiteral("column")] = columnName;
         der.params[QStringLiteral("filter")] = QStringLiteral("absolute");
-        const auto dr = application.host().execute(der);
+        const auto dr = application.commands().execute(der);
         CHECK(dr);
         const QVariantMap pm = dr.value().payload.toMap();
         const int count = pm.value(QStringLiteral("count")).toInt();
@@ -1666,7 +1663,7 @@ int main(int argc, char *argv[])
         fit.params[QStringLiteral("column")] = columnName;
         fit.params[QStringLiteral("filter")] = QStringLiteral("scale");
         fit.params[QStringLiteral("params")] = QVariant(QJsonObject{{QStringLiteral("value_scale"), 2.0}});
-        const auto fr = application.host().execute(fit);
+        const auto fr = application.commands().execute(fit);
         CHECK(fr);
         const QVariantMap fpm = fr.value().payload.toMap();
         const int fcount = fpm.value(QStringLiteral("count")).toInt();
@@ -1697,7 +1694,7 @@ int main(int argc, char *argv[])
             QByteArray("createVerticalMarker(1, {label=\"thr\", severity=\"warning\"})\n"
                        "createBandMarker(-0.5, 0.5, {label=\"band\"})\n"
                        "createPointMarker(2, 1.0, {label=\"pt\", severity=\"error\"})");
-        const auto mr = application.host().execute(mit);
+        const auto mr = application.commands().execute(mit);
         CHECK(static_cast<bool>(mr));
         if (mr)
         {
@@ -1727,7 +1724,7 @@ int main(int argc, char *argv[])
         st.params[QStringLiteral("dataset")] = dsId;
         st.params[QStringLiteral("table")] = QStringLiteral("trace");
         st.params[QStringLiteral("column")] = QStringLiteral("mode");
-        const auto sr = application.host().execute(st);
+        const auto sr = application.commands().execute(st);
         CHECK(static_cast<bool>(sr));
         if (sr)
         {
@@ -1752,7 +1749,7 @@ int main(int argc, char *argv[])
         st2.params[QStringLiteral("dataset")] = dsId;
         st2.params[QStringLiteral("table")] = QStringLiteral("trace");
         st2.params[QStringLiteral("column")] = QStringLiteral("armed");
-        const auto sr2 = application.host().execute(st2);
+        const auto sr2 = application.commands().execute(st2);
         CHECK(static_cast<bool>(sr2));
         if (sr2)
         {
@@ -1775,7 +1772,7 @@ int main(int argc, char *argv[])
         bad.params[QStringLiteral("dataset")] = dsId;
         bad.params[QStringLiteral("table")] = QStringLiteral("trace");
         bad.params[QStringLiteral("column")] = QStringLiteral("sig");
-        const auto br = application.host().execute(bad);
+        const auto br = application.commands().execute(bad);
         CHECK(!static_cast<bool>(br)); // sig = i*0.5 含非整数值
         // 数据集零改动。
         CHECK(plotscope_test::datasetHub(application.context()).get(dsId)->table(QStringLiteral("trace"))->rows ==
@@ -1793,7 +1790,7 @@ int main(int argc, char *argv[])
             "app.call(\"data.state\", {dataset=" + QByteArray::number(dsId) + ", table=\"trace\", column=\"mode\"})");
         // app.call 失败会 luaL_error 使整个脚本失败：CHECK(scr) 即证明
         // 脚本能路由 data.state 意图并成功分段叠加（画布行为 5f 已验）。
-        const auto scr = application.host().execute(sit);
+        const auto scr = application.commands().execute(sit);
         CHECK(static_cast<bool>(scr));
         OK("脚本触发 data.state：app.call 成功路由并叠加");
     }
@@ -1809,7 +1806,7 @@ int main(int argc, char *argv[])
         ser.params[QStringLiteral("table")] = QStringLiteral("trace");
         ser.params[QStringLiteral("column")] = QStringLiteral("sig");
         ser.params[QStringLiteral("limit")] = 128;
-        const auto sr = application.host().execute(ser);
+        const auto sr = application.commands().execute(ser);
         CHECK(static_cast<bool>(sr));
         const QVariantMap payload = sr.value().payload.toMap();
         // 有界读取经 kernel 抽稀：返回点数 ≤ limit（不恒等于），rows>limit 时 truncated。
@@ -1825,7 +1822,7 @@ int main(int argc, char *argv[])
         ser2.op = QStringLiteral("data.series");
         ser2.params[QStringLiteral("dataset")] = dsId;
         ser2.params[QStringLiteral("column")] = QStringLiteral("sig");
-        const auto sr2 = application.host().execute(ser2);
+        const auto sr2 = application.commands().execute(ser2);
         CHECK(static_cast<bool>(sr2));
 
         // (3) 通道不存在 → 明确失败。
@@ -1833,7 +1830,7 @@ int main(int argc, char *argv[])
         bad.op = QStringLiteral("data.series");
         bad.params[QStringLiteral("dataset")] = dsId;
         bad.params[QStringLiteral("column")] = QStringLiteral("no_such_column");
-        CHECK(!static_cast<bool>(application.host().execute(bad)));
+        CHECK(!static_cast<bool>(application.commands().execute(bad)));
 
         // (4) 脚本 VBA：app.call 读序列并在 Lua 内做统计——证明脚本拿得到
         //     数组本体（QVariantList→Lua 数组）而不只是执行回执。
@@ -1847,7 +1844,7 @@ int main(int argc, char *argv[])
                        "  local sum = 0.0\n"
                        "  for i = 1, #r.v do sum = sum + r.v[i] end\n"
                        "  app.log('series mean: ' .. tostring(sum / #r.v))\n");
-        const auto scr = application.host().execute(sit);
+        const auto scr = application.commands().execute(sit);
         CHECK(static_cast<bool>(scr));
 
         // (5) AI 工具白名单：read_series 已注册（MCP 桥同一目录）。
@@ -1860,7 +1857,7 @@ int main(int argc, char *argv[])
         aiArgs[QStringLiteral("column")] = QStringLiteral("sig");
         aiArgs[QStringLiteral("limit")] = 32;
         ai.params[QStringLiteral("args")] = aiArgs;
-        const auto air = application.host().execute(ai);
+        const auto air = application.commands().execute(ai);
         CHECK(static_cast<bool>(air));
         const QVariantMap aiPayload = air.value().payload.toMap();
         const QVariantMap aiResult = aiPayload.value(QStringLiteral("result")).toMap();
@@ -1904,7 +1901,7 @@ int main(int argc, char *argv[])
         setI.params[QStringLiteral("column")] = QStringLiteral("alt");
         setI.params[QStringLiteral("transform")] =
             QJsonDocument(QJsonObject::fromVariantMap(xform)).toJson(QJsonDocument::Compact);
-        const auto setR = application.host().execute(setI);
+        const auto setR = application.commands().execute(setI);
         CHECK(static_cast<bool>(setR));
 
         // (2) data.series 读 alt：limit 是读窗口 cap（抽稀口径）——5000 行抽到 4 点
@@ -1917,7 +1914,7 @@ int main(int argc, char *argv[])
             s.params[QStringLiteral("table")] = QStringLiteral("trace");
             s.params[QStringLiteral("column")] = QStringLiteral("alt");
             s.params[QStringLiteral("limit")] = 4;
-            const auto r = application.host().execute(s);
+            const auto r = application.commands().execute(s);
             CHECK(static_cast<bool>(r));
             const QVariantMap p = r.value().payload.toMap();
             CHECK(p.value(QStringLiteral("transformed")).toBool());
@@ -1939,7 +1936,7 @@ int main(int argc, char *argv[])
             clearI.params[QStringLiteral("origin")] = origin;
             clearI.params[QStringLiteral("table")] = QStringLiteral("trace");
             clearI.params[QStringLiteral("column")] = QStringLiteral("alt");
-            const auto cr = application.host().execute(clearI);
+            const auto cr = application.commands().execute(clearI);
             CHECK(static_cast<bool>(cr));
             CHECK(cr.value().payload.toMap().value(QStringLiteral("removed")).toBool());
 
@@ -1949,7 +1946,7 @@ int main(int argc, char *argv[])
             s.params[QStringLiteral("table")] = QStringLiteral("trace");
             s.params[QStringLiteral("column")] = QStringLiteral("alt");
             s.params[QStringLiteral("limit")] = 4;
-            const auto r = application.host().execute(s);
+            const auto r = application.commands().execute(s);
             CHECK(static_cast<bool>(r));
             const QVariantMap p = r.value().payload.toMap();
             CHECK(!p.value(QStringLiteral("transformed")).toBool());
@@ -1968,7 +1965,7 @@ int main(int argc, char *argv[])
             pc.params[QStringLiteral("px")] = 64;
             pc.params[QStringLiteral("transform")] =
                 QJsonDocument(QJsonObject::fromVariantMap(xform)).toJson(QJsonDocument::Compact);
-            const auto r = application.host().execute(pc);
+            const auto r = application.commands().execute(pc);
             CHECK(static_cast<bool>(r));
             const QVariantMap p = r.value().payload.toMap();
             CHECK(p.value(QStringLiteral("transformed")).toBool());
@@ -2034,7 +2031,7 @@ int main(int argc, char *argv[])
             d.params[QStringLiteral("filter")] = QStringLiteral("moving_average");
             d.params[QStringLiteral("params")] = QStringLiteral("{\"window\":10}");
             d.params[QStringLiteral("name")] = QStringLiteral("sig_avg");
-            const auto dr = application.host().execute(d);
+            const auto dr = application.commands().execute(d);
             CHECK(static_cast<bool>(dr));
 
             Intent s;
@@ -2042,7 +2039,7 @@ int main(int argc, char *argv[])
             s.params[QStringLiteral("dataset")] = dsId;
             s.params[QStringLiteral("column")] = QStringLiteral("sig_avg");
             s.params[QStringLiteral("limit")] = 8;
-            const auto sr = application.host().execute(s);
+            const auto sr = application.commands().execute(s);
             CHECK(static_cast<bool>(sr));
             const QVariantMap p = sr.value().payload.toMap();
             CHECK(p.value(QStringLiteral("derived")).toBool());
@@ -2062,7 +2059,7 @@ int main(int argc, char *argv[])
             d.params[QStringLiteral("filter")] = QStringLiteral("quat_to_rpy");
             d.params[QStringLiteral("degrees")] = true;
             d.params[QStringLiteral("name")] = QStringLiteral("att");
-            const auto dr = application.host().execute(d);
+            const auto dr = application.commands().execute(d);
             CHECK(static_cast<bool>(dr));
             const QVariantMap p = dr.value().payload.toMap();
             const QVariantList outs = p.value(QStringLiteral("outputs")).toList();
@@ -2077,7 +2074,7 @@ int main(int argc, char *argv[])
             s.params[QStringLiteral("dataset")] = dsId;
             s.params[QStringLiteral("column")] = QStringLiteral("att.roll");
             s.params[QStringLiteral("limit")] = 4;
-            const auto sr = application.host().execute(s);
+            const auto sr = application.commands().execute(s);
             CHECK(static_cast<bool>(sr));
             CHECK(sr.value().payload.toMap().value(QStringLiteral("derived")).toBool());
 
@@ -2087,7 +2084,7 @@ int main(int argc, char *argv[])
             pc.params[QStringLiteral("table")] = QStringLiteral("trace");
             pc.params[QStringLiteral("column")] = QStringLiteral("att.yaw");
             pc.params[QStringLiteral("px")] = 16;
-            const auto pcr = application.host().execute(pc);
+            const auto pcr = application.commands().execute(pc);
             CHECK(static_cast<bool>(pcr));
             CHECK(pcr.value().payload.toMap().value(QStringLiteral("derived")).toBool());
 
@@ -2095,7 +2092,7 @@ int main(int argc, char *argv[])
             Intent list;
             list.op = QStringLiteral("data.derive.list");
             list.params[QStringLiteral("dataset")] = dsId;
-            const auto lr = application.host().execute(list);
+            const auto lr = application.commands().execute(list);
             CHECK(static_cast<bool>(lr));
             CHECK(lr.value().payload.toMap().value(QStringLiteral("count")).toInt() == 4);
         }
@@ -2108,7 +2105,7 @@ int main(int argc, char *argv[])
             d.params[QStringLiteral("table")] = QStringLiteral("trace");
             d.params[QStringLiteral("inputs")] = QStringList{QStringLiteral("q.w")};
             d.params[QStringLiteral("filter")] = QStringLiteral("quat_to_rpy");
-            CHECK(!static_cast<bool>(application.host().execute(d)));
+            CHECK(!static_cast<bool>(application.commands().execute(d)));
         }
 
         // (5) MIMO 跨表输入（时间同步核心场景）：aux 表独立采样率（0.05s 网格），
@@ -2128,7 +2125,7 @@ int main(int argc, char *argv[])
             d.params[QStringLiteral("filter")] = QStringLiteral("quat_to_rpy");
             d.params[QStringLiteral("degrees")] = true;
             d.params[QStringLiteral("name")] = QStringLiteral("attx");
-            const auto dr = application.host().execute(d);
+            const auto dr = application.commands().execute(d);
             if (!dr)
                 fprintf(stderr, "[dbg] cross-table fail: %s / %s\n", qPrintable(dr.error().code),
                         qPrintable(dr.error().message));
@@ -2149,12 +2146,12 @@ int main(int argc, char *argv[])
             Intent d2 = d;
             d2.params[QStringLiteral("interp")] = QStringLiteral("step");
             d2.params[QStringLiteral("name")] = QStringLiteral("attx2");
-            CHECK(static_cast<bool>(application.host().execute(d2)));
+            CHECK(static_cast<bool>(application.commands().execute(d2)));
 
             // interp 非法值 → eargs。
             Intent d3 = d;
             d3.params[QStringLiteral("interp")] = QStringLiteral("cubic");
-            const auto r3 = application.host().execute(d3);
+            const auto r3 = application.commands().execute(d3);
             CHECK(!static_cast<bool>(r3));
             CHECK(r3.error().code == QStringLiteral("eargs"));
         }
@@ -2180,7 +2177,7 @@ int main(int argc, char *argv[])
             d.params[QStringLiteral("filter")] = QStringLiteral("quat_to_rpy");
             d.params[QStringLiteral("degrees")] = true;
             d.params[QStringLiteral("name")] = QStringLiteral("attn");
-            const auto dr = application.host().execute(d);
+            const auto dr = application.commands().execute(d);
             CHECK(static_cast<bool>(dr));
             // 基准轴 = 第一个输入（qn.w，null 剔除后 99 点）→ 输出与基准同轴（时间同步）。
             const QVariantMap p = dr.value().payload.toMap();
@@ -2209,7 +2206,7 @@ int main(int argc, char *argv[])
             full.params[QStringLiteral("filter")] = QStringLiteral("quat_to_rpy");
             full.params[QStringLiteral("degrees")] = true;
             full.params[QStringLiteral("name")] = QStringLiteral("attinc");
-            const auto fr = application.host().execute(full);
+            const auto fr = application.commands().execute(full);
             CHECK(static_cast<bool>(fr));
             const QVariantMap fp = fr.value().payload.toMap();
             CHECK(fp.value(QStringLiteral("count")).toInt() == 100);
@@ -2240,7 +2237,7 @@ int main(int argc, char *argv[])
             CHECK(fds.appendFrame(QStringLiteral("trace"), nts.constData(), m2, nCols));
 
             // 同名重发 → 增量：只算 20 点新段，注册表缓存追加到 120。
-            const auto ir = application.host().execute(full);
+            const auto ir = application.commands().execute(full);
             CHECK(static_cast<bool>(ir));
             const QVariantMap ip = ir.value().payload.toMap();
             CHECK(ip.value(QStringLiteral("incremental")).toBool());
@@ -2258,7 +2255,7 @@ int main(int argc, char *argv[])
                 s.op = QStringLiteral("data.series");
                 s.params[QStringLiteral("dataset")] = dsId;
                 s.params[QStringLiteral("column")] = QStringLiteral("attinc.roll");
-                const auto sr = application.host().execute(s);
+                const auto sr = application.commands().execute(s);
                 CHECK(static_cast<bool>(sr));
                 const QVariantMap p = sr.value().payload.toMap();
                 CHECK(p.value(QStringLiteral("count")).toInt() == 120);
@@ -2271,7 +2268,7 @@ int main(int argc, char *argv[])
 
             // 无新数据再刷 → 幂等 no-op（count=0）。
             {
-                const auto nr = application.host().execute(full);
+                const auto nr = application.commands().execute(full);
                 CHECK(static_cast<bool>(nr));
                 const QVariantMap np = nr.value().payload.toMap();
                 CHECK(np.value(QStringLiteral("incremental")).toBool());
@@ -2283,7 +2280,7 @@ int main(int argc, char *argv[])
             {
                 Intent f = full;
                 f.params[QStringLiteral("force")] = true;
-                const auto cr = application.host().execute(f);
+                const auto cr = application.commands().execute(f);
                 CHECK(static_cast<bool>(cr));
                 const QVariantMap cp = cr.value().payload.toMap();
                 CHECK(!cp.value(QStringLiteral("incremental")).toBool());
@@ -2294,7 +2291,7 @@ int main(int argc, char *argv[])
             {
                 Intent r2 = full;
                 r2.params[QStringLiteral("degrees")] = false;
-                const auto rr = application.host().execute(r2);
+                const auto rr = application.commands().execute(r2);
                 CHECK(static_cast<bool>(rr));
                 const QVariantMap rp = rr.value().payload.toMap();
                 CHECK(!rp.value(QStringLiteral("incremental")).toBool());
@@ -2308,7 +2305,7 @@ int main(int argc, char *argv[])
                 Intent rf;
                 rf.op = QStringLiteral("data.derive.refresh");
                 rf.params[QStringLiteral("dataset")] = dsId;
-                const auto rr = application.host().execute(rf);
+                const auto rr = application.commands().execute(rf);
                 CHECK(static_cast<bool>(rr));
                 CHECK(rr.value().payload.toMap().value(QStringLiteral("refreshed")).toInt() == 0);
             }
@@ -2427,7 +2424,7 @@ int main(int argc, char *argv[])
     intent.params[QStringLiteral("column")] = QStringLiteral("sig");
     intent.params[QStringLiteral("px")] = px;
 
-    const auto result = application.host().execute(intent);
+    const auto result = application.commands().execute(intent);
     CHECK(result);
     const QVariantMap payload = result.value().payload.toMap();
     const QVariantList xs = payload.value(QStringLiteral("x")).toList();
@@ -2507,7 +2504,7 @@ int main(int argc, char *argv[])
     bad.params[QStringLiteral("dataset")] = 9999;
     bad.params[QStringLiteral("table")] = QStringLiteral("trace");
     bad.params[QStringLiteral("column")] = QStringLiteral("sig");
-    const auto badResult = application.host().execute(bad);
+    const auto badResult = application.commands().execute(bad);
     CHECK(!badResult);
     CHECK(badResult.error().code == QStringLiteral("enoent"));
     OK("意图层错误语义一致：不存在的数据集返回 enoent");
@@ -2547,7 +2544,7 @@ int main(int argc, char *argv[])
         Intent dark;
         dark.op = QStringLiteral("theme.set");
         dark.params[QStringLiteral("theme")] = QStringLiteral("dark");
-        const auto r = application.host().execute(dark);
+        const auto r = application.commands().execute(dark);
         CHECK(r); // 系统级 handler 认领（headless 才会报无处理器）
         CHECK(r.value().payload.toString() == QStringLiteral("dark"));
         CHECK(tm->current() == Theme::Theme::Dark);
@@ -2559,7 +2556,7 @@ int main(int argc, char *argv[])
         // theme.toggle 意图：切回浅色。
         Intent toggle;
         toggle.op = QStringLiteral("theme.toggle");
-        const auto r2 = application.host().execute(toggle);
+        const auto r2 = application.commands().execute(toggle);
         CHECK(r2);
         CHECK(tm->current() == Theme::Theme::Light);
         CHECK(*changedCount == 2);
@@ -2571,9 +2568,10 @@ int main(int argc, char *argv[])
         using Theme = nextpilot::plotscope::gui::ThemeManager;
         using IConfigurationService = nextpilot::plotscope::workbench::IConfigurationService;
         Theme *tm = window.themeManager();
-        auto *cfgSvc = application.host().services() ? application.host().services()->getService<IConfigurationService>(
-                                                           QStringLiteral("configuration.readback"))
-                                                     : nullptr;
+        auto *cfgSvc =
+            &application.services()
+                ? &application.services()->getService<IConfigurationService>(QStringLiteral("configuration.readback"))
+                : nullptr;
         CHECK(tm != nullptr);
         CHECK(cfgSvc != nullptr);
         if (tm && cfgSvc)
@@ -2599,9 +2597,10 @@ int main(int argc, char *argv[])
     {
         using IConfigurationService = nextpilot::plotscope::workbench::IConfigurationService;
         using SettingsScope = nextpilot::plotscope::context::SettingsScope;
-        auto *cfgSvc = application.host().services() ? application.host().services()->getService<IConfigurationService>(
-                                                           QStringLiteral("configuration.readback"))
-                                                     : nullptr;
+        auto *cfgSvc =
+            &application.services()
+                ? &application.services()->getService<IConfigurationService>(QStringLiteral("configuration.readback"))
+                : nullptr;
         CHECK(cfgSvc != nullptr);
         if (cfgSvc)
         {
@@ -2936,7 +2935,7 @@ int main(int argc, char *argv[])
             QStringLiteral(PS_TEST_FIXTURE_DIR "/demo_flight.csv").replace(QLatin1Char('\\'), QLatin1Char('/'));
         sc.params[QStringLiteral("source")] =
             QStringLiteral("app.call(\"data.load\", {path=\"%1\", format=\"csv\"})").arg(scriptCsv).toUtf8();
-        const auto sr = application.host().execute(sc);
+        const auto sr = application.commands().execute(sc);
         CHECK(static_cast<bool>(sr));
         CHECK(plotscope_test::datasetHub(application.context()).count() == dsBefore + 1);
 
@@ -2946,7 +2945,7 @@ int main(int argc, char *argv[])
         Intent sc2;
         sc2.op = QStringLiteral("script.run");
         sc2.params[QStringLiteral("source")] = QByteArray("app.call(\"figure.duplicate\")");
-        const auto sr2 = application.host().execute(sc2);
+        const auto sr2 = application.commands().execute(sc2);
         CHECK(static_cast<bool>(sr2));
         CHECK(ws->pageCount() == pagesBefore + 1);
 
@@ -2968,7 +2967,7 @@ int main(int argc, char *argv[])
         sc3.params[QStringLiteral("source")] = QByteArray(
             "app.call(\"data.filter\", {dataset=" + QByteArray::number(loadedDsId) + ", table=\"" + sTable.toUtf8() +
             "\", column=\"" + sColumn.toUtf8() + "\", filter=\"moving_average\", params={window=3}})");
-        const auto sr3 = application.host().execute(sc3);
+        const auto sr3 = application.commands().execute(sc3);
         CHECK(sr3);
         CHECK(g_scriptFilterCount == 1);
 
@@ -3010,7 +3009,7 @@ int main(int argc, char *argv[])
         // (1) 工具目录：PJ4 风格工具名 + 参数 schema + 已注册 op 列表。
         Intent li;
         li.op = QStringLiteral("ai.tools.list");
-        const auto lr = application.host().execute(li);
+        const auto lr = application.commands().execute(li);
         CHECK(static_cast<bool>(lr));
         const QVariantMap lpm = lr.value().payload.toMap();
         const QVariantList tools = lpm.value(QStringLiteral("tools")).toList();
@@ -3034,7 +3033,7 @@ int main(int argc, char *argv[])
         // (2) ai.status：状态查询。
         Intent si;
         si.op = QStringLiteral("ai.status");
-        const auto sr = application.host().execute(si);
+        const auto sr = application.commands().execute(si);
         CHECK(static_cast<bool>(sr));
         CHECK(sr.value().payload.toMap().value(QStringLiteral("datasets")).toInt() > 0);
 
@@ -3042,14 +3041,14 @@ int main(int argc, char *argv[])
         Intent bad;
         bad.op = QStringLiteral("ai.tool.call");
         bad.params[QStringLiteral("tool")] = QStringLiteral("dangerous_arbitrary_op");
-        const auto br = application.host().execute(bad);
+        const auto br = application.commands().execute(bad);
         CHECK(!static_cast<bool>(br));
 
         // (4) 端到端：脚本经 app.call 走 AI 工具拿状态（VBA 式 + MCP 工具组合）。
         Intent scr;
         scr.op = QStringLiteral("script.run");
         scr.params[QStringLiteral("source")] = QByteArray("app.call(\"ai.tool.call\", {tool=\"get_status\", args={}})");
-        const auto srr = application.host().execute(scr);
+        const auto srr = application.commands().execute(scr);
         CHECK(static_cast<bool>(srr));
         OK("AI/MCP 工具层：目录>=10 + status + 白名单拒绝 + 脚本 app.call 调工具");
     }
@@ -3073,7 +3072,7 @@ int main(int argc, char *argv[])
         Intent pz;
         pz.op = QStringLiteral("data.pause");
         pz.params[QStringLiteral("id")] = liveId;
-        const auto pr = application.host().execute(pz);
+        const auto pr = application.commands().execute(pz);
         CHECK(static_cast<bool>(pr));
         const auto pm = pr.value().payload.toMap();
         CHECK(pm.value(QStringLiteral("paused")).toBool() == true);
@@ -3086,13 +3085,13 @@ int main(int argc, char *argv[])
         Intent pz2;
         pz2.op = QStringLiteral("data.pause");
         pz2.params[QStringLiteral("id")] = liveId;
-        CHECK(static_cast<bool>(application.host().execute(pz2)));
+        CHECK(static_cast<bool>(application.commands().execute(pz2)));
 
         // (4) data.resume：Paused → Streaming。
         Intent rs;
         rs.op = QStringLiteral("data.resume");
         rs.params[QStringLiteral("id")] = liveId;
-        const auto rr = application.host().execute(rs);
+        const auto rr = application.commands().execute(rs);
         CHECK(static_cast<bool>(rr));
         CHECK(rr.value().payload.toMap().value(QStringLiteral("paused")).toBool() == false);
         CHECK(sources.get(liveId)->state == SourceState::Streaming);
@@ -3112,7 +3111,7 @@ int main(int argc, char *argv[])
         Intent pf;
         pf.op = QStringLiteral("data.pause");
         pf.params[QStringLiteral("id")] = fileId;
-        const auto fr = application.host().execute(pf);
+        const auto fr = application.commands().execute(pf);
         CHECK(!static_cast<bool>(fr));
         CHECK(fr.error().code == QStringLiteral("enotsupported"));
 
@@ -3120,7 +3119,7 @@ int main(int argc, char *argv[])
         Intent px;
         px.op = QStringLiteral("data.pause");
         px.params[QStringLiteral("id")] = 99999;
-        CHECK(!static_cast<bool>(application.host().execute(px)));
+        CHECK(!static_cast<bool>(application.commands().execute(px)));
 
         // (7) 面板层面：live 源卡片标记了 kind 角色（delegate 据此画暂停/继续图标）。
         //     通过 view action 之外的真实路径——直接读源注册表确认面板刷新来源一致。
@@ -3160,13 +3159,12 @@ int main(int argc, char *argv[])
     // --- analysis/protocol module：分析 galley 与协议入口已贡献 ---
     {
         // 页/组声明读回（contributes.ribbonPages/ribbonGroups）；动作读回（MenuRegistry 的 menubar/<pageId>）。
-        auto *ribbonSvc =
-            application.host().services()
-                ? application.host().services()->getService<nextpilot::plotscope::workbench::IRibbonService>(
-                      QStringLiteral("ribbon.readback"))
-                : nullptr;
+        auto *ribbonSvc = &application.services()
+                              ? &application.services()->getService<nextpilot::plotscope::workbench::IRibbonService>(
+                                    QStringLiteral("ribbon.readback"))
+                              : nullptr;
         CHECK(ribbonSvc != nullptr);
-        auto *menusReg = application.host().menuRegistry();
+        auto *menusReg = &application.commands().menuRegistry();
         CHECK(menusReg != nullptr);
         const auto groupActions = [&](const QString &groupId) {
             QList<IMenuItem> out;
@@ -3194,7 +3192,7 @@ int main(int argc, char *argv[])
         Intent ar;
         ar.op = QStringLiteral("analysis.run");
         ar.params[QStringLiteral("application")] = QStringLiteral("default");
-        const auto rr = application.host().execute(ar);
+        const auto rr = application.commands().execute(ar);
         // 无论有无活动源，都不能是 eunsupported（analysis.run handler 必须认领）。
         CHECK(rr || rr.error().code != QStringLiteral("eunsupported"));
         OK("analysis/protocol module：分析 gallery + 协议入口 + analysis.run handler 就位");
@@ -3204,13 +3202,12 @@ int main(int argc, char *argv[])
     {
         auto &settings = application.context().settings();
         // 页/组声明读回（contributes.ribbonPages/ribbonGroups）；动作读回（MenuRegistry 的 menubar/<pageId>）。
-        auto *ribbonSvc =
-            application.host().services()
-                ? application.host().services()->getService<nextpilot::plotscope::workbench::IRibbonService>(
-                      QStringLiteral("ribbon.readback"))
-                : nullptr;
+        auto *ribbonSvc = &application.services()
+                              ? &application.services()->getService<nextpilot::plotscope::workbench::IRibbonService>(
+                                    QStringLiteral("ribbon.readback"))
+                              : nullptr;
         CHECK(ribbonSvc != nullptr);
-        auto *menusReg = application.host().menuRegistry();
+        auto *menusReg = &application.commands().menuRegistry();
         CHECK(menusReg != nullptr);
         const auto groupActions = [&](const QString &groupId) {
             QList<IMenuItem> out;
@@ -3262,7 +3259,7 @@ int main(int argc, char *argv[])
         Intent fav;
         fav.op = QStringLiteral("analysis.favorite");
         fav.params[QStringLiteral("application")] = QStringLiteral("autopilot.review.app");
-        const auto fr = application.host().execute(fav);
+        const auto fr = application.commands().execute(fav);
         CHECK(static_cast<bool>(fr));
         CHECK(fr.value().payload.toMap().value(QStringLiteral("favorite")).toBool() == true);
         CHECK(!idOf(QStringLiteral(".fav.autopilot.review.app")).isEmpty()); // 收藏条目已注册
@@ -3274,7 +3271,7 @@ int main(int argc, char *argv[])
         }
 
         // (3) 再 toggle → 移除收藏。
-        const auto fr2 = application.host().execute(fav);
+        const auto fr2 = application.commands().execute(fav);
         CHECK(static_cast<bool>(fr2));
         CHECK(fr2.value().payload.toMap().value(QStringLiteral("favorite")).toBool() == false);
         CHECK(idOf(QStringLiteral(".fav.autopilot.review.app")).isEmpty()); // 条目已撤销
@@ -3283,7 +3280,7 @@ int main(int argc, char *argv[])
         Intent favBad;
         favBad.op = QStringLiteral("analysis.favorite");
         favBad.params[QStringLiteral("application")] = QStringLiteral("nonexistent.app");
-        const auto fbr = application.host().execute(favBad);
+        const auto fbr = application.commands().execute(favBad);
         CHECK(!static_cast<bool>(fbr));
         CHECK(fbr.error().code == QStringLiteral("enoimpl"));
 
@@ -3291,7 +3288,7 @@ int main(int argc, char *argv[])
         Intent run;
         run.op = QStringLiteral("analysis.run");
         run.params[QStringLiteral("application")] = QStringLiteral("default");
-        const auto runR = application.host().execute(run);
+        const auto runR = application.commands().execute(run);
         if (static_cast<bool>(runR))
         {
             const QJsonObject ro = settings.json(SettingsScope::Workspace, QStringLiteral("analysis/recents"));
@@ -3322,7 +3319,7 @@ int main(int argc, char *argv[])
         Intent load2;
         load2.op = QStringLiteral("data.load");
         load2.params[QStringLiteral("path")] = copyPath;
-        const auto l2 = application.host().execute(load2);
+        const auto l2 = application.commands().execute(load2);
         CHECK(l2);
         // payload 两种形态都要认：首次载入是 {dataset,...} 的 map，
         // 已有同指纹缓存时直接回数据集 id（int）。
@@ -3422,7 +3419,7 @@ int main(int argc, char *argv[])
         Intent wl;
         wl.op = QStringLiteral("data.load");
         wl.params[QStringLiteral("path")] = widePath;
-        const auto wr = application.host().execute(wl);
+        const auto wr = application.commands().execute(wl);
         CHECK(wr);
         const QVariant wpv = wr.value().payload;
         const int wds = wpv.metaType().id() == QMetaType::QVariantMap
@@ -3605,7 +3602,7 @@ int main(int argc, char *argv[])
         snap.params[QStringLiteral("tables")] = QVariantList{QStringLiteral("*")};
         snap.params[QStringLiteral("format")] = QStringLiteral("xlsx");
         snap.params[QStringLiteral("path")] = xlsxPath;
-        const auto snapRes = application.host().execute(snap);
+        const auto snapRes = application.commands().execute(snap);
         CHECK(snapRes);
         const QVariantMap sp = snapRes.value().payload.toMap();
         CHECK(sp.value(QStringLiteral("table_count")).toInt() == 2);
@@ -3647,7 +3644,7 @@ int main(int argc, char *argv[])
         Intent snapCsv = snap;
         snapCsv.params[QStringLiteral("format")] = QStringLiteral("csv");
         snapCsv.params[QStringLiteral("path")] = csvDir;
-        const auto csvRes = application.host().execute(snapCsv);
+        const auto csvRes = application.commands().execute(snapCsv);
         CHECK(csvRes);
         const QStringList files = csvRes.value().payload.toMap().value(QStringLiteral("files")).toStringList();
         CHECK(files.size() == 2);
@@ -3658,10 +3655,10 @@ int main(int argc, char *argv[])
         {
             Intent bad = snap;
             bad.params[QStringLiteral("format")] = QStringLiteral("pdf");
-            CHECK(!application.host().execute(bad));
+            CHECK(!application.commands().execute(bad));
             Intent noTable = snap;
             noTable.params[QStringLiteral("tables")] = QVariantList{QStringLiteral("__missing__")};
-            CHECK(!application.host().execute(noTable));
+            CHECK(!application.commands().execute(noTable));
         }
         OK("多表快照：xlsx 单簿 2 sheet 列名对齐 schema、100/33 行正确、csv 每表一文件");
     }
@@ -3676,7 +3673,7 @@ int main(int argc, char *argv[])
         loadParams.op = QStringLiteral("data.load");
         loadParams.params[QStringLiteral("path")] = QStringLiteral(PS_TEST_FIXTURE_DIR "/demo_params.ulg");
         loadParams.params[QStringLiteral("format")] = QStringLiteral("ulog");
-        const auto lr = application.host().execute(loadParams);
+        const auto lr = application.commands().execute(loadParams);
         CHECK(lr);
         const QVariant lv = lr.value().payload;
         const int paramsDs = lv.metaType().id() == QMetaType::QVariantMap
@@ -3688,7 +3685,7 @@ int main(int argc, char *argv[])
         Intent pIntent;
         pIntent.op = QStringLiteral("data.params");
         pIntent.params[QStringLiteral("dataset")] = paramsDs;
-        const auto pr = application.host().execute(pIntent);
+        const auto pr = application.commands().execute(pIntent);
         CHECK(pr);
         const QVariantMap pm = pr.value().payload.toMap();
         CHECK(pm.value(QStringLiteral("count")).toInt() == 5);
@@ -3720,7 +3717,7 @@ int main(int argc, char *argv[])
         // 事件循环里；这里若还没到就显式建一个同构实例（同一构造函数、同一意图
         // 通道），断言仍然打在真实面板实现上，而不是绕过UI。
         if (!panel)
-            panel = new DataManagerPanel(application.context(), application.host(), &window);
+            panel = new DataManagerPanel(application.context(), &application.commands(), &window);
         CHECK(panel != nullptr);
         panel->showChip(1);
         CHECK(panel->activeChip() == 1);
@@ -3942,7 +3939,7 @@ int main(int argc, char *argv[])
         sv.op = QStringLiteral("settings.set");
         sv.params[QStringLiteral("key")] = QStringLiteral("plot.time.format");
         sv.params[QStringLiteral("value")] = QStringLiteral("hms");
-        CHECK(application.host().execute(sv).ok());
+        CHECK(application.commands().execute(sv).ok());
         QVariant outv;
         Result<QVariant> rout(outv);
         CHECK(application.context().interactions().dispatchViewAction(QStringLiteral("plot.timeFormat"), {}, rout));
@@ -3964,7 +3961,7 @@ int main(int argc, char *argv[])
         back.op = QStringLiteral("settings.set");
         back.params[QStringLiteral("key")] = QStringLiteral("plot.time.format");
         back.params[QStringLiteral("value")] = QStringLiteral("relative");
-        application.host().execute(back);
+        application.commands().execute(back);
         CHECK(application.context().interactions().dispatchViewAction(QStringLiteral("plot.timeFormat"), {}, rout));
         CHECK(wsT->activeCanvas()->timeFormatMode() == QStringLiteral("relative"));
 
@@ -4390,7 +4387,7 @@ int main(int argc, char *argv[])
 
     // 退出前先拆模块：reportExportHost 是本函数栈对象、先于 application 析构，
     // 而 ~App 里还有一次 deactivateAll；不先拆，那次 onDetach 就落在已亡 host 上。
-    application.host().deactivateAll();
+    application.stop();
 
     fprintf(stdout, "\nGUI 契约测试全部通过\n");
     return 0;

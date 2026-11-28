@@ -1,9 +1,9 @@
 #pragma once
 
 // vscode.commands 对位：命令＝registerCommand(id, handler)，handler 与命令是同一个东西。
-// 服务 id "vscode.commands"。仓库的 IIntentHandler 池不另起一套：装配层把每个
-// CommandHandler 适配成 IIntentHandler 注册进 RuntimeHost 现有池（commandId == Intent.type、
-// args == Intent.payload），执行链只有 RuntimeHost::execute 一条。CommandExecutor 保留给菜单/快捷键。
+// 服务 id "vscode.commands"，实现是 command::CommandService。仓库不另起第二张命令表：
+// 模块的 IIntentHandler 经 asCommandHandler 桥成 Handler 注册进同一张表；
+// 执行链只有 CommandService::execute 一条（命令表 + 系统命令同一入口）。
 
 #include "VsCodeTypes.h"
 

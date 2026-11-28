@@ -30,8 +30,10 @@ namespace nextpilot::plotscope::command {
 class CommandRegistry;
 }
 namespace nextpilot::plotscope::host {
-class RuntimeHost;
 class IWorkbenchContribution;
+}
+namespace nextpilot::plotscope::command {
+class CommandService;
 }
 namespace nextpilot::plotscope::intent {
 class IIntentHandler;
@@ -68,7 +70,8 @@ class ExtensionService final : public QObject, public wb::IExtensionService
 {
     Q_OBJECT
 public:
-    ExtensionService(ctx::AppContext &appCtx, host::RuntimeHost &runtime,
+    // 只收服务容器与命令服务：扩展的父对象是本服务，命令注册走 CommandService。
+    ExtensionService(ctx::AppContext &appCtx, command::CommandService &commands,
                      nextpilot::plotscope::instantiation::InstantiationService &services,
                      wb::IContributionsInstaller *installer);
 
@@ -81,7 +84,7 @@ public:
     QList<registry::ExtensionDescription> getExtensions() const override;
 
     // 命令绑定：把当前挂载的贡献命令落地到命令表；handler 常驻注册一次。
-    void bindCommands(command::CommandRegistry *commands, host::RuntimeHost &runtime);
+    void bindCommands(command::CommandRegistry *commands);
     void unbind(const QString &owner, command::CommandRegistry *commands);
     int triggeredCount(const QString &commandId) const;
     int boundCommandCount() const { return m_bound.size(); }
@@ -93,13 +96,13 @@ private:
     {
         registry::ExtensionDescription description;
         nextpilot::plotscope::host::IWorkbenchContribution *instance = nullptr;
-        QList<nextpilot::plotscope::intent::IIntentHandler *> handlers;
     };
 
-    void attachViewRegistry(host::RuntimeHost &runtime);
+    // 扩展包 contributes 的 viewsContainers/views 在 bind 时灌进 ViewRegistry（服务面取回）。
+    void attachViewRegistry();
 
     ctx::AppContext &m_appCtx;
-    host::RuntimeHost &m_host;
+    command::CommandService &m_commands;
     nextpilot::plotscope::instantiation::InstantiationService &m_services;
     wb::IContributionsInstaller *m_installer;
     registry::ExtensionRegistry &m_registry;

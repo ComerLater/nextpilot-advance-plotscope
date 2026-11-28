@@ -1,12 +1,11 @@
 // A8b-M1 e2e cmd-ext：内置测试扩展一条命令 → 接到命令面板 → 执行成功 → 卸载撤回。
 //
 // 走与 gui_main 相同的装配路径：扩展 contributes（来自扫描/manifest）→
-// assembly::ExtensionService.bindCommands(CommandRegistry*, RuntimeHost&) → host.execute(intent)。
+// assembly::ExtensionService.bindCommands(CommandRegistry*, RuntimeHost&) → commands.execute(intent)。
 // 用真实 RuntimeHost 与 CommandRegistry，不 mock；不构造完整 MainWindow（保持测试稳定）。
 
 #include "App.h"
 #include "AppContext.h"
-#include "RuntimeHost.h"
 #include "ExtensionService.h"
 #include "command/CommandRegistry.h"
 #include "ContributionParser.h"
@@ -103,7 +102,7 @@ int main(int argc, char *argv[])
     // 装配层同款接线：扩展服务把贡献命令灌进一个命令表 + 注册执行 handler。
     CommandRegistry commands;
     auto &activation = application.extensions();
-    activation.bindCommands(&commands, application.host());
+    activation.bindCommands(&commands);
 
     // 面板出现：贡献命令已进命令表（buildCommandItems 从 commands() 读）。
     CHECK(activation.boundCommandCount() == 2); // hello.say + workbench.action.openSettings（core.settings）
@@ -143,7 +142,7 @@ int main(int argc, char *argv[])
 
     // A8b-M2 裁定 52442006 Step 5 e2e：bind 已把扩展包 views 声明灌进组合根的
     // ViewRegistry（views.registry 服务），壳读回走 IViewsService（views.readback）。
-    auto *services = application.host().services();
+    auto *services = &application.services();
     CHECK(services != nullptr);
     auto *viewSvc =
         services
@@ -193,8 +192,8 @@ int main(int argc, char *argv[])
             [](context::AppContext &, intent::IIntentExecutor &, QWidget *) -> QWidget * { return nullptr; },
             QStringLiteral("plotscope.helloworld")));
         CHECK(viewsReg->provider(QStringLiteral("hello.view")) != nullptr);
-        CHECK(viewSvc->openView(QStringLiteral("hello.view"), application.context(), application.host(), nullptr) ==
-              nullptr);
+        CHECK(viewSvc->openView(QStringLiteral("hello.view"), application.context(), &application.commands(),
+                                nullptr) == nullptr);
     }
 
     // ---- A8b-M3-a 第 2 笔 e2e：customEditors + registerEditorProvider + 四语义链路 ----
@@ -299,12 +298,12 @@ int main(int argc, char *argv[])
         CHECK(editorSvc->editorViewTypeFor(txt) == QLatin1String("text"));
         // 壳不改一行：openEditor("web", html) 命中假 provider，返回不透明控件。
         QWidget *webPage =
-            editorSvc->openEditor(QStringLiteral("web"), html, application.context(), application.host(), nullptr);
+            editorSvc->openEditor(QStringLiteral("web"), html, application.context(), &application.commands(), nullptr);
         CHECK(webPage != nullptr);
         delete webPage;
         // 内置 text 编辑器零扩展可用：打开 → 控件；保存 → 本地文件可写校验。
         QWidget *textPage =
-            editorSvc->openEditor(QStringLiteral("text"), txt, application.context(), application.host(), nullptr);
+            editorSvc->openEditor(QStringLiteral("text"), txt, application.context(), &application.commands(), nullptr);
         CHECK(textPage != nullptr);
         delete textPage;
         CHECK(editorSvc->providerFor(QStringLiteral("text")) != nullptr);
@@ -341,7 +340,7 @@ int main(int argc, char *argv[])
         CHECK(editorSvc->editorViewTypeFor(settingsRef) == QLatin1String("workbench.editor.settings2"));
         // 打开（openEditor 全链：providerFor → canOpen → createEditor）拿到的就是不透明控件。
         QWidget *page = editorSvc->openEditor(QStringLiteral("workbench.editor.settings2"), settingsRef,
-                                              application.context(), application.host(), nullptr);
+                                              application.context(), &application.commands(), nullptr);
         CHECK(page != nullptr);
         auto *settingsPage = qobject_cast<assembly::SettingsEditorWidget *>(page);
         CHECK(settingsPage != nullptr);
@@ -383,7 +382,7 @@ int main(int argc, char *argv[])
                 settingsPage->setJsonView(false);
                 delete page;
                 page = editorSvc->openEditor(QStringLiteral("workbench.editor.settings2"), settingsRef,
-                                             application.context(), application.host(), nullptr);
+                                             application.context(), &application.commands(), nullptr);
                 settingsPage = qobject_cast<assembly::SettingsEditorWidget *>(page);
                 CHECK(settingsPage != nullptr);
                 if (settingsPage)
@@ -417,7 +416,7 @@ int main(int argc, char *argv[])
     // 执行成功：命令面板激活 → executeCommand(id) → intentOp → host.execute → handler。
     Intent intent;
     intent.op = QStringLiteral("hello.say");
-    auto result = application.host().execute(intent);
+    auto result = application.commands().execute(intent);
     CHECK(static_cast<bool>(result));
     CHECK(activation.triggeredCount(QStringLiteral("hello.say")) == 1);
 
@@ -425,7 +424,7 @@ int main(int argc, char *argv[])
     {
         Intent openSettings;
         openSettings.op = QStringLiteral("workbench.action.openSettings");
-        auto opened = application.host().execute(openSettings);
+        auto opened = application.commands().execute(openSettings);
         CHECK(static_cast<bool>(opened));
         // 扩展 handler 让出 workbench.* 前缀：触发计数必须归零（不会被扩展 handler 抢）。
         CHECK(activation.triggeredCount(QStringLiteral("workbench.action.openSettings")) == 0);
@@ -451,7 +450,7 @@ int main(int argc, char *argv[])
     // handler 不认领未贡献的命令（不抢别人的 op）。
     Intent unknown;
     unknown.op = QStringLiteral("no.such.command");
-    auto other = application.host().execute(unknown);
+    auto other = application.commands().execute(unknown);
     CHECK(!static_cast<bool>(other));
 
     // 卸载 owner：命令从命令表整批撤，不留悬空。
@@ -543,7 +542,7 @@ int main(int argc, char *argv[])
                                                            QStringLiteral("plotscope.helloworld")) == nullptr);
     }
     // host 再 execute 该 op 无 handler 认领。
-    auto afterUnmount = application.host().execute(intent);
+    auto afterUnmount = application.commands().execute(intent);
     CHECK(!static_cast<bool>(afterUnmount));
 
     if (g_failed == 0)

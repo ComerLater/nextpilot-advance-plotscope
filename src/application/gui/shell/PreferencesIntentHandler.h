@@ -4,9 +4,8 @@
 
 #include <QObject>
 
-namespace nextpilot::plotscope::host
-{
-class RuntimeHost;
+namespace nextpilot::plotscope::command {
+class CommandService;
 }
 
 namespace nextpilot::plotscope::gui
@@ -20,14 +19,14 @@ class PreferencesIntentHandler final : public QObject, public intent::IIntentHan
 {
     Q_OBJECT
 public:
-    explicit PreferencesIntentHandler(host::RuntimeHost &host, QObject *parent = nullptr);
+    explicit PreferencesIntentHandler(command::CommandService &commands, QObject *parent = nullptr);
 
     bool canHandle(const intent::Intent &intent) const override;
     nextpilot::plotscope::foundation::Result<intent::IntentResult>
     execute(const intent::Intent &intent) override;
 
 private:
-    host::RuntimeHost &m_host;
+    command::CommandService &m_commands;
 };
 
 } // namespace nextpilot::plotscope::gui

@@ -31,7 +31,7 @@ target_include_directories(ps_app PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/diag
     ${CMAKE_CURRENT_SOURCE_DIR}/cli)
 target_link_libraries(ps_app PUBLIC
-    ps_assembly ps_host ps_context ps_intent ps_recording Qt6::Core)
+    ps_assembly ps_host ps_context ps_command ps_registry ps_intent ps_recording Qt6::Core)
 set_target_properties(ps_app PROPERTIES AUTOMOC ON CXX_STANDARD 17 POSITION_INDEPENDENT_CODE ON)
 
 # 最小 app 断言（契约 §11 链接关 / 验收 20）：ps_app 的**传递闭包**里不许出现业务模块。

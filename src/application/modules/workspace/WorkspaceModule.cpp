@@ -11,7 +11,6 @@
 #include "PersistentStateHub.h"
 #include "SettingsStore.h"
 #include "WorkspaceDataConfig.h"
-#include "RuntimeHost.h"
 #include "WorkspacePreset.h"
 
 #include <QDateTime>

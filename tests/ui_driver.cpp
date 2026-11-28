@@ -55,7 +55,6 @@
 #include "FilterEditorDialog.h"
 #include "PlotWorkspace.h"
 #include "AxesView.h"
-#include "RuntimeHost.h"
 #include "DataSource.h"
 #include "Source.h"
 
@@ -254,7 +253,7 @@ bool dialogSettings(App &application, const QString &path)
 
     Intent open;
     open.op = QStringLiteral("preferences.open");
-    const auto result = application.host().execute(open);
+    const auto result = application.commands().execute(open);
     if (!result || result.value().payload.toString() != QStringLiteral("workbench.action.openSettings"))
     {
         fprintf(stderr, "settings 场景：preferences.open 转派失败\n");
@@ -310,7 +309,8 @@ int main(int argc, char *argv[])
 
     App application;
     MainWindow window(application.context());
-    window.build(application.host());
+    window.build(&application.services(), application.commands(), &application.extensions(),
+                 application.menuRegistry());
     window.resize(opt.width, opt.height);
     window.show();
     QTest::qWait(200);
@@ -428,7 +428,7 @@ int main(int argc, char *argv[])
             intent.params[QStringLiteral("path")] = step.value(QStringLiteral("path")).toString();
             if (step.contains(QStringLiteral("format")))
                 intent.params[QStringLiteral("format")] = step.value(QStringLiteral("format")).toString();
-            const Result<IntentResult> r = application.host().execute(intent);
+            const Result<IntentResult> r = application.commands().execute(intent);
             if (!r)
             {
                 fail(op, QStringLiteral("data.load 失败: %1").arg(r.error().message));
@@ -475,7 +475,7 @@ int main(int argc, char *argv[])
                 else if (it.value().toString() == QStringLiteral("$lastDataset"))
                     it.value() = lastDataset;
             }
-            const Result<IntentResult> r = application.host().execute(intent);
+            const Result<IntentResult> r = application.commands().execute(intent);
             if (!r)
             {
                 fail(op, QStringLiteral("%1 失败: %2").arg(intent.op, r.error().message));

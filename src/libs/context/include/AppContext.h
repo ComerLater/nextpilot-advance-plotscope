@@ -42,7 +42,7 @@ using nextpilot::plotscope::uischema::Selection;
 //
 // 为什么需要它（而不是让模块各自去找）：
 //   在此之前，app 级状态分散在三处——
-//     App 持 repo/recorder、RuntimeHost 持 settings/toolbox、注册表是全局静态。
+//     App 持 repo/recorder、组合根持 settings/toolbox、注册表是全局静态。
 //   两条路径、两种持有方式。新增能力时不知道该挂哪儿——这是"上帝类"的温床。
 //
 // AppContext 把**运行态**收敛到一处，模块只认一个入口：
@@ -87,7 +87,7 @@ public:
 
     // 交互注册表（viewAction / property / transform 的注册与派发）。
     // 这是运行时路由行为，与上面的静态运行态数据分开：AppContext 只 owns
-    // 这个成员对象、不实现任何 register*/dispatch* 方法；逻辑归 RuntimeHost 编排。
+    // 这个成员对象、不实现任何 register*/dispatch* 方法；编排归 AppContext 的持有者。
     InteractionHub &interactions() { return m_interactions; }
     // 状态栏登记处（验收 7 / D8 推模式）：模块只推文案，壳订阅渲染。
     StatusHub &status() { return m_status; }

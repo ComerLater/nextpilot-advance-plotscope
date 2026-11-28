@@ -38,7 +38,7 @@ Result<IntentResult> runOp(App &application, const QString &op, const QVariantMa
     Intent in;
     in.op = op;
     in.params = params;
-    return application.host().execute(in);
+    return application.commands().execute(in);
 }
 } // namespace
 

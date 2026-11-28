@@ -4,7 +4,7 @@
 // 服务 id "script.capabilities"；装配层 adapter 持有 InteractionHub& + AppContext& 只转发，
 // 不新增逻辑。参数类型全部是 uischema/foundation 既有类型。
 //
-// 模块侧只依赖本接口，不接触 InteractionHub / AppContext / RuntimeHost。
+// 模块侧只依赖本接口，不接触 InteractionHub / AppContext。
 
 #include "Result.h"
 #include "FilterOps.h"

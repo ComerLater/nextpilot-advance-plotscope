@@ -11,7 +11,6 @@
 #include "ICommands.h"
 #include "CommandAdapter.h"
 #include "Intent.h"
-#include "RuntimeHost.h"
 #include "Result.h"
 #include "ErrorCodes.h"
 

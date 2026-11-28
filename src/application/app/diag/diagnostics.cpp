@@ -1,6 +1,5 @@
 #include "diagnostics.h"
 #include "../core/App.h"
-#include "RuntimeHost.h"
 
 #include <QCoreApplication>
 #include <QJsonArray>
@@ -25,7 +24,7 @@ QJsonObject collect(App &application)
 
     // 内置扩展（原模块）
     QJsonArray modules;
-    for (const auto &info : application.host().availableExtensions())
+    for (const auto &info : application.extensions().getExtensions())
     {
         modules.append(QJsonObject{
             {QStringLiteral("id"), info.identifier},

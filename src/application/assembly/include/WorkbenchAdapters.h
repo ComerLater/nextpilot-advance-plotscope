@@ -3,7 +3,7 @@
 // A1b 装配层适配器：把 libs 具体 Hub 包成 workbench 的强类型接口。
 // 只有本文件（装配层）允许 include 具体 Hub；模块侧只见 workbench 接口。
 //
-// 每个 adapter 只持有被引对象的引用（不拥有），生命周期归 AppContext/RuntimeHost。
+// 每个 adapter 只持有被引对象的引用（不拥有），生命周期归 AppContext / 各注册表。
 
 #include "IDatasetAccess.h"
 #include "ISourceAccess.h"
@@ -42,7 +42,6 @@
 #include "ExtensionRegistry.h"
 #include "UiSlotHub.h"
 #include "ViewRegistry.h"
-#include "RuntimeHost.h" // ThemeServiceAdapter 内联构造读 uiSlots()，需完整类型
 
 // <QDebug> 仅为 ViewsServiceAdapter::openView 的 qWarning 诊断；本文件的适配器均为
 // header-only 内联类，openView 亦内联定义，无法挪到 .cpp，故保留（勿据此 include 扩散依赖）。
@@ -53,11 +52,6 @@
 #include <QPointer>
 #include <QVariantMap>
 #include <algorithm>
-
-namespace nextpilot::plotscope::host
-{
-class RuntimeHost; // ThemeServiceAdapter 引用成员；完整定义由包含方（WorkbenchServices.h）保证
-}
 
 namespace nextpilot::plotscope::assembly {
 namespace ds = nextpilot::plotscope::dataset;
@@ -275,36 +269,6 @@ private:
     std::function<const registry::ReportTemplate *(const QString &)> m_reportTemplate;
 };
 
-// ---- ICommands ----
-// 实现 ICommands：registerCommand 把 Handler 适配成 IIntentHandler 注入 RuntimeHost 现有池
-// （commandId == Intent.op、args == Intent.params），执行链只有 RuntimeHost::execute 一条。
-class CommandsAdapter : public QObject, public wb::ICommands
-{
-    Q_OBJECT
-public:
-    // sink：把内部生成的 IIntentHandler 注册进 RuntimeHost 池。
-    explicit CommandsAdapter(std::function<void(const QString &, intent::IIntentHandler *)> sink,
-                             QObject *parent = nullptr);
-
-    void registerCommand(const QString &id, Handler h) override;
-    foundation::Result<QVariant> executeCommand(const QString &id, const QVariantMap &args) override;
-    void unregisterCommand(const QString &id) override;
-
-private:
-    // 把 Handler 适配成 IIntentHandler 注入 RuntimeHost 池；active 支持注销后置哑。
-    struct Bridge : intent::IIntentHandler
-    {
-        QString id;
-        Handler handler;
-        bool active = true;
-        bool canHandle(const intent::Intent &in) const override { return active && in.op == id; }
-        foundation::Result<intent::IntentResult> execute(const intent::Intent &in) override;
-    };
-
-    std::function<void(const QString &, intent::IIntentHandler *)> m_sink;
-    QHash<QString, Bridge *> m_commands;
-};
-
 // ---- IScriptCapabilities ----
 // §1.2.1：把 InteractionHub 的脚本能力面抽成接口，纯转发到 hub / AppContext。
 // 不新增逻辑；transforms() 从 AppContext 取（InteractionHub 不持有 TransformHub）。
@@ -506,7 +470,7 @@ private:
 class ThemeServiceAdapter : public wb::IThemeService
 {
 public:
-    ThemeServiceAdapter(ctx::AppContext &appCtx, host::RuntimeHost &hostRef) : m_appCtx(appCtx), m_hostRef(hostRef) {}
+    ThemeServiceAdapter(ctx::AppContext &appCtx, registry::UiSlotHub &slotHub) : m_appCtx(appCtx), m_slots(slotHub) {}
 
     QList<registry::ThemeTokenSpec> tokens() const override
     {
@@ -514,8 +478,7 @@ public:
             (*static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
                  m_appCtx.registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension)))
                 .themeTokensAll();
-        const QList<registry::ThemeTokenSpec> moduleTokens =
-            m_hostRef.uiSlots().moduleThemeTokens();
+        const QList<registry::ThemeTokenSpec> moduleTokens = m_slots.moduleThemeTokens();
         for (const registry::ThemeTokenSpec &t : moduleTokens)
         {
             bool dup = false;
@@ -533,7 +496,7 @@ public:
 
 private:
     ctx::AppContext &m_appCtx;
-    host::RuntimeHost &m_hostRef;
+    registry::UiSlotHub &m_slots;
 };
 
 // ---- ISlotsService（裁定 52442006 Step 1/2）：壳对槽位表读写的唯一通道，
