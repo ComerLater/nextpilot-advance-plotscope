@@ -86,6 +86,19 @@ bool ExtensionRegistry::registerBuiltinExtension(const ExtensionDescription &des
     return true;
 }
 
+// 自注册入口的自由函数形态（扩展/包 TU 经 ExtensionRegistration.h 调用，
+// 不必 include 本实现头）。
+bool registerBuiltinExtension(const ExtensionDescription &description,
+                              std::function<nextpilot::plotscope::host::IWorkbenchContribution *()> factory)
+{
+    return ExtensionRegistry::registerBuiltinExtension(description, std::move(factory));
+}
+
+bool registerBuiltinPack(const QString &id, std::function<std::unique_ptr<Pack>()> factory)
+{
+    return ExtensionRegistry::registerBuiltinPack(id, std::move(factory));
+}
+
 QList<QPair<ExtensionDescription, ExtensionRegistry::ExtensionFactory>> ExtensionRegistry::builtinExtensions()
 {
     return builtinExtensionsStore().ordered;
@@ -491,6 +504,15 @@ bool ExtensionRegistry::mountContribution(const ContributesDoc &doc)
     {
         item.provider = doc.owner;
         m_ribbonGroups.append(item);
+    }
+    // 主题令牌（contributes 代码侧声明）：provider 归属 owner，卸载时随该 owner 整批撤。
+    // 与工具箱 pack 的 themeTokens 共用一张表，按 id 先到者为准。
+    for (auto item : doc.themeTokens)
+    {
+        if (item.provider.isEmpty())
+            item.provider = doc.owner;
+        if (!themeTokens.contains(item.id))
+            themeTokens.insert(item.id, item);
     }
     for (const auto &item : doc.colors)
         m_contribColors.append(OwnedColor{item, doc.owner});

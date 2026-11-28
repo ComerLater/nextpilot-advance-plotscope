@@ -1,5 +1,6 @@
 #include "ReportModule.h"
 
+#include "ExtensionRegistration.h"
 #include "Contribution.h"
 #include "IReportExportHost.h"
 #include "InstantiationService.h"

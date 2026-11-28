@@ -15,7 +15,6 @@
 #include "ProductSpec.h"
 #include "RegistryTree.h"
 #include "ExtensionRegistry.h"
-#include "UiSlotHub.h"
 
 #include <QCoreApplication>
 #include <QStringList>
@@ -27,7 +26,6 @@ using nextpilot::plotscope::registry::ActivitySpec;
 using nextpilot::plotscope::registry::PanelReferenceIssue;
 using nextpilot::plotscope::registry::ProductPanelPlacement;
 using nextpilot::plotscope::registry::RegistryTree;
-using nextpilot::plotscope::registry::UiSlotHub;
 
 namespace {
 int g_failed = 0;
@@ -54,13 +52,13 @@ int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
 
-    RegistryTree tree;
-    UiSlotHub slotHub(tree);
+    // 活动清单直接构造（校验器只吃 ActivitySpec 列表，不看它从哪条通道来）。
+    QList<ActivitySpec> activities;
 
     // --- 基线：空声明、空布局 → 零问题 ---
     {
         const QList<ProductPanelPlacement> emptyPlacements;
-        const auto issues = validatePanelReferences(slotHub, emptyPlacements);
+        const auto issues = validatePanelReferences(QList<ActivitySpec>{}, emptyPlacements);
         CHECK(issues.isEmpty());
     }
 
@@ -69,14 +67,14 @@ int main(int argc, char **argv)
     activity.id = QStringLiteral("test.activity");
     activity.panelTypes = {QStringLiteral("bogus-side-panel")};
     activity.centralEditor = QStringLiteral("bogus-central");
-    slotHub.registerActivity(activity);
+    activities.append(activity);
 
     QList<ProductPanelPlacement> placements;
     ProductPanelPlacement placement;
     placement.viewId = QStringLiteral("bogus-placement");
     placements.append(placement);
 
-    const auto issues = validatePanelReferences(slotHub, placements);
+    const auto issues = validatePanelReferences(activities, placements);
 
     // 三条负例各"红"一次：校验器必须逐条报出（可见证据，PR 贴原文）。
     for (const PanelReferenceIssue &issue : issues)
@@ -108,11 +106,11 @@ int main(int argc, char **argv)
     ActivitySpec hitActivity;
     hitActivity.id = QStringLiteral("hit.activity");
     hitActivity.panelTypes = {QStringLiteral("known-view")};
-    slotHub.registerActivity(hitActivity);
+    activities.append(hitActivity);
 
     // known-view 由壳经 IViewsService 判定命中后传入（这里模拟已判定的命中面）。
     const QStringList knownViewIds{QStringLiteral("known-view")};
-    const auto afterHit = validatePanelReferences(slotHub, placements, knownViewIds, {});
+    const auto afterHit = validatePanelReferences(activities, placements, knownViewIds, {});
     CHECK(findIssue(afterHit, QStringLiteral("known-view")) == nullptr);
     // 原有未命中依旧如实上报。
     CHECK(afterHit.size() == 3);
@@ -121,9 +119,9 @@ int main(int argc, char **argv)
     ActivitySpec hitEditor;
     hitEditor.id = QStringLiteral("hit.editor");
     hitEditor.centralEditor = QStringLiteral("known-editor");
-    slotHub.registerActivity(hitEditor);
+    activities.append(hitEditor);
     const auto afterEditor =
-        validatePanelReferences(slotHub, placements, knownViewIds, QStringList{QStringLiteral("known-editor")});
+        validatePanelReferences(activities, placements, knownViewIds, QStringList{QStringLiteral("known-editor")});
     CHECK(findIssue(afterEditor, QStringLiteral("known-editor")) == nullptr);
     CHECK(afterEditor.size() == 3);
 

@@ -150,7 +150,7 @@ int ExtensionService::triggeredCount(const QString &commandId) const
 
 // ---- ContributionsInstaller：灌回唯一实现。
 // 声明式灌回：与原 IUiContext::installContributions 落点完全一致，只是写入方
-// 从壳换成装配层（经 ISlotsService 写、壳只渲染）。owner 用扩展 identifier。
+// 从壳换成装配层（写 ViewRegistry/MenuRegistry/StatusHub，壳只渲染）。owner 用扩展 identifier。
 void ContributionsInstaller::install(const registry::ContributesDoc &c)
 {
     // contributes.viewsContainers / views / customEditors 与 activity 入口：声明灌 ViewRegistry，
@@ -216,15 +216,6 @@ void ContributionsInstaller::install(const registry::ContributesDoc &c)
         action.order = mi.order;
         m_menus.appendMenuItem(MenuId::viewTitle(), IMenuItem{action, mi.group, owner});
     }
-    for (const UiAction &action : c.actions)
-        m_slots.bindLocal(action.slotId, action, owner);
-    for (const ThemeTokenSpec &t : c.themeTokens)
-    {
-        ThemeTokenSpec spec = t;
-        if (spec.provider.isEmpty())
-            spec.provider = owner;
-        m_slots.registerModuleThemeToken(spec); // 同 id 先到者为准（去重在 hub 内）
-    }
     for (const StatusSpec &s : c.statuses)
         m_appCtx.status().registerSpec(s);
 
@@ -234,10 +225,7 @@ void ContributionsInstaller::install(const registry::ContributesDoc &c)
     {
         if (!p.provider)
             continue;
-        m_slots.bindActionProvider(p.slotId, p.owner.isEmpty() ? owner : p.owner,
-                                   [p]() { return p.provider->actionsFor(p.slotId); });
-        // 同批登记进 ViewRegistry（声明面）：IRibbonService 的 dynamicActionsIn 从这里读回，
-        // 不再经壳侧槽位通道。
+        // 登记进 ViewRegistry（声明面）：IRibbonService 的 dynamicActionsIn 从这里读回。
         m_views.registerActionProvider(p.owner.isEmpty() ? owner : p.owner, p.slotId, p.provider);
     }
 }

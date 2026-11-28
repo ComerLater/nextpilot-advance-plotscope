@@ -48,13 +48,5 @@ QList<PanelReferenceIssue> validatePanelReferences(const QList<ActivitySpec> &ac
     return issues;
 }
 
-QList<PanelReferenceIssue> validatePanelReferences(const UiSlotHub &slotHub,
-                                                   const QList<ProductPanelPlacement> &placements,
-                                                   const QStringList &knownViewIds,
-                                                   const QStringList &customEditorViewTypes)
-{
-
-    return validatePanelReferences(slotHub.activities(), placements, knownViewIds, customEditorViewTypes);
-}
 
 } // namespace nextpilot::plotscope::registry

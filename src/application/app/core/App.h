@@ -11,7 +11,6 @@
 #include "InstantiationService.h"
 #include "JobRecorder.h"
 #include "MenuRegistry.h"
-#include "UiSlotHub.h"
 #include "WorkbenchServices.h"
 
 #include <QObject>
@@ -22,7 +21,7 @@ namespace nextpilot::plotscope::app {
 //
 // 它做三件事，且只做这三件：
 //  1. 构造 AppContext（进程级运行态的唯一持有者）；
-//  2. 构造服务层（CommandService / UiSlotHub / 摄取管道 / 系统命令 handler），
+//  2. 构造服务层（CommandService / 摄取管道 / 系统命令 handler），
 //     并把已自注册的模块工厂与扩展包装进扩展服务；
 //  3. 驱动启动（headless / GUI 两种模式）。
 //
@@ -50,7 +49,6 @@ public:
     nextpilot::plotscope::assembly::WorkbenchServices &workbench() { return m_workbench; }
     nextpilot::plotscope::instantiation::InstantiationService &services() { return m_workbench.services(); }
     nextpilot::plotscope::registry::MenuRegistry &menuRegistry() { return m_workbench.menuRegistry(); }
-    nextpilot::plotscope::registry::UiSlotHub &slotHub() { return m_slots; }
     nextpilot::plotscope::context::IngestPipeline &ingest() { return m_ingest; }
     nextpilot::plotscope::intent::JobRecorder &recorder() { return m_recorder; }
 
@@ -68,7 +66,6 @@ public:
 private:
     nextpilot::plotscope::context::AppContext m_ctx;
     // 注册表成员：构造即上树（AppContext 的注册树是唯一归属）。
-    nextpilot::plotscope::registry::UiSlotHub m_slots;
     nextpilot::plotscope::command::CommandService m_commands;
     nextpilot::plotscope::context::IngestPipeline m_ingest;
     // 系统命令 handler：不归属任何可卸载扩展，注册进 CommandService 的系统命令位。

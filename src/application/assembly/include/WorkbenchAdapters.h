@@ -17,7 +17,6 @@
 #include "IRibbonService.h"
 #include "IFormatHints.h"
 #include "IThemeService.h"
-#include "ISlotsService.h"
 #include "IContributionsInstaller.h"
 #include "IViewsService.h"
 #include "IEditorService.h"
@@ -40,7 +39,6 @@
 #include "AppContext.h"
 #include "Intent.h"
 #include "ExtensionRegistry.h"
-#include "UiSlotHub.h"
 #include "ViewRegistry.h"
 
 // <QDebug> 仅为 ViewsServiceAdapter::openView 的 qWarning 诊断；本文件的适配器均为
@@ -377,18 +375,7 @@ private:
 class RibbonServiceAdapter : public wb::IRibbonService
 {
 public:
-    RibbonServiceAdapter(ctx::AppContext &appCtx, wb::ISlotsService &slotsService, registry::ViewRegistry &views)
-        : m_appCtx(appCtx), m_slots(slotsService), m_views(&views)
-    {
-    }
-
-    QList<registry::UiAction> actionsIn(const QString &slotId) const override
-    {
-        QList<registry::UiAction> out;
-        for (const auto &bound : m_slots.actionsIn(slotId))
-            out.append(bound.action);
-        return out;
-    }
+    RibbonServiceAdapter(ctx::AppContext &appCtx, registry::ViewRegistry &views) : m_appCtx(appCtx), m_views(&views) {}
 
     QList<registry::UiAction> dynamicActionsIn(const QString &slotId) const override
     {
@@ -427,7 +414,6 @@ private:
     }
 
     ctx::AppContext &m_appCtx;
-    wb::ISlotsService &m_slots;
     registry::ViewRegistry *m_views = nullptr;
 };
 
@@ -470,7 +456,7 @@ private:
 class ThemeServiceAdapter : public wb::IThemeService
 {
 public:
-    ThemeServiceAdapter(ctx::AppContext &appCtx, registry::UiSlotHub &slotHub) : m_appCtx(appCtx), m_slots(slotHub) {}
+    explicit ThemeServiceAdapter(ctx::AppContext &appCtx) : m_appCtx(appCtx) {}
 
     QList<registry::ThemeTokenSpec> tokens() const override
     {
@@ -478,16 +464,6 @@ public:
             (*static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
                  m_appCtx.registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension)))
                 .themeTokensAll();
-        const QList<registry::ThemeTokenSpec> moduleTokens = m_slots.moduleThemeTokens();
-        for (const registry::ThemeTokenSpec &t : moduleTokens)
-        {
-            bool dup = false;
-            for (const registry::ThemeTokenSpec &e : out)
-                if (e.id == t.id)
-                { dup = true; break; }
-            if (!dup)
-                out.append(t);
-        }
         std::stable_sort(
             out.begin(), out.end(),
             [](const registry::ThemeTokenSpec &a, const registry::ThemeTokenSpec &b) { return a.id < b.id; });
@@ -496,66 +472,6 @@ public:
 
 private:
     ctx::AppContext &m_appCtx;
-    registry::UiSlotHub &m_slots;
-};
-
-// ---- ISlotsService（裁定 52442006 Step 1/2）：壳对槽位表读写的唯一通道，
-// 每个方法一行转发 UiSlotHub，不加语义。纯接口第一基类，static_cast 恒安全。
-class SlotsServiceAdapter final : public wb::ISlotsService
-{
-public:
-    explicit SlotsServiceAdapter(registry::UiSlotHub &slotSvc) : m_slots(slotSvc) {}
-
-    void declareSlot(const QString &area, const QString &label, const QString &owner,
-                     registry::SlotKind kind = registry::SlotKind::RibbonGroup,
-                     const QString &parentSlotId = QString(), int order = 0,
-                     const QString &when = QString()) override
-    {
-        m_slots.declareSlot(area, label, owner, kind, parentSlotId, order, when);
-    }
-    void registerActivity(registry::ActivitySpec activity) override
-    {
-        m_slots.registerActivity(std::move(activity));
-    }
-    void bindLocal(const QString &area, const registry::UiAction &action,
-                   const QString &provider) override
-    {
-        m_slots.bindLocal(area, action, provider);
-    }
-    void bindActionProvider(const QString &area, const QString &provider,
-                            std::function<QList<registry::UiAction>()> fn) override
-    {
-        m_slots.bindActionProvider(area, provider, std::move(fn));
-    }
-    void registerModuleThemeToken(const registry::ThemeTokenSpec &token) override
-    {
-        m_slots.registerModuleThemeToken(token);
-    }
-    QList<registry::ThemeTokenSpec> moduleThemeTokens() const override
-    {
-        return m_slots.moduleThemeTokens();
-    }
-    QList<registry::ActivitySpec> activities() const override { return m_slots.activities(); }
-    const registry::ActivitySpec *activity(const QString &id) const override
-    {
-        return m_slots.activity(id);
-    }
-    QList<registry::UiSlot> slotsOfKind(registry::SlotKind kind) const override
-    {
-        return m_slots.slotsOfKind(kind);
-    }
-    QList<registry::UiSlot> childrenOf(const QString &parentSlotId) const override
-    {
-        return m_slots.childrenOf(parentSlotId);
-    }
-    QList<registry::BoundUiAction> actionsIn(const QString &area) const override
-    {
-        return m_slots.actionsIn(area);
-    }
-    QList<registry::UiSlot> allSlots() const override { return m_slots.allSlots(); }
-
-private:
-    registry::UiSlotHub &m_slots;
 };
 
 // ---- IViewsService（裁定 52442006 Step 5）：壳读视图声明/打开视图的唯一通道。

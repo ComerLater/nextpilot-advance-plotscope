@@ -1,4 +1,5 @@
 #include "DataModule.h"
+#include "ExtensionRegistration.h"
 #include "Intent.h"
 
 #include "DatasetRegistry.h"
@@ -15,6 +16,7 @@
 #include "ResourceRef.h"
 #include "Result.h"
 #include "ViewRegistry.h"
+#include "IMessageParser.h"
 
 #include <QList>
 #include <QPointer>

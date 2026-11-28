@@ -14,7 +14,6 @@
 #include "Intent.h"
 #include "JobRecorder.h"
 #include "ExtensionDescription.h"
-#include "UiSlotHub.h"
 
 #include <QObject>
 

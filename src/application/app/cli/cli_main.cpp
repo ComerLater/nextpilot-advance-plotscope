@@ -59,7 +59,7 @@ static void printUsage()
                     "  plotscope --list-contributions [kind]  # 贡献（按 kind×领域，开放类型）\n"
                     "  plotscope --contributions      # A8b vscode contributes：owner/key/id/order 逐行\n"
                     "  plotscope --list-parser      # 工具箱里的格式驱动（list-contributions format 别名）\n"
-                    "  plotscope --list-slots        # UI 插槽及工具箱填入的入口\n"
+                    "  plotscope --list-menus        # Ribbon 页/组与菜单条目（contributes + MenuRegistry）\n"
                     "  plotscope --kernel            # Rust kernel ABI/版本/自检\n"
                     "  plotscope --info <file>                # 格式由解析器注册表按后缀选\n"
                     "  plotscope --run <job.json>\n"
@@ -307,18 +307,27 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    if (command == QStringLiteral("--list-slots"))
+    if (command == QStringLiteral("--list-menus"))
     {
-        // 模块/骨架声明插槽，工具箱的 UI 贡献填内容。
-        const auto &slotReg = application.slotHub();
-        for (const nextpilot::plotscope::registry::UiSlot &slot : slotReg.allSlots())
+        // 菜单面全景（VSCode 口径）：页/组是 contributes 声明，条目在 MenuRegistry。
+        const auto &menus = application.menuRegistry();
+        const auto &ext = *static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
+            application.context().registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension));
+        for (const auto &page : ext.ribbonPages())
         {
-            const auto actions = slotReg.actionsIn(slot.slotId);
-            fprintf(stdout, "[%s] %s (%s) <- %d 项\n", u8(slot.slotId), u8(slot.label), u8(slot.owner),
-                    static_cast<int>(actions.size()));
-            for (const nextpilot::plotscope::registry::BoundUiAction &b : actions)
-                fprintf(stdout, "    %-24s %-14s op=%s (来自 %s)\n", u8(b.action.id), u8(b.action.label),
-                        u8(b.action.intentOp.isEmpty() ? QStringLiteral("-") : b.action.intentOp), u8(b.provider));
+            const auto items = menus.getMenuItems(nextpilot::plotscope::registry::MenuId::menubar(page.id));
+            fprintf(stdout, "[%s] %s （%d 项）\n", u8(page.id), u8(page.label), static_cast<int>(items.size()));
+            for (const auto &group : ext.ribbonGroupsOf(page.id))
+            {
+                fprintf(stdout, "  [%s] %s\n", u8(group.id), u8(group.label));
+                for (const auto &mi : items)
+                {
+                    if (mi.group != group.id)
+                        continue;
+                    fprintf(stdout, "    %-24s %-14s op=%s\n", u8(mi.action.id), u8(mi.action.label),
+                            u8(mi.action.intentOp.isEmpty() ? QStringLiteral("-") : mi.action.intentOp));
+                }
+            }
         }
         return 0;
     }

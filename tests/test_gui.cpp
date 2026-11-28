@@ -67,7 +67,6 @@
 #include "DataSource.h"
 #include "Source.h"
 #include "Intent.h"
-#include "UiSlotHub.h"
 
 #include <QAction>
 #include <QApplication>
@@ -1449,7 +1448,7 @@ int main(int argc, char *argv[])
         CHECK(!out2.ok());
         CHECK(out2.error().message.contains(QStringLiteral("报告模板不存在")));
 
-        // Ribbon 动作已声明（报告页/导出组/大按钮）——走 UiSlotHub 插槽数据。
+        // Ribbon 动作已声明（报告页/导出组/大按钮）——走 MenuRegistry 菜单面。
         const auto reportActs = groupActions(QStringLiteral("ribbon.group.report.export"));
         CHECK(reportActs.size() == 1);
         CHECK(!reportActs.isEmpty() && reportActs.first().action.id == QStringLiteral("report.workbench.export"));
@@ -3889,7 +3888,6 @@ int main(int argc, char *argv[])
 
     // --- c3b Ribbon 上下文页签：when 不命中整页收起，命中再展开 ---
     {
-        using nextpilot::plotscope::registry::SlotKind;
         bool hoverTest = false;
         auto *binder = window.binder();
         CHECK(binder != nullptr);

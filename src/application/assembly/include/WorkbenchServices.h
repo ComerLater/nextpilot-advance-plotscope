@@ -56,8 +56,7 @@ public:
     // 只收被引用的注册表/服务本体（全部由组合根 App 持有），不引入中间宿主对象。
     WorkbenchServices(nextpilot::plotscope::context::AppContext &appCtx,
                       nextpilot::plotscope::intent::JobRecorder &recorder, command::CommandService &commands,
-                      registry::UiSlotHub &slotHub, nextpilot::plotscope::context::IngestPipeline &ingest,
-                      QObject *parent = nullptr);
+                      nextpilot::plotscope::context::IngestPipeline &ingest, QObject *parent = nullptr);
 
     inst::InstantiationService &services() { return m_services; }
 
@@ -83,8 +82,6 @@ private:
     PanelsServiceAdapter m_panelsService;
     FormatHintsAdapter m_formatHints;
     ThemeServiceAdapter m_themeService;
-    // 槽位表服务（裁定 52442006 Step 1/2）：壳读写唯一通道；灌回经 m_contribInstaller。
-    SlotsServiceAdapter m_slotsService;
     // Ribbon 页/组贡献读回：只读 ExtensionRegistry contributes 表，壳经 IRibbonService 读。
     RibbonServiceAdapter m_ribbonService;
     // 视图注册表（Step 5）：模块 contributes.views 与扩展包 manifest 汇同一张表，

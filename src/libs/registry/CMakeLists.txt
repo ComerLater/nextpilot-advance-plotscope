@@ -3,7 +3,6 @@
 # 只依赖 Qt Core + STL + foundation(Result)，headless 可用。
 add_library(ps_registry STATIC
     src/ExtensionRegistry.cpp
-    src/UiSlotHub.cpp
     src/Region.cpp
     src/ProductSpec.cpp
     src/RegistryNode.cpp
@@ -25,7 +24,7 @@ add_library(ps_registry STATIC
     include/ProductSpec.h
     include/Region.h
     include/ExtensionRegistry.h
-    include/UiSlotHub.h
+    include/ExtensionRegistration.h
     include/PanelReferenceValidator.h
     include/RegistryNode.h
     include/RegistryTree.h

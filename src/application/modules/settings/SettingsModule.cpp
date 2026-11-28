@@ -1,4 +1,6 @@
 #include "ErrorCodes.h"
+#include "IScriptCapabilities.h"
+#include "ExtensionRegistration.h"
 #include "SettingsModule.h"
 
 #include "IIntentExecutor.h"

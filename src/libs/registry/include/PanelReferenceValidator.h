@@ -10,8 +10,8 @@
 // 任一未命中即产出一条 error 诊断：说明归属来源、未命中类型、可用类型从哪查。
 // 纯函数、headless 可测；不在本层构造任何 QWidget。
 
+#include "Contribution.h" // ActivitySpec（Activity Bar 入口声明）
 #include "ProductSpec.h"
-#include "UiSlotHub.h"
 
 #include <QList>
 #include <QString>
@@ -35,12 +35,6 @@ struct PanelReferenceIssue
 // 声明的 viewType（IEditorService::customEditors() 取回）由壳传入。
 // 命中面 = views ∪ customEditors。
 QList<PanelReferenceIssue> validatePanelReferences(const QList<ActivitySpec> &activities,
-                                                   const QList<ProductPanelPlacement> &placements,
-                                                   const QStringList &knownViewIds = {},
-                                                   const QStringList &customEditorViewTypes = {});
-// 壳侧版本（裁定 52442006 Step 4）：壳不再持 UiSlotHub，Activity 清单经
-// ISlotsService::activities() 取回后传入，语义与 UiSlotHub 版完全一致。
-QList<PanelReferenceIssue> validatePanelReferences(const UiSlotHub &slotHub,
                                                    const QList<ProductPanelPlacement> &placements,
                                                    const QStringList &knownViewIds = {},
                                                    const QStringList &customEditorViewTypes = {});

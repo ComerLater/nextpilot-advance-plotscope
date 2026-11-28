@@ -4,7 +4,6 @@
 #include "ErrorCodes.h"
 #include "ShellContributions.h"
 #include "command/CommandService.h"
-#include "UiSlotHub.h"
 
 #include <QDebug>
 
@@ -77,7 +76,7 @@ foundation::Result<intent::IntentResult> WorkbenchCommandHandler::execute(const 
 
 WorkbenchServices::WorkbenchServices(nextpilot::plotscope::context::AppContext &appCtx,
                                      nextpilot::plotscope::intent::JobRecorder &recorder,
-                                     command::CommandService &commands, registry::UiSlotHub &slotHub,
+                                     command::CommandService &commands,
                                      nextpilot::plotscope::context::IngestPipeline &ingest, QObject *parent)
     : QObject(parent), m_datasetAccess(datasetHub(appCtx), this), m_sourceAccess(sourceHub(appCtx), this),
       m_ingestAccess(appCtx, ingest, this), m_recorderAccess(recorder), m_playbackAccess(),
@@ -120,9 +119,8 @@ WorkbenchServices::WorkbenchServices(nextpilot::plotscope::context::AppContext &
           }),
       m_commands(commands),
       m_scriptCaps(appCtx.interactions(), appCtx, commands, &recorder, [&commands]() { return commands.commandIds(); }),
-      m_panelsService(appCtx), m_formatHints(appCtx), m_themeService(appCtx, slotHub), m_slotsService(slotHub),
-      m_ribbonService(appCtx, m_slotsService, m_viewRegistry), m_viewsService(m_viewRegistry),
-      m_editorsService(m_viewRegistry),
+      m_panelsService(appCtx), m_formatHints(appCtx), m_themeService(appCtx), m_ribbonService(appCtx, m_viewRegistry),
+      m_viewsService(m_viewRegistry), m_editorsService(m_viewRegistry),
       m_configurationService(appCtx.settings(),
                              (*static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
                                  appCtx.registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension))),
@@ -140,8 +138,7 @@ WorkbenchServices::WorkbenchServices(nextpilot::plotscope::context::AppContext &
                                      qWarning() << QStringLiteral("ValueChangedHook: theme.set 失败: %1 %2")
                                                        .arg(themeResult.error().code, themeResult.error().message);
                              }),
-      m_settingsEditor(m_configurationService),
-      m_contribInstaller(appCtx, m_slotsService, m_viewRegistry, m_menuRegistry)
+      m_settingsEditor(m_configurationService), m_contribInstaller(appCtx, m_viewRegistry, m_menuRegistry)
 {
     // vscode.workspace 注入：模块经 ctx.workspace() 读贡献查询面，不接触扩展注册表。
     appCtx.setWorkspace(&m_workspace);
@@ -235,10 +232,6 @@ WorkbenchServices::WorkbenchServices(nextpilot::plotscope::context::AppContext &
     m_services.registerSingleton(
         QStringLiteral("theme.readback"), &m_themeService, QStringLiteral("assembly"), 1,
         nextpilot::plotscope::instantiation::ServiceTypeTag<nextpilot::plotscope::workbench::IThemeService>::value());
-    // 槽位表服务（裁定 52442006 Step 2）：壳读写唯一通道。
-    m_services.registerSingleton(
-        QStringLiteral("slots.binding"), &m_slotsService, QStringLiteral("assembly"), 1,
-        nextpilot::plotscope::instantiation::ServiceTypeTag<nextpilot::plotscope::workbench::ISlotsService>::value());
     // Ribbon 页/组贡献读回（contributes.ribbonPages/ribbonGroups）：壳经 IRibbonService 只读。
     m_services.registerSingleton(
         QStringLiteral("ribbon.readback"), &m_ribbonService, QStringLiteral("assembly"), 1,

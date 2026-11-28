@@ -1,4 +1,5 @@
 #include "ErrorCodes.h"
+#include "ExtensionRegistration.h"
 #include "InteractionHub.h"
 #include "ScriptModule.h"
 

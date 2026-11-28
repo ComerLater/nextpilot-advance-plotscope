@@ -1,7 +1,7 @@
 #pragma once
 
 // A8b-M2 视图注册表：承担"视图注册"职责（开工令 52440794 §4）。
-// UiSlotHub 降级为壳内部槽位表后，视图的声明（来自 contributes.views /
+// 视图的声明（来自 contributes.views /
 // viewsContainers）与内容提供者工厂统一归本表；壳只按容器 region + order 摆放，
 // 不解释业务 id。
 //

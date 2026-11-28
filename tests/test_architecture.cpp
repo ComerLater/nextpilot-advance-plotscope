@@ -5,7 +5,6 @@
 #include "DatasetRegistry.h"
 #include "Dataset.h"
 #include "ExtensionRegistry.h"
-#include "UiSlotHub.h"
 #include "PluginScanner.h"
 #include "Toolbox.h"
 #include "Contribution.h"
@@ -517,23 +516,32 @@ int main(int argc, char **argv)
         // headless 断言随通道删除迁移到 GUI 面（test_gui 3b/3c：IViewsService 读回
         // automotive.canBrowser，owner == "automotive"）。
 
-        // UI 插槽：壳级页/组在 host 层 ShellContributions 唯一声明；业务页/组由模块
-        // onAttach 自声明，headless 不调 onAttach，因此这里只看到壳的文件/视图两页。
-        const auto &slotReg = application.slotHub();
-        fprintf(stdout, "[debug] RibbonPage count=%d\n", slotReg.slotsOfKind(SlotKind::RibbonPage).size());
-        for (const auto &s : slotReg.slotsOfKind(SlotKind::RibbonPage))
-            fprintf(stdout, "[debug]   page=%s\n", qPrintable(s.slotId));
-        // 模块已统一按内部扩展处理（2026-11-28 裁决）：激活即应用 contributes，
-        // headless 下 9 个页全部在——壳级 3（开始/文件/视图）+ 业务 6（数据/绘图/
-        // 脚本/协议/分析/报告），精确集合断言，不用阈值。
-        CHECK(slotReg.slotsOfKind(SlotKind::RibbonPage).size() == 9);
-        for (const char *p :
-             {"ribbon.page.home", "ribbon.page.file", "ribbon.page.view", "ribbon.page.data", "ribbon.page.plot",
-              "ribbon.page.script", "ribbon.page.protocol", "ribbon.page.analysis", "ribbon.page.report"})
-            CHECK(slotReg.slot(QString::fromLatin1(p)) != nullptr);
-        // 探针动作挂到绘图页"曲线与轴"组（该组由 PlotModule 在 GUI 侧声明；
-        // headless 下无此槽，探针动作计入 unbound——GUI 装配时再校验归属）。
-        CHECK(slotReg.boundActionCount() >= 0);
+        // Ribbon 页/组：壳级 3 页由 host::shellContributes() 声明，业务 6 页由各模块
+        // contributes 声明——都落同一张 contributes 数据面（VSCode 扩展点口径）。
+        const auto *ext = static_cast<const nextpilot::plotscope::registry::ExtensionRegistry *>(
+            application.context().registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension));
+        CHECK(ext != nullptr);
+        if (ext)
+        {
+            const auto pages = ext->ribbonPages();
+            // 模块已统一按内部扩展处理（2026-11-28 裁决）：激活即应用 contributes，
+            // headless 下 9 个页全部在——壳级 3（开始/文件/视图）+ 业务 6（数据/绘图/
+            // 脚本/协议/分析/报告），精确集合断言，不用阈值。
+            CHECK(pages.size() == 9);
+            for (const char *p :
+                 {"ribbon.page.home", "ribbon.page.file", "ribbon.page.view", "ribbon.page.data", "ribbon.page.plot",
+                  "ribbon.page.script", "ribbon.page.protocol", "ribbon.page.analysis", "ribbon.page.report"})
+            {
+                bool found = false;
+                for (const auto &page : pages)
+                    if (page.id == QString::fromLatin1(p))
+                    {
+                        found = true;
+                        break;
+                    }
+                CHECK(found);
+            }
+        }
 
         // 挂载即数据：新包不改注册表/宿主——填一份清单 mount 进去，unmount 原子撤。
         Pack customPack;
@@ -548,32 +556,22 @@ int main(int argc, char **argv)
         fprintf(stdout, "[ok] 工具箱：机制唯一（Registry<T>）/ 内容全是数据 / mount-unmount 按包原子装卸\n");
     }
 
-    // 1b) 死插槽检查（D13 / 验收第 15 条）。
+    // 1b) 页/组命名契约（D13 / 验收第 15 条）。
     //
-    // 注册表只承载 RibbonPage / RibbonGroup 两类有真实消费者的容器；
-    // 旧 DockPanel / Canvas / Menu 三类零消费者槽已删除。遍历全部已声明槽：
-    // 任何 kind 不在白名单、或 area 不属于 ribbon.* 命名的槽都视为死槽，即失败。
+    // 页/组只是 contributes 数据（ribbonPages/ribbonGroups），不再另立槽位表：
+    // 每条页/组 id 必须落在 ribbon.* 命名空间，旧方位名/菜单名不得冒充页或组。
     {
-        const auto &slotReg = application.slotHub();
-        for (const UiSlot &s : slotReg.allSlots())
+        const auto *ext = static_cast<const nextpilot::plotscope::registry::ExtensionRegistry *>(
+            application.context().registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension));
+        CHECK(ext != nullptr);
+        if (ext)
         {
-            CHECK(s.kind == SlotKind::RibbonPage || s.kind == SlotKind::RibbonGroup);
-            CHECK(s.slotId.startsWith(QStringLiteral("ribbon.")));
+            for (const auto &page : ext->ribbonPages())
+                CHECK(page.id.startsWith(QStringLiteral("ribbon.")));
+            for (const auto &group : ext->ribbonGroups())
+                CHECK(group.id.startsWith(QStringLiteral("ribbon.")));
         }
-
-        // 旧方位名 / 菜单名不得再作为插槽存在（区域走 Region 枚举，不进注册表）。
-        for (const char *dead : {"dock.left", "dock.right", "dock.bottom", "dock.diagnostics", "canvas.center",
-                                 "canvas.tool", "menu.plot"})
-            CHECK(slotReg.slot(QString::fromLatin1(dead)) == nullptr);
-
-        // 注：headless 不调模块 onAttach，业务组槽未声明，工具箱动作在此计入未归属，
-        // 故这里只能查"槽 kind/area 白名单 + 旧方位名归零"。真正的"零消费者检查"
-        // （声明了页必须有组、声明了组必须有动作/子组）在 GUI 全装配后的
-        // test_gui.cpp 里做——那里模块已 onAttach，消费者可见。
-
-        fprintf(
-            stdout,
-            "[ok] 死插槽检查（headless）：仅 RibbonPage/RibbonGroup 入表，旧 Dock/Canvas/Menu 槽归零；零消费者检查见 test_gui\n");
+        fprintf(stdout, "[ok] 页/组命名契约（headless）：页与组只以 ribbon.* 声明；零消费者检查见 test_gui\n");
     }
 
     // 2) 意图执行：CSV 扩展产出 Dataset（一张 CSV = 一张表）

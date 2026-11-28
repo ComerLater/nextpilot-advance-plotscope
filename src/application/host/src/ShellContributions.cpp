@@ -1,6 +1,5 @@
 #include "ShellContributions.h"
 
-#include "ISlotsService.h"
 #include "MenuId.h"
 #include "MenuRegistry.h"
 #include "Contribution.h"
@@ -11,8 +10,7 @@ namespace nextpilot::plotscope::host
 namespace
 {
 
-// 声明清单的唯一事实源（裁定 52442006 Step 4）：两个通道（UiSlotHub 直连=host
-// 内部；ISlotsService=壳）共用同一组回调，避免双份清单漂移。
+// 声明清单的唯一事实源：页/组/活动栏入口都经同一组回调落 contributes 数据面。
 template <typename PageFn, typename GroupFn, typename ActivityFn>
 void applyShellContributions(PageFn page, GroupFn group, ActivityFn activity)
 {
@@ -57,36 +55,6 @@ void applyShellContributions(PageFn page, GroupFn group, ActivityFn activity)
 }
 
 } // namespace
-
-void declareShellContributions(nextpilot::plotscope::registry::UiSlotHub &registry)
-{
-    using registry::SlotKind;
-    applyShellContributions(
-        [&registry](const QString &id, const QString &label, int order) {
-            registry.declareSlot(id, label, QStringLiteral("app.skeleton"), SlotKind::RibbonPage,
-                                 QString(), order);
-        },
-        [&registry](const QString &id, const QString &label, const QString &parent, int order) {
-            registry.declareSlot(id, label, QStringLiteral("app.skeleton"), SlotKind::RibbonGroup,
-                                 parent, order);
-        },
-        [&registry](const registry::ActivitySpec &spec) { registry.registerActivity(spec); });
-}
-
-void declareShellContributions(nextpilot::plotscope::workbench::ISlotsService &slotSvc)
-{
-    using registry::SlotKind;
-    applyShellContributions(
-        [&slotSvc](const QString &id, const QString &label, int order) {
-            slotSvc.declareSlot(id, label, QStringLiteral("app.skeleton"), SlotKind::RibbonPage,
-                                QString(), order);
-        },
-        [&slotSvc](const QString &id, const QString &label, const QString &parent, int order) {
-            slotSvc.declareSlot(id, label, QStringLiteral("app.skeleton"), SlotKind::RibbonGroup,
-                                parent, order);
-        },
-        [&slotSvc](const registry::ActivitySpec &spec) { slotSvc.registerActivity(spec); });
-}
 
 void declareShellActions(registry::MenuRegistry &menus)
 {

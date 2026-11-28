@@ -53,9 +53,7 @@ App::~App()
 }
 
 App::App(const QString &settingsPath, QObject *parent)
-    : QObject(parent), m_ctx(settingsPath, this),
-      // UiSlotHub 构造即上树（kind=UiSlot）；所有注册表归 AppContext 的注册树。
-      m_slots(m_ctx.registryTree()), m_commands(),
+    : QObject(parent), m_ctx(settingsPath, this), m_commands(),
       // 摄取管道：读字节 → 扇出 → 落库，实例归组合根，服务面经 IngestAdapter 读。
       m_ingest(datasetHub(m_ctx)),
       // data.load 走统一摄取管道：格式驱动只声明 parserId，解析实现由 SPI 解析器提供。
@@ -64,7 +62,7 @@ App::App(const QString &settingsPath, QObject *parent)
       m_dataCommandsHandler(m_ctx, m_commands, m_ingest),
       // AI/MCP 工具层：ai.* 系统命令，暴露工具目录与调用入口，供后续 MCP bridge 接。
       m_aiToolsHandler(m_ctx, m_commands, [this]() { return m_commands.commandIds(); }), m_recorder(),
-      m_workbench(m_ctx, m_recorder, m_commands, m_slots, m_ingest, this),
+      m_workbench(m_ctx, m_recorder, m_commands, m_ingest, this),
       m_extensions(m_ctx, m_commands, m_workbench.services(), m_workbench.contributionsInstaller())
 {
     // 系统命令注册：不归属任何可卸载扩展，扩展装卸不影响。
@@ -82,10 +80,8 @@ App::App(const QString &settingsPath, QObject *parent)
         QStringLiteral("ai.tools"), &m_aiToolsHandler,
         {QStringLiteral("ai.tools.list"), QStringLiteral("ai.tool.call"), QStringLiteral("ai.status")});
 
-    // 壳级 Ribbon 页/组在**唯一一处**声明：ShellContributions（host 层）。
-    // 业务页/组由各扩展 onAttach 自声明；区域是壳代码常量（Region 枚举），不进注册表。
-    // headless 下这些槽也是纯数据，不创建 QWidget。
-    declareShellContributions(m_slots);
+    // 壳级页/组/活动栏入口的唯一声明在 host::shellContributes()，由装配层随
+    // contributes 数据面 mount 进 ExtensionRegistry；组合根不再另开槽位表。
 
     // 存量静态表全量上树（diag.registries 无盲区）；内置扩展节点并入 Extension 节点。
     new ParserNode(m_ctx.registryTree(), this);

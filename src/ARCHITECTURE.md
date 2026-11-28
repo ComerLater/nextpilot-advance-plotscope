@@ -682,7 +682,7 @@ gui::ShellBinder（唯一知道 SARibbon / ADS 的地方）
 （`registry::Region` 枚举），**不进** slot 注册表。
 
 - **壳级容器**：文件 / 视图两页（外加暂留壳的开始聚合页）及其分组，声明在 host 层
-  `ShellContributions::declareShellContributions()`——一处，headless 与 GUI 同一份。
+  `host::shellContributes()`——一处声明，随 contributes 数据面 mount，headless 与 GUI 同一份。
 - **业务容器**：数据 / 绘图 / 脚本 / 协议 / 分析 / 报告等页与分组，由各模块在
   override `contributes()` 经声明式数据贡献 Ribbon 页/组（宿主统一灌回）；
   壳不预置业务页。

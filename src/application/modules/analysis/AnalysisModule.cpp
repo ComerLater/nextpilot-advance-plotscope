@@ -1,5 +1,7 @@
 #include "AnalysisModule.h"
 
+#include "IScriptCapabilities.h"
+#include "ExtensionRegistration.h"
 #include "AppContext.h"
 #include "DataSource.h"
 #include "Dataset.h"

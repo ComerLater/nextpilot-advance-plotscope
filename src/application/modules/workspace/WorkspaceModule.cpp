@@ -1,5 +1,6 @@
 #include "WorkspaceModule.h"
 
+#include "ExtensionRegistration.h"
 #include "ErrorCodes.h"
 #include "IIntentExecutor.h"
 #include "InstantiationService.h"

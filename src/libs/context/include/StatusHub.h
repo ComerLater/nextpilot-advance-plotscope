@@ -66,7 +66,7 @@ class StatusHub : public QObject
 public:
     explicit StatusHub(QObject *parent = nullptr);
 
-    // 登记一个状态栏槽位。同 id 先声明者优先（与 UiSlotHub 同口径）。
+    // 登记一个状态栏槽位。同 id 先声明者优先（与 contributes 数据面同口径）。
     void registerSpec(const registry::StatusSpec &spec);
 
     // A8b-M3-a 3a-3：vscode.window.createStatusBarItem(alignment, priority) 对位。
