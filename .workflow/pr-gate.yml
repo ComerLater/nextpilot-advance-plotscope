@@ -1,0 +1,25 @@
+version: '1.0'
+name: pr-gate
+displayName: PR 门禁（GitHub CI 全绿才允许合并）
+triggers:
+  trigger: auto
+  pr:
+    branches:
+      precise:
+        - main
+stages:
+  - name: stage-gate
+    displayName: 门禁核对
+    strategy: naturally
+    trigger: auto
+    executor: []
+    steps:
+      - step: build@python
+        name: gitee_pr_gate
+        displayName: 核对 GitHub Actions
+        pythonVersion: 3.9
+        commands:
+          - 'python3 tools/ci/gitee_pr_gate.py'
+        artifacts: []
+        strategy:
+          retry: '0'
