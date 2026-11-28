@@ -40,6 +40,7 @@ on:
         type: choice
         options:
           - ps_gui_shell
+          - ps_gui_data
           - smoke
           - none
       stack_limit:
@@ -224,6 +225,23 @@ jobs:
             echo "--- gdb 现场 ---"
             gdb -batch -ex 'set pagination off' -ex run -ex 'bt 60' --args "$BIN" 2>&1 | tail -150
             echo '### ps_gui_shell 退出码 '"$rc" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Run（模块段，ctest）
+        if: steps.params.outputs.run == 'ps_gui_data'
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set +e
+          ctest --test-dir build -R ps_gui_data --output-on-failure
+          rc=$?
+          echo "ctest rc=$rc"
+          if [ "$rc" -ne 0 ]; then
+            # 模块段挂了就把二进制直接跑一遍，拿到完整输出（ctest 只回显失败尾部）。
+            BIN="$(find build -type f -name 'ps_test_gui_data' -perm -u+x | head -1)"
+            [ -n "$BIN" ] && { echo "--- 直跑 $BIN ---"; timeout 300 "$BIN"; echo "direct rc=$?"; }
             exit 1
           fi
 

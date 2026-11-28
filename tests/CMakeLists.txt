@@ -284,6 +284,24 @@ target_link_libraries(ps_test_gui_shell PRIVATE
 set_target_properties(ps_test_gui_shell PROPERTIES AUTOMOC ON CXX_STANDARD 17)
 add_test(NAME ps_gui_shell COMMAND ps_test_gui_shell)
 set_tests_properties(ps_gui_shell PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+# === 模块段（Step 2 第 1 个）：壳 + data 模块 ===
+# 只链 data 模块与公共解析器；plot/script/protocol/analysis/report 的段归它们自己的文件，
+# 这条目标里出现它们就说明段越界了（横向依赖会在链接期暴露）。
+add_executable(ps_test_gui_data test_gui_data.cpp)
+target_include_directories(ps_test_gui_data PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/application/app/core
+    ${CMAKE_SOURCE_DIR}/src/application/assembly/include)
+target_compile_definitions(ps_test_gui_data PRIVATE
+    PS_TEST_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixture")
+target_link_libraries(ps_test_gui_data PRIVATE
+    ps_gui ps_gui_theme ps_widgets
+    ps_module_data ps_module_data_gui ps_toolbox_common
+    ps_app ps_assembly ps_host ps_context ps_command ps_registry
+    Qt6::Widgets Qt6::Gui Qt6::Core)
+set_target_properties(ps_test_gui_data PROPERTIES AUTOMOC ON CXX_STANDARD 17)
+add_test(NAME ps_gui_data COMMAND ps_test_gui_data)
+set_tests_properties(ps_gui_data PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 add_executable(ps_test_gui test_gui.cpp)
 target_include_directories(ps_test_gui PRIVATE ${CMAKE_SOURCE_DIR}/src/application/app/core)
 # 领域面板的呈现层：领域面板的 QWidget 实现按设计只在 GUI 侧链接。
