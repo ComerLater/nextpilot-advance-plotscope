@@ -136,6 +136,18 @@ if [ -n "$PYTHON" ] && git diff --name-only "$BASE"...HEAD | grep -qe 'tools/ps-
         && ok "薄壳与清单一致" || bad "薄壳漂移（跑 python tools/ps-setup.py gen-shell 后重提交）"
 fi
 
+bold "2b) ADS vendoring 漂移"
+# vendored 第三方库：内容必须等于基线，差异必须登记在 VENDOR.md。
+# 只在动了 ADS 目录或校验脚本本身时跑，平时零成本。
+ADS_CHANGED="$(changed 'src/3rdparty/ads/**' 'tools/ci/check-ads-vendoring.sh')"
+if [ -n "$ADS_CHANGED" ]; then
+    ps_run_script tools/ci/check-ads-vendoring.sh --check \
+        && ok "ads 与基线一致或差异已登记" \
+        || bad "ads 漂移（见 src/3rdparty/ads/VENDOR.md）"
+else
+    ok "无 ads 改动"
+fi
+
 bold "3) 整文件重排告警"
 if [ "${ALLOW_REFORMAT:-0}" = "1" ]; then
     skip "ALLOW_REFORMAT=1，跳过"

@@ -1,0 +1,36 @@
+name: ads-vendoring
+
+# ADS 是 vendored 第三方库：源码必须等于基线提交，任何差异都要登记在
+# src/3rdparty/ads/VENDOR.md。本 job 只做本地哈希比对（离线、秒级），
+# 与 ci.yml 的构建矩阵无关，故独立成文件并按路径触发。
+#
+# 只在 GitHub 镜像上跑；Gitee 主仓依赖 tools/ci/local_preflight.sh 的「2b)」段。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/3rdparty/ads/**'
+      - 'tools/ci/check-ads-vendoring.sh'
+      - '.github/workflows/ads-vendoring.yml'
+  pull_request:
+    paths:
+      - 'src/3rdparty/ads/**'
+      - 'tools/ci/check-ads-vendoring.sh'
+      - '.github/workflows/ads-vendoring.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (vendoring drift)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: 校验 ADS 基线哈希
+        run: bash tools/ci/check-ads-vendoring.sh --check

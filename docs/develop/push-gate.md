@@ -35,6 +35,17 @@ tools/ci/local_preflight.sh --full    # 改过 C++，或推分支前最后一遍
 
 `tidy` 只断新增行：`tools/clang-tidy-diff-gate.py` 取 diff 新增行号与 warning 行号的交集，存量约 329 条不阻断。命中存量行说明基准错了。
 
+## vendored 第三方（ADS）
+
+`src/3rdparty/ads` 的内容必须等于基线提交，差异必须登记在 `src/3rdparty/ads/VENDOR.md`。quick 的「2b)」段只在改动命中 `src/3rdparty/ads/**` 或 `tools/ci/check-ads-vendoring.sh` 时执行，覆盖：未登记差异、未登记新增文件、补丁被上游内容覆盖、清单与台账基线不一致。
+
+```bash
+tools/ci/check-ads-vendoring.sh           # 离线，按 vendor.sha256 比对
+tools/ci/check-ads-vendoring.sh --gen     # 升级后联网重算清单
+```
+
+CI 对应 `ads-vendoring` workflow（GitHub 镜像，按路径触发，离线秒级）。
+
 ## 三条硬禁令
 
 1. **不整文件重排。** 重排把改动行撑到上千行，tidy 拿历史 warning 撞红，blame 报废。统一风格单独一笔 `style:` 提交，事先说清。

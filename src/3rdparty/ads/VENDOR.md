@@ -20,23 +20,24 @@
 
 ## 与本仓的差异
 
-唯一改动是 `CMakeLists.txt`：重写为 31 行的嵌入版本（只编共享库以满足 LGPL 可替换要求、Linux 追加 `linux/FloatingWidgetTitleBar.cpp`、直接补 Qt 私有 QPA 头目录以避免拉 `GuiPrivate` 目标）。
+唯一的结构性改动是 `CMakeLists.txt`：重写为 31 行的嵌入版本（只编共享库以满足 LGPL 可替换要求、Linux 追加 `linux/FloatingWidgetTitleBar.cpp`、直接补 Qt 私有 QPA 头目录以避免拉 `GuiPrivate` 目标）。
 
-其余全部与 `edba03d` 逐字节一致：`src/`（48 个 `.cpp/.h/.qrc`）、`cmake/modules/{Versioning.cmake, ads_version.h.in, FileVersionInfo.rc.in}`、`README.md`、`.clang-format`、`.gitignore`、`LICENSE`、`gnu-lgpl-v2.1.md`。
+`src/` 内不与基线一致的文件只有一张表：见下文「本地补丁」，其余（48 个 `.cpp/.h/.qrc` 中的 47 个）、`cmake/modules/{Versioning.cmake, ads_version.h.in, FileVersionInfo.rc.in}`、`README.md`、`.clang-format`、`.gitignore`、`LICENSE`、`gnu-lgpl-v2.1.md` 全部与 `edba03d` 逐字节一致。
 
 裁剪掉的上游顶层项：`.github/`、`.gitattributes`、`adsConfig.cmake`、`demo/`、`doc/`、`examples/`、`MANIFEST.in`、`persist/`、`project.py`、`pyproject.toml`、`sip/`。
 
 ## 基线自检
 
-改动本目录后，用下面的命令确认 `src/` 没有漂移（把 `<基线>` 换成本文顶部的提交）：
+本目录由 `tools/ci/check-ads-vendoring.sh` 强制校验，清单是 `vendor.sha256`（由 `--gen` 生成，勿手改）：
 
 ```bash
-curl -sL https://codeload.github.com/githubuser0xFFFF/Qt-Advanced-Docking-System/tar.gz/<基线> -o ads.tgz
-tar xzf ads.tgz
-diff -rq src/3rdparty/ads/src Qt-Advanced-Docking-System-*/
+tools/ci/check-ads-vendoring.sh           # 离线，只算本地哈希
+tools/ci/check-ads-vendoring.sh --gen     # 联网取基线 tarball，重算清单
 ```
 
-输出只应出现「本地补丁」表里登记的文件（当前仅 `src/DockManager.cpp`）。出现其他文件即为未登记的漂移：要么撤回改动，要么补进表里。
+失败条件：文件与基线不同且未登记、新增文件未登记、补丁被上游内容覆盖、清单与本文基线不一致。
+
+校验在两个地方跑：`tools/ci/local_preflight.sh` 的「2b)」段（仅当本目录或脚本本身有改动时触发），以及 CI 的 `ads-vendoring` workflow。
 
 ## 本地补丁
 
@@ -48,14 +49,16 @@ diff -rq src/3rdparty/ads/src Qt-Advanced-Docking-System-*/
 
 ## 升级步骤
 
-1. 取目标上游提交的 tarball，按「基线自检」解包。
+1. 改本节顶部的基线提交，跑 `tools/ci/check-ads-vendoring.sh --gen` 重算清单；`--gen` 会把「既有差异但本文未记载」的文件直接报错，先补台账再重跑。
 2. 覆盖 `src/`、`cmake/modules/`、`README.md`、`.clang-format`、`.gitignore`、`LICENSE`、`gnu-lgpl-v2.1.md`。
 3. **不要覆盖 `CMakeLists.txt`**（本仓重写）。若上游 `src/` 新增文件（例如新的平台实现），同步更新其 `file(GLOB)` 与 Linux 源列表。
-4. 重放「本地补丁」表；已在上游合并的条目删除。
-5. 验证：构建通过；`sanitizer` 的 `asan-ubsan` 至少覆盖 `ps_gui` / `ps_instrument` / `ps_plot_io`；手动跑一次 dock 拖拽/浮动/关闭冒烟。
+4. 重放「本地补丁」表；已在上游合并的条目删除，并同步删掉清单里的 `patch` 行（跑 `--gen`）。
+5. 验证：`check-ads-vendoring.sh` 通过；构建通过；`sanitizer` 的 `asan-ubsan` 至少覆盖 `ps_gui` / `ps_instrument` / `ps_plot_io`；手动跑一次 dock 拖拽/浮动/关闭冒烟。
 6. 更新本文的基线提交与提交清单。
 
 ## 维护约定
 
-- 新增任何 ADS 本地补丁，必须同时更新「本地补丁」表，并在提交信息里写 `Refs:`。
+- **ADS 源码不接受无登记的手改**：内容与基线不同，就必须在「本地补丁」表留一行；门禁会拦，不靠自觉。
+- 新增任何 ADS 本地补丁，必须同时更新「本地补丁」表与 `vendor.sha256`（跑 `--gen`），并在提交信息里写 `Refs:`。
+- `vendor.sha256` 是生成物，冲突时重跑 `--gen`，不要手工合并。
 - 升级 ADS 单独开卡，不与其他功能改动混在一个 PR。

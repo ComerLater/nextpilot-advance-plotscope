@@ -41,7 +41,7 @@ Windows 的编译环境（MSVC、Qt、受管 PATH）只由 `ps-setup.py` 准备�
 
 ### ci/local_preflight.sh
 
-推前门禁。quick 检查格式、脚本、workflow、mypy 与重排；`--full` 加 Release/Debug 双构建、双 ctest、clang-tidy 增量与 `arch_guard`。
+推前门禁。quick 检查格式、脚本、workflow、mypy、重排，改动命中 `src/3rdparty/ads/**` 时加一道 vendoring 漂移校验；`--full` 加 Release/Debug 双构建、双 ctest、clang-tidy 增量与 `arch_guard`。
 
 ## 内部工具
 
@@ -54,6 +54,7 @@ Windows 的编译环境（MSVC、Qt、受管 PATH）只由 `ps-setup.py` 准备�
 
 - `ci/resolve-base.sh`：解析改动行基准，format / markdown / python / tidy 共用
 - `ci/arch_guard.sh`：分层与依赖守卫
+- `ci/check-ads-vendoring.sh`：ADS vendoring 漂移校验（`--check` 离线 / `--gen` 重算 `src/3rdparty/ads/vendor.sha256`）
 - `check-workflow-outputs.py`：校验 workflow 里 `steps.<id>.outputs.<key>` 的输出契约
 - `clang-tidy-diff-gate.py`：只断 diff 新增行的 clang-tidy 告警
 
