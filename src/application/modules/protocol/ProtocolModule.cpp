@@ -1,8 +1,3 @@
-#include "AppContext.h"
-#include "DatasetRegistry.h"
-#include "SourceRegistry.h"
-#include "IngestPipeline.h"
-#include "ExtensionRegistry.h"
 #include "ProtocolModule.h"
 #include "Intent.h"
 
@@ -15,12 +10,10 @@
 
 using nextpilot::plotscope::instantiation::InstantiationService;
 using namespace nextpilot::plotscope::foundation;
-using namespace nextpilot::plotscope::dataset;
 using namespace nextpilot::plotscope::intent;
 using namespace nextpilot::plotscope::uischema;
 using namespace nextpilot::plotscope::registry;
 using namespace nextpilot::plotscope::parser;
-using namespace nextpilot::plotscope::context;
 using namespace nextpilot::plotscope::host;
 
 ExtensionDescription ProtocolModule::extensionDescription()
