@@ -60,7 +60,6 @@
 
 using namespace nextpilot::plotscope::foundation;
 using namespace nextpilot::plotscope::intent;
-using namespace nextpilot::plotscope::uischema;
 using namespace nextpilot::plotscope::registry;
 
 namespace nextpilot::plotscope::gui
