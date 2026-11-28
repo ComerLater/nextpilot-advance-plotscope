@@ -12,7 +12,6 @@
 #include <fastplot/SemanticColors.h>
 #include "ThemeManager.h"
 #include <fastplot/Zoomer.h>
-#include <fastplot/SemanticColors.h>
 
 #include <QContextMenuEvent>
 #include <QFileDialog>

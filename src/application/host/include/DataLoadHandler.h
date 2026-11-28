@@ -2,10 +2,10 @@
 
 #include "SettingsStore.h"
 #include "IngestPipeline.h"
-#include "DatasetHub.h"
-#include "ToolboxHub.h"
+#include "DatasetRegistry.h"
+#include "ExtensionRegistry.h"
 #include "Intent.h"
-#include "SourceHub.h"
+#include "SourceRegistry.h"
 #include "AppContext.h"
 
 #include <QByteArray>
@@ -34,13 +34,15 @@ class DataLoadHandler final : public nextpilot::plotscope::intent::IIntentHandle
 {
 public:
     DataLoadHandler(nextpilot::plotscope::context::AppContext &appCtx,
-                    nextpilot::plotscope::registry::ToolboxHub &registry,
-                    nextpilot::plotscope::dataset::DatasetHub &repo,
-                    nextpilot::plotscope::dataset::SourceHub &sources,
+                    nextpilot::plotscope::registry::ExtensionRegistry &registry,
+                    nextpilot::plotscope::dataset::DatasetRegistry &repo,
+                    nextpilot::plotscope::dataset::SourceRegistry &sources,
                     nextpilot::plotscope::context::IngestPipeline *pipeline = nullptr,
                     nextpilot::plotscope::context::SettingsStore *settings = nullptr)
-        : m_app(appCtx), m_registry(registry), m_repo(repo), m_sources(sources),
-          m_pipeline(pipeline), m_settings(settings) {}
+        : m_app(appCtx), m_registry(registry), m_repo(repo), m_sources(sources), m_pipeline(pipeline),
+          m_settings(settings)
+    {
+    }
 
     bool canHandle(const nextpilot::plotscope::intent::Intent &intent) const override;
     nextpilot::plotscope::foundation::Result<nextpilot::plotscope::intent::IntentResult> execute(
@@ -57,9 +59,9 @@ private:
                     const QByteArray &parserOptions = QByteArray());
 
     nextpilot::plotscope::context::AppContext &m_app;
-    nextpilot::plotscope::registry::ToolboxHub &m_registry;
-    nextpilot::plotscope::dataset::DatasetHub &m_repo;
-    nextpilot::plotscope::dataset::SourceHub &m_sources;
+    nextpilot::plotscope::registry::ExtensionRegistry &m_registry;
+    nextpilot::plotscope::dataset::DatasetRegistry &m_repo;
+    nextpilot::plotscope::dataset::SourceRegistry &m_sources;
     // 摄取管道（宿主持有）。为空时 data.load 只走旧的 driver.load() 路径。
     nextpilot::plotscope::context::IngestPipeline *m_pipeline = nullptr;
     // 设置库（可选）：成功后把路径记入"最近文件"。为空则不记录。

@@ -1,7 +1,7 @@
 #include "PythonHandler.h"
 
 #include "Dataset.h"
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 #include "ErrorCodes.h"
 
 #include <QDir>
@@ -20,7 +20,7 @@ namespace nextpilot::plotscope::script
 
 using nextpilot::plotscope::dataset::Dataset;
 using nextpilot::plotscope::dataset::DatasetId;
-using nextpilot::plotscope::dataset::DatasetHub;
+using nextpilot::plotscope::dataset::DatasetRegistry;
 using nextpilot::plotscope::dataset::kInvalidDataset;
 using nextpilot::plotscope::dataset::TimeNs;
 using nextpilot::plotscope::dataset::ValueType;
@@ -41,8 +41,8 @@ QString shmDir()
 }
 } // namespace
 
-PythonHandler::PythonHandler(nextpilot::plotscope::intent::IIntentExecutor &executor,
-                             DatasetHub *data, QObject *parent)
+PythonHandler::PythonHandler(nextpilot::plotscope::intent::IIntentExecutor &executor, DatasetRegistry *data,
+                             QObject *parent)
     : QObject(parent), m_executor(executor), m_data(data)
 {
     setObjectName(QStringLiteral("python-handler"));

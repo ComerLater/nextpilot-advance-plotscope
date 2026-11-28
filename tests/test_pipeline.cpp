@@ -1,4 +1,7 @@
 // 新架构契约测试：Source（多数据源）· Parser SPI（喂数据→出结果）· 扩展零改动新增
+#include "Intent.h"
+#include "test_registry_access.h"
+#include "ExtensionRegistry.h"
 //
 // 这些是 ARCHITECTURE.md 中「新架构两根支柱」的可执行证明：
 //   1) 需求(5)：同时打开多个数据源，互不干扰，各自独立状态；
@@ -8,7 +11,7 @@
 
 #include "AppContext.h"
 #include "RegistryTree.h"
-#include "SourceHub.h"
+#include "SourceRegistry.h"
 #include "IngestOrchestrator.h"
 #include "IngestPipeline.h"
 #include "ParserHub.h"
@@ -343,7 +346,7 @@ int main()
     // ========== 5) 多数据源并存（需求 5）============
     {
         RegistryTree tree;
-        SourceHub repo(tree);
+        SourceRegistry repo(tree);
         DataSourceInfo s1;
         s1.name = QStringLiteral("flight-1.ulg");
         s1.kind = SourceKind::File;
@@ -446,7 +449,7 @@ int main()
     // ========== 9) 数据源是运行时实例：绑定引用资产，不复制 ==========
     {
         RegistryTree tree;
-        SourceHub repo(tree);
+        SourceRegistry repo(tree);
         DataSourceInfo info;
         info.name = QStringLiteral("flight.ulg");
         info.origin = QStringLiteral("/data/flight.ulg");
@@ -577,12 +580,13 @@ int main()
     // ========== 12) AppContext：进程级运行态的唯一持有者 ==========
     {
         AppContext ctx;
-        // 一处持有、一处取用：数据集/设置/工具箱/数据源/摄取管道都在这儿
-        CHECK(ctx.data().count() == 0);
+        // 一处持有、一处取用：数据集/设置/工具箱/数据源在 AppContext；摄取管道归宿主。
+        CHECK(plotscope_test::datasetHub(ctx).count() == 0);
         CHECK(ctx.settings().keysIn(SettingsScope::App).isEmpty());
-        CHECK(ctx.toolbox().count() == 0);
-        CHECK(ctx.sources().count() == 0);
-        CHECK(ctx.ingest().channelCount(1) == 0);
+        CHECK(plotscope_test::extensionHub(ctx).count() == 0);
+        CHECK(plotscope_test::sourceHub(ctx).count() == 0);
+        IngestPipeline pipeline(plotscope_test::datasetHub(ctx));
+        CHECK(pipeline.channelCount(1) == 0);
 
         // 活动视图是**指针**不是副本：CLI 与 GUI 看到同一份
         ctx.setActiveSourceId(7);
@@ -645,7 +649,7 @@ int main()
     // ========== 14) 摄取：单前端 → 多解析器扇出 → 多数据集 ==========
     {
         RegistryTree tree;
-        DatasetHub repo(tree);
+        DatasetRegistry repo(tree);
         IngestPipeline pipe(repo);
 
         // 一个数据源 = 一个前端（单字节来源）
@@ -786,7 +790,7 @@ int main()
         CHECK(ParserHub::findBySniff(QByteArray("MDF     4.00")) != nullptr);
 
         RegistryTree treeM;
-        DatasetHub repoM(treeM);
+        DatasetRegistry repoM(treeM);
         IngestPipeline pipeM(repoM);
         const Result<int> boundM =
             pipeM.bindParser(7, ParserBinding{QStringLiteral("mdf4"), {}, true});
@@ -842,7 +846,7 @@ int main()
         CHECK(ParserHub::findBySniff(QByteArray("SQLite format 3\0\0\0", 18)) != nullptr);
 
         RegistryTree treeR;
-        DatasetHub repoR(treeR);
+        DatasetRegistry repoR(treeR);
         IngestPipeline pipeR(repoR);
         const Result<int> boundR =
             pipeR.bindParser(8, ParserBinding{QStringLiteral("rosbag2"), {}, true});
@@ -949,7 +953,7 @@ int main()
 
         // --- 路径 B：SPI 管道（Source → IngestPipeline → ULog parser）---
         RegistryTree treeB;
-        DatasetHub repoB(treeB);
+        DatasetRegistry repoB(treeB);
         IngestPipeline pipeB(repoB);
         CHECK(ParserHub::entry(QStringLiteral("ulog")) != nullptr);
         const Result<int> bound = pipeB.bindParser(1, ParserBinding{QStringLiteral("ulog"), {}, true});
@@ -1119,8 +1123,8 @@ int main()
         // 断言三件事：表名按宿主声明改写、数据集内容正确、stable id 生效。
         {
             RegistryTree treeC;
-            DatasetHub repoC(treeC);
-            SourceHub sourcesC(treeC);
+            DatasetRegistry repoC(treeC);
+            SourceRegistry sourcesC(treeC);
             IngestPipeline pipeC(repoC);
 
             // 宿主策略：表名叫 "demo"（= 驱动 preferredTableName 的结果）、
@@ -1172,8 +1176,8 @@ int main()
             CHECK(QFileInfo::exists(cachePath));
 
             RegistryTree treeC2;
-            DatasetHub repoC2(treeC2);
-            SourceHub sourcesC2(treeC2);
+            DatasetRegistry repoC2(treeC2);
+            SourceRegistry sourcesC2(treeC2);
             IngestPipeline pipeC2(repoC2);
             IngestOptions optC2;
             optC2.tableName = QStringLiteral("demo");

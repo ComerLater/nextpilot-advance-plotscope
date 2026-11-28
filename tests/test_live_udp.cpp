@@ -3,14 +3,15 @@
 //   data.disconnect → 源状态 Closed。全程走真实 QUdpSocket 与真实解析器，不打桩。
 
 #include "App.h"
+#include "test_registry_access.h"
 #include "AppContext.h"
 #include "DataSource.h"
 #include "Dataset.h"
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 #include "McapCodec.h"
 #include "Intent.h"
 #include "Result.h"
-#include "SourceHub.h"
+#include "SourceRegistry.h"
 
 #include <QDir>
 #include <QApplication>
@@ -141,7 +142,7 @@ int main(int argc, char **argv)
     pump(1500);
 
     // 追加入参：disconnect 后再看行数（live 通道要到 finish 才把 schema/行数落定）。
-    const Dataset *ds = ctx.data().get(dsId);
+    const Dataset *ds = plotscope_test::datasetHub(ctx).get(dsId);
     CHECK(ds != nullptr);
     if (ds)
     {
@@ -274,10 +275,10 @@ int main(int argc, char **argv)
         ld.op = QStringLiteral("data.load");
         ld.params[QStringLiteral("path")] = mcapPath;
         ld.params[QStringLiteral("format")] = QStringLiteral("mcap");
-        const int dsBefore = ctx.data().count();
+        const int dsBefore = plotscope_test::datasetHub(ctx).count();
         const auto ldr = app.host().execute(ld);
         CHECK(ldr);
-        std::printf("reload: datasets %d -> %d\n", dsBefore, ctx.data().count());
+        std::printf("reload: datasets %d -> %d\n", dsBefore, plotscope_test::datasetHub(ctx).count());
         if (!ldr)
             std::printf("mcap load 失败: %s\n", qPrintable(ldr.error().message));
         else
@@ -288,7 +289,7 @@ int main(int argc, char **argv)
                 id2 = pv.toMap().value(QStringLiteral("dataset")).toInt();
             std::printf("mcap reload dataset=%d\n", id2);
             CHECK(id2 > 0);
-            if (const Dataset *rd = ctx.data().get(id2))
+            if (const Dataset *rd = plotscope_test::datasetHub(ctx).get(id2))
             {
                 int rows = 0;
                 for (const QString &tn : rd->tableNames())
@@ -298,12 +299,12 @@ int main(int argc, char **argv)
                             rd->timeMax(), int(rd->tableNames().size()));
                 CHECK(rows == 25); // S3：暂停期 5 帧不丢，20 + 5 = 25
                 CHECK(rd->timeMax() > 1.5);
-                CHECK(ctx.data().count() > dsBefore);
+                CHECK(plotscope_test::datasetHub(ctx).count() > dsBefore);
             }
         }
     }
     // 停止后源上的 recordings 应被清空（不再显示录制中）。
-    if (const DataSourceInfo *rinfo = ctx.sources().get(srcId))
+    if (const DataSourceInfo *rinfo = plotscope_test::sourceHub(ctx).get(srcId))
         CHECK(rinfo->recordings.isEmpty());
 
     // 源清单 + 重连：list 能看到 live 源；重连后继续收包（计数累计）
@@ -353,11 +354,11 @@ int main(int argc, char **argv)
         // 20 + 重连后 5 = 25；暂停期那 5 帧不计数（不喂解析器）
         CHECK(p.value(QStringLiteral("packets")).toLongLong() >= 20);
     }
-    const DataSourceInfo *info = ctx.sources().get(srcId);
+    const DataSourceInfo *info = plotscope_test::sourceHub(ctx).get(srcId);
     CHECK(info && info->state == SourceState::Closed);
 
     // finish 之后再看行数：live 通道在 disconnect 里 finish → schema/行数落定。
-    if (const Dataset *disk = ctx.data().get(dsId))
+    if (const Dataset *disk = plotscope_test::datasetHub(ctx).get(dsId))
     {
         int rows = 0;
         for (const QString &tn : disk->tableNames())
@@ -420,7 +421,7 @@ int main(int argc, char **argv)
             td.op = QStringLiteral("data.disconnect");
             td.params[QStringLiteral("id")] = tid;
             CHECK(app.host().execute(td));
-            if (const Dataset *tdsPtr = ctx.data().get(tds))
+            if (const Dataset *tdsPtr = plotscope_test::datasetHub(ctx).get(tds))
             {
                 int rows = 0;
                 for (const QString &tn : tdsPtr->tableNames())
@@ -497,7 +498,7 @@ int main(int argc, char **argv)
                 sd.op = QStringLiteral("data.disconnect");
                 sd.params[QStringLiteral("id")] = sid;
                 CHECK(app.host().execute(sd));
-                if (const Dataset *sdsPtr = ctx.data().get(sds))
+                if (const Dataset *sdsPtr = plotscope_test::datasetHub(ctx).get(sds))
                 {
                     int rows = 0;
                     for (const QString &tn : sdsPtr->tableNames())

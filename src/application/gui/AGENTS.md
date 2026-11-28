@@ -34,6 +34,6 @@
 
 ## 动手前自查
 
-1. 这段代码能 headless 跑吗？能 → 它可能不该在 gui（去 libs/modules）；不能 → 必须只活在本层
+1. 这段代码能 headless 跑吗？能 → 它可能不该在 gui（通用机制去 libs，功能 headless 部分去 modules/）；不能 → 必须只活在本层
 2. 新视图要取数：走意图层（与脚本/CLI 同一路径），禁止直捅 Dataset 内部或 Rust FFI
 3. 领域专属面板的"形态"归扩展（contributes.views 声明 + gui 侧 provider 实现），通用视图层禁止长成领域杂物箱

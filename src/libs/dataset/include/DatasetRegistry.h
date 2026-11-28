@@ -8,8 +8,7 @@
 #include <QObject>
 #include <QVector>
 
-namespace nextpilot::plotscope::dataset
-{
+namespace nextpilot::plotscope::dataset {
 
 using nextpilot::plotscope::foundation::Result;
 using nextpilot::plotscope::registry::RegistryTree;
@@ -21,12 +20,12 @@ using nextpilot::plotscope::registry::TypedRegistry;
 // M2.8 R2 瘦身：壳改为 TypedRegistry<Dataset, DatasetId> 薄壳继承——
 // 通用增删查/id 分配/基类信号（objectAdded/objectRemoved）上收，本壳只留领域语义：
 // datasetAdded/datasetRemoved 具名信号（旧测试零改动）、ids() 升序、addWithId 名字语义。
-class DatasetHub : public TypedRegistry<Dataset, DatasetId>
+class DatasetRegistry : public TypedRegistry<Dataset, DatasetId>
 {
     Q_OBJECT
 public:
     // 组合根/单测统一用：构造即上树（不存在不上树形态，M2.8 遗留2 收口拍板）。
-    explicit DatasetHub(RegistryTree &tree, QObject *parent = nullptr);
+    explicit DatasetRegistry(RegistryTree &tree, QObject *parent = nullptr);
 
     DatasetId add(Dataset dataset);
     Result<DatasetId> addWithId(Dataset dataset, const QString &requestedName);

@@ -1,4 +1,5 @@
 #include "PlotWorkspace.h"
+#include "IWorkspace.h"
 
 #include "AppContext.h"
 #include "chrome/AxesToolbar.h"
@@ -12,9 +13,9 @@
 #include "AxesView.h"
 #include "PlaybackEngine.h"
 #include "TimelineWidget.h"
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 #include "Dataset.h"
-#include "SourceHub.h"
+#include "SourceRegistry.h"
 #include "PropertySchema.h"
 #include "Result.h"
 #include "ErrorCodes.h"
@@ -212,12 +213,12 @@ void PlotWorkspace::registerCanvasActions()
                                                      QStringLiteral("mode 需为 start/center/end")};
                                     // 每源聚合时间范围（数据集首尾时间）。
                                     QHash<int, QPair<double, double>> ranges; // src -> [tMin,tMax]
-                                    for (const auto dsId : m_appCtx.data().ids())
+                                    for (const auto dsId : m_appCtx.workspace().dataset().ids())
                                     {
-                                        const Dataset *ds = m_appCtx.data().get(dsId);
+                                        const Dataset *ds = m_appCtx.workspace().dataset().get(dsId);
                                         if (!ds || ds->tableCount() == 0)
                                             continue;
-                                        const int src = m_appCtx.sources().sourceOfDataset(dsId);
+                                        const int src = m_appCtx.workspace().sources().sourceOfDataset(dsId);
                                         if (src < 0)
                                             continue;
                                         const double lo = ds->timeMin();
@@ -405,7 +406,7 @@ void PlotWorkspace::registerCanvasActions()
             const int limit = params.value(QStringLiteral("limit"), 8).toInt();
             if (dsId < 0 || tableName.isEmpty())
                 return fail(err::Key, QStringLiteral("缺少 dataset / table"));
-            const nextpilot::plotscope::dataset::Dataset *ds = m_appCtx.data().get(dsId);
+            const nextpilot::plotscope::dataset::Dataset *ds = m_appCtx.workspace().dataset().get(dsId);
             if (!ds)
                 return fail(err::NoEnt, QStringLiteral("数据集不存在"));
             const nextpilot::plotscope::dataset::Table *t = ds->table(tableName);
@@ -456,10 +457,9 @@ void PlotWorkspace::registerCanvasActions()
             // 重名时补 #id —— 曲线名必须唯一，否则 N 条曲线在图上分不清。
             auto uniqSrc = [this](int srcId, const QString &name) -> QString {
                 int dup = 0;
-                for (int s : m_appCtx.sources().ids())
+                for (int s : m_appCtx.workspace().sources().ids())
                 {
-                    const nextpilot::plotscope::dataset::DataSourceInfo *i =
-                        m_appCtx.sources().get(s);
+                    const nextpilot::plotscope::dataset::DataSourceInfo *i = m_appCtx.workspace().sources().get(s);
                     if (i && i->name == name)
                         ++dup;
                 }
@@ -469,10 +469,9 @@ void PlotWorkspace::registerCanvasActions()
             QVariantList addedNames;
             QString firstErr;
             int matched = 0;
-            for (int srcId : m_appCtx.sources().ids())
+            for (int srcId : m_appCtx.workspace().sources().ids())
             {
-                const nextpilot::plotscope::dataset::DataSourceInfo *info =
-                    m_appCtx.sources().get(srcId);
+                const nextpilot::plotscope::dataset::DataSourceInfo *info = m_appCtx.workspace().sources().get(srcId);
                 if (!info)
                     continue;
                 const QString srcName = uniqSrc(srcId,
@@ -481,7 +480,7 @@ void PlotWorkspace::registerCanvasActions()
                                                     : info->name);
                 for (int d : info->datasetIds)
                 {
-                    const nextpilot::plotscope::dataset::Dataset *ds = m_appCtx.data().get(d);
+                    const nextpilot::plotscope::dataset::Dataset *ds = m_appCtx.workspace().dataset().get(d);
                     if (!ds)
                         continue;
                     // 一个数据集里取第一张含该列的表（多表格式里同名通道通常只出现一次）。
@@ -547,10 +546,9 @@ void PlotWorkspace::registerCanvasActions()
             // 只取两条：当前通道 + 第一个能匹配上的**别的源**。
             auto uniqSrc = [this](int srcId, const QString &name) -> QString {
                 int dup = 0;
-                for (int s : m_appCtx.sources().ids())
+                for (int s : m_appCtx.workspace().sources().ids())
                 {
-                    const nextpilot::plotscope::dataset::DataSourceInfo *i =
-                        m_appCtx.sources().get(s);
+                    const nextpilot::plotscope::dataset::DataSourceInfo *i = m_appCtx.workspace().sources().get(s);
                     if (i && i->name == name)
                         ++dup;
                 }
@@ -560,10 +558,9 @@ void PlotWorkspace::registerCanvasActions()
             Hit self{-1, QString(), QString()};
             Hit other{-1, QString(), QString()};
             bool hasOther = false;
-            for (int srcId : m_appCtx.sources().ids())
+            for (int srcId : m_appCtx.workspace().sources().ids())
             {
-                const nextpilot::plotscope::dataset::DataSourceInfo *info =
-                    m_appCtx.sources().get(srcId);
+                const nextpilot::plotscope::dataset::DataSourceInfo *info = m_appCtx.workspace().sources().get(srcId);
                 if (!info)
                     continue;
                 const QString srcName = uniqSrc(srcId,
@@ -572,7 +569,7 @@ void PlotWorkspace::registerCanvasActions()
                                                     : info->name);
                 for (int d : info->datasetIds)
                 {
-                    const nextpilot::plotscope::dataset::Dataset *ds = m_appCtx.data().get(d);
+                    const nextpilot::plotscope::dataset::Dataset *ds = m_appCtx.workspace().dataset().get(d);
                     if (!ds)
                         continue;
                     QString hitTable;
@@ -610,8 +607,8 @@ void PlotWorkspace::registerCanvasActions()
                 return fail(err::NoEnt,
                             QStringLiteral("没有别的源包含同名通道: %1").arg(column));
 
-            const nextpilot::plotscope::dataset::Dataset *base = m_appCtx.data().get(self.datasetId);
-            const nextpilot::plotscope::dataset::Dataset *peer = m_appCtx.data().get(other.datasetId);
+            const nextpilot::plotscope::dataset::Dataset *base = m_appCtx.workspace().dataset().get(self.datasetId);
+            const nextpilot::plotscope::dataset::Dataset *peer = m_appCtx.workspace().dataset().get(other.datasetId);
             if (!base || !peer)
                 return fail(err::NoEnt, QStringLiteral("数据集已失效"));
 

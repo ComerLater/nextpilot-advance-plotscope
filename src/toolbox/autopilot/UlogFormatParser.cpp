@@ -1,4 +1,5 @@
 #include "UlogFormatParser.h"
+#include "Intent.h"
 using namespace nextpilot::plotscope::foundation;
 using namespace nextpilot::plotscope::intent;
 using namespace nextpilot::plotscope::uischema;
@@ -15,9 +16,9 @@ QString UlogFormatParser::displayName() const
     return QStringLiteral("ULog 格式解析器");
 }
 
-nextpilot::plotscope::registry::Domain UlogFormatParser::domain() const
+nextpilot::plotscope::parser::Domain UlogFormatParser::domain() const
 {
-    return nextpilot::plotscope::registry::Domain::Autopilot;
+    return nextpilot::plotscope::parser::Domain::Autopilot;
 }
 
 QStringList UlogFormatParser::suffixes() const

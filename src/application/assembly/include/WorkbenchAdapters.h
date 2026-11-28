@@ -14,6 +14,7 @@
 #include "ICommands.h"
 #include "IScriptCapabilities.h"
 #include "IPanelsService.h"
+#include "IRibbonService.h"
 #include "IFormatHints.h"
 #include "IThemeService.h"
 #include "ISlotsService.h"
@@ -29,8 +30,8 @@
 
 #include <functional>
 
-#include "DatasetHub.h"
-#include "SourceHub.h"
+#include "DatasetRegistry.h"
+#include "SourceRegistry.h"
 #include "IngestPipeline.h"
 #include "JobRecorder.h"
 #include "SettingsStore.h"
@@ -38,7 +39,7 @@
 #include "InteractionHub.h"
 #include "AppContext.h"
 #include "Intent.h"
-#include "ToolboxHub.h"
+#include "ExtensionRegistry.h"
 #include "UiSlotHub.h"
 #include "ViewRegistry.h"
 #include "RuntimeHost.h" // ThemeServiceAdapter 内联构造读 uiSlots()，需完整类型
@@ -66,6 +67,7 @@ namespace rec = nextpilot::plotscope::recording;
 namespace ui = nextpilot::plotscope::uischema;
 namespace wb = nextpilot::plotscope::workbench;
 namespace registry = nextpilot::plotscope::registry;
+namespace parser = nextpilot::plotscope::parser;
 namespace foundation = nextpilot::plotscope::foundation;
 namespace host = nextpilot::plotscope::host;
 
@@ -74,7 +76,7 @@ class DatasetAccessAdapter : public QObject, public ds::IDatasetAccess
 {
     Q_OBJECT
 public:
-    explicit DatasetAccessAdapter(ds::DatasetHub &hub, QObject *parent = nullptr);
+    explicit DatasetAccessAdapter(ds::DatasetRegistry &hub, QObject *parent = nullptr);
 
     const ds::Dataset *get(ds::DatasetId id) const override;
     QVector<ds::DatasetId> ids() const override;
@@ -82,11 +84,11 @@ public:
     ds::Dataset *getMutable(ds::DatasetId id) override;
     bool remove(ds::DatasetId id) override;
 
-    wb::Subscription onDidAddDocument(std::function<void(const QString &id)> l) override;
-    wb::Subscription onDidRemoveDocument(std::function<void(const QString &id)> l) override;
+    foundation::Subscription onDidAddDocument(std::function<void(const QString &id)> l) override;
+    foundation::Subscription onDidRemoveDocument(std::function<void(const QString &id)> l) override;
 
 private:
-    ds::DatasetHub &m_hub;
+    ds::DatasetRegistry &m_hub;
 };
 
 // ---- ISourceAccess ----
@@ -94,7 +96,7 @@ class SourceAccessAdapter : public QObject, public ds::ISourceAccess
 {
     Q_OBJECT
 public:
-    explicit SourceAccessAdapter(ds::SourceHub &hub, QObject *parent = nullptr);
+    explicit SourceAccessAdapter(ds::SourceRegistry &hub, QObject *parent = nullptr);
 
     const ds::DataSourceInfo *get(int id) const override;
     int sourceOfDataset(int datasetId) const override;
@@ -109,11 +111,12 @@ public:
     void demandOrigin(const QString &origin) override;
     int count() const override;
 
-    wb::Subscription onDidAddSource(std::function<void(const QString &id)> l) override;
-    wb::Subscription onDidChangeSource(std::function<void(const QString &id)> l) override;
+    foundation::Subscription onDidAddSource(std::function<void(const QString &id)> l) override;
+    foundation::Subscription onDidChangeSource(std::function<void(const QString &id)> l) override;
+    foundation::Subscription onDidRemoveSource(std::function<void(const QString &id)> l) override;
 
 private:
-    ds::SourceHub &m_hub;
+    ds::SourceRegistry &m_hub;
 };
 
 // ---- IIngest ----
@@ -121,8 +124,8 @@ class IngestAdapter : public QObject, public ds::IIngest
 {
     Q_OBJECT
 public:
-    // 持 AppContext&：管道方法转发到 appCtx.ingest()，加载生命周期转发其信号（评论 52436915）。
-    explicit IngestAdapter(ctx::AppContext &appCtx, QObject *parent = nullptr);
+    // 管道方法转发到宿主 IngestPipeline，加载生命周期转发 AppContext 信号（评论 52436915）。
+    explicit IngestAdapter(ctx::AppContext &appCtx, ctx::IngestPipeline &pipeline, QObject *parent = nullptr);
 
     foundation::Result<int> bindParser(int sourceId, const ds::ParserBinding &binding,
                                        ds::DatasetId preferredDatasetId = ds::kInvalidDataset) override;
@@ -130,9 +133,9 @@ public:
     void finish(int sourceId) override;
     QVector<ds::IngestChannel> channels(int sourceId) const override;
 
-    wb::Subscription onDidStartLoad(std::function<void()> l) override;
-    wb::Subscription onDidFinishLoad(std::function<void(bool ok)> l) override;
-    wb::Subscription onDidReportProgress(std::function<void(int, const QString &)> l) override;
+    foundation::Subscription onDidStartLoad(std::function<void()> l) override;
+    foundation::Subscription onDidFinishLoad(std::function<void(bool ok)> l) override;
+    foundation::Subscription onDidReportProgress(std::function<void(int, const QString &)> l) override;
 
 private:
     ctx::AppContext &m_appCtx;
@@ -175,9 +178,17 @@ class WorkspaceAdapter : public wb::IWorkspace
 public:
     WorkspaceAdapter(ds::IDatasetAccess &datasets, ds::ISourceAccess &sources, ds::IIngest &ingest,
                      rec::IRecorder &recorder, rec::IPlayback &playback, ctx::SettingsStore &settings,
-                     ctx::DerivedSeriesHub &derived, std::function<QVector<QPair<QString, QString>>()> driverMetas = {})
+                     ctx::DerivedSeriesHub &derived, std::function<QVector<QPair<QString, QString>>()> driverMetas = {},
+                     std::function<QList<parser::IMessageParser *>()> sourceDrivers = {},
+                     std::function<QList<parser::IMessageParser *>()> messageParsers = {},
+                     std::function<QStringList()> extensionIds = {},
+                     std::function<QList<registry::ItemContextSpec>(const QString &)> itemContextsFor = {},
+                     std::function<const registry::ReportTemplate *(const QString &)> reportTemplate = {})
         : m_datasets(datasets), m_sources(sources), m_ingest(ingest), m_recorder(recorder), m_playback(playback),
-          m_settings(settings), m_derived(derived), m_driverMetas(std::move(driverMetas))
+          m_settings(settings), m_derived(derived), m_driverMetas(std::move(driverMetas)),
+          m_sourceDrivers(std::move(sourceDrivers)), m_messageParsers(std::move(messageParsers)),
+          m_extensionIds(std::move(extensionIds)), m_itemContextsFor(std::move(itemContextsFor)),
+          m_reportTemplate(std::move(reportTemplate))
     {
     }
 
@@ -223,6 +234,23 @@ public:
     {
         return m_driverMetas ? m_driverMetas() : QVector<QPair<QString, QString>>{};
     }
+    QList<parser::IMessageParser *> sourceDrivers() const override
+    {
+        return m_sourceDrivers ? m_sourceDrivers() : QList<parser::IMessageParser *>{};
+    }
+    QList<parser::IMessageParser *> messageParsers() const override
+    {
+        return m_messageParsers ? m_messageParsers() : QList<parser::IMessageParser *>{};
+    }
+    QStringList extensionIds() const override { return m_extensionIds ? m_extensionIds() : QStringList{}; }
+    QList<registry::ItemContextSpec> itemContextsFor(const QString &viewId) const override
+    {
+        return m_itemContextsFor ? m_itemContextsFor(viewId) : QList<registry::ItemContextSpec>{};
+    }
+    const registry::ReportTemplate *reportTemplate(const QString &id) const override
+    {
+        return m_reportTemplate ? m_reportTemplate(id) : nullptr;
+    }
     ctx::DerivedSeriesHub &derived() override { return m_derived; }
 
 private:
@@ -240,6 +268,11 @@ private:
     ctx::SettingsStore &m_settings;
     ctx::DerivedSeriesHub &m_derived;
     std::function<QVector<QPair<QString, QString>>()> m_driverMetas;
+    std::function<QList<parser::IMessageParser *>()> m_sourceDrivers;
+    std::function<QList<parser::IMessageParser *>()> m_messageParsers;
+    std::function<QStringList()> m_extensionIds;
+    std::function<QList<registry::ItemContextSpec>(const QString &)> m_itemContextsFor;
+    std::function<const registry::ReportTemplate *(const QString &)> m_reportTemplate;
 };
 
 // ---- ICommands ----
@@ -316,7 +349,7 @@ public:
         m_hub.registerOpCatalogue(m_opsProvider ? m_opsProvider : std::move(fn));
     }
     QStringList opCatalogue() const override { return m_hub.opCatalogue(); }
-    ui::TransformHub &transforms() override { return m_appCtx.transforms(); }
+    ui::TransformHub &transforms() override { return m_appCtx.interactions().transforms(); }
 
     void registerViewAction(const QString &id, ViewActionHandler handler) override
     {
@@ -339,8 +372,14 @@ public:
     }
     intent::IIntentExecutor &executor() override { return m_executor; }
     intent::JobRecorder *recorder() override { return m_recorder; }
-    ds::DatasetHub &dataHub() override { return m_appCtx.data(); }
-    ds::SourceHub &sourcesHub() override { return m_appCtx.sources(); }
+    ds::DatasetRegistry &dataHub() override
+    {
+        return *static_cast<ds::DatasetRegistry *>(m_appCtx.registryTree().find(registry::RegistryKind::Dataset));
+    }
+    ds::SourceRegistry &sourcesHub() override
+    {
+        return *static_cast<ds::SourceRegistry *>(m_appCtx.registryTree().find(registry::RegistryKind::Source));
+    }
     ctx::InteractionHub &interactionsHub() override { return m_hub; }
 
 private:
@@ -360,11 +399,72 @@ public:
 
     QList<registry::ViewTitleActionSpec> titleActions(const QString &viewId) const override
     {
-        return m_appCtx.toolbox().titleActionsFor(viewId);
+        return (*static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
+                    m_appCtx.registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension)))
+            .titleActionsFor(viewId);
     }
 
 private:
     ctx::AppContext &m_appCtx;
+};
+
+// ---- IRibbonService：壳读回 Ribbon 页/组贡献（contributes.ribbonPages/ribbonGroups）。
+// 数据源只从 ExtensionRegistry contributes 表只读；不反向写任何注册表。纯接口第一基类。
+class RibbonServiceAdapter : public wb::IRibbonService
+{
+public:
+    RibbonServiceAdapter(ctx::AppContext &appCtx, wb::ISlotsService &slotsService, registry::ViewRegistry &views)
+        : m_appCtx(appCtx), m_slots(slotsService), m_views(&views)
+    {
+    }
+
+    QList<registry::UiAction> actionsIn(const QString &slotId) const override
+    {
+        QList<registry::UiAction> out;
+        for (const auto &bound : m_slots.actionsIn(slotId))
+            out.append(bound.action);
+        return out;
+    }
+
+    QList<registry::UiAction> dynamicActionsIn(const QString &slotId) const override
+    {
+        // 动态提供器（IActionProvider）登记在 ViewRegistry（声明面），读回按 slotId 取。
+        QList<registry::UiAction> out;
+        if (m_views)
+            for (const auto &entry : m_views->actionProvidersFor(slotId))
+                if (entry.provider)
+                    out.append(entry.provider->actionsFor(slotId));
+        return out;
+    }
+
+    QList<registry::RibbonPageDecl> ribbonPages() const override
+    {
+        QList<registry::RibbonPageDecl> out = registryRef().ribbonPages();
+        std::sort(out.begin(), out.end(), [](const registry::RibbonPageDecl &a, const registry::RibbonPageDecl &b) {
+            return a.order < b.order;
+        });
+        return out;
+    }
+
+    QList<registry::RibbonGroupDecl> ribbonGroupsOf(const QString &pageId) const override
+    {
+        QList<registry::RibbonGroupDecl> out = registryRef().ribbonGroupsOf(pageId);
+        std::sort(out.begin(), out.end(), [](const registry::RibbonGroupDecl &a, const registry::RibbonGroupDecl &b) {
+            return a.order < b.order;
+        });
+        return out;
+    }
+
+private:
+    registry::ExtensionRegistry &registryRef() const
+    {
+        return *static_cast<registry::ExtensionRegistry *>(
+            m_appCtx.registryTree().find(registry::RegistryKind::Extension));
+    }
+
+    ctx::AppContext &m_appCtx;
+    wb::ISlotsService &m_slots;
+    registry::ViewRegistry *m_views = nullptr;
 };
 
 // ---- IFormatHints（同裁定）：壳弹"按格式打开"文件对话框的显示名/过滤串。
@@ -375,7 +475,9 @@ public:
 
     QString fileFilter(const QString &formatId) const override
     {
-        auto *driver = m_appCtx.toolbox().driverForFormat(formatId);
+        auto *driver = (*static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
+                            m_appCtx.registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension)))
+                           .driverForFormat(formatId);
         if (!driver)
             return QString();
         const QStringList suf = driver->suffixes();
@@ -389,7 +491,9 @@ public:
     }
     QString displayName(const QString &formatId) const override
     {
-        auto *driver = m_appCtx.toolbox().driverForFormat(formatId);
+        auto *driver = (*static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
+                            m_appCtx.registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension)))
+                           .driverForFormat(formatId);
         return driver ? driver->displayName() : QString();
     }
 
@@ -406,7 +510,10 @@ public:
 
     QList<registry::ThemeTokenSpec> tokens() const override
     {
-        QList<registry::ThemeTokenSpec> out = m_appCtx.toolbox().themeTokensAll();
+        QList<registry::ThemeTokenSpec> out =
+            (*static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
+                 m_appCtx.registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension)))
+                .themeTokensAll();
         const QList<registry::ThemeTokenSpec> moduleTokens =
             m_hostRef.uiSlots().moduleThemeTokens();
         for (const registry::ThemeTokenSpec &t : moduleTokens)
@@ -608,7 +715,7 @@ private:
 };
 
 // ---- IConfigurationService ----
-// 声明面（ToolboxHub 的 contributes.configuration）与持久化（SettingsStore，
+// 声明面（ExtensionRegistry 的 contributes.configuration）与持久化（SettingsStore，
 // app 唯一出口）之间的唯一合并/复位/诊断出口；分层 SettingsScope：user(App) ←
 // workspace ← document。键空间 = 声明里的键原文（无第二命名空间：settings 与
 // 消费方读同一个键；旧的 "config/<键>" 位置只作一次性迁移来源）。owner unmount 后属性从
@@ -616,7 +723,7 @@ private:
 
 // core.settings 自带配置组（§5：零 owner 也能开设置）——装配层自数据。
 // id 供 openSettings(section) 精确聚焦；title/category 是对外显示名（分组靠标题，
-// id 无 VSCode 对位）。原 PreferencesDialog 承载的设置项在此补齐，删壳不丢内容：
+// id 无 VSCode 对位）。原设置对话框承载的设置项在此补齐，删壳不丢内容：
 // 主题/缓存是命令（theme.set / data.clearCache），不进配置，仍走命令面板。
 inline QList<registry::ConfigurationSpec> coreBuiltinConfigurations()
 {
@@ -660,7 +767,7 @@ inline QList<registry::ConfigurationSpec> coreBuiltinConfigurations()
     general.properties.append(editorMode);
     specs.append(general);
 
-    // 时间轴：plot.time.format（原 PreferencesDialog「时间轴」页迁来）。
+    // 时间轴：plot.time.format（原设置对话框「时间轴」页迁来）。
     registry::ConfigurationSpec timeline;
     timeline.id = QStringLiteral("core.timeline");
     timeline.title = QStringLiteral("时间轴");
@@ -745,7 +852,7 @@ public:
 
     // builtinConfigurations：工作台自带配置（core.settings 的「通用」组，§5——
     // 零扩展也能开设置；core 永不 unmount，无残留语义）。
-    ConfigurationServiceAdapter(ctx::SettingsStore &settings, registry::ToolboxHub &toolbox,
+    ConfigurationServiceAdapter(ctx::SettingsStore &settings, registry::ExtensionRegistry &toolbox,
                                 QList<registry::ConfigurationSpec> builtinConfigurations = {},
                                 ValueChangedHook valueChanged = {})
         : m_settings(settings), m_toolbox(toolbox), m_builtin(std::move(builtinConfigurations)),
@@ -788,7 +895,7 @@ public:
         migrateLegacyNamespace();
         wb::ConfigurationInspect ins;
         ins.key = key;
-        // 声明面：ToolboxHub + core 内置（core.settings「通用」组）双来源。
+        // 声明面：ExtensionRegistry + core 内置（core.settings「通用」组）双来源。
         auto scan = [&ins, &key](const registry::ConfigurationSpec &spec, const QString &owner) {
             for (const auto &prop : spec.properties)
                 if (prop.key == key)
@@ -908,7 +1015,7 @@ private:
                     continue;
                 // 历史形态一：旧 config/ 影子命名空间（本次废除）。
                 const QString legacyScoped = m_settings.scopedKey(scope, QStringLiteral("config/") + key);
-                // 历史形态二：设置页迁来之前的无作用域扁平键（旧 PreferencesDialog 直接 setValue）。
+                // 历史形态二：设置页迁来之前的无作用域扁平键（旧设置对话框直接 setValue）。
                 const bool hasScoped = m_settings.contains(legacyScoped);
                 const bool hasBare = scope == context::SettingsScope::App && m_settings.contains(key);
                 if (!hasScoped && !hasBare)
@@ -971,7 +1078,7 @@ private:
     }
 
     ctx::SettingsStore &m_settings;               // 借用：app 唯一持久化出口
-    registry::ToolboxHub &m_toolbox;              // 借用：contributes.configuration 声明面
+    registry::ExtensionRegistry &m_toolbox;       // 借用：contributes.configuration 声明面
     QList<registry::ConfigurationSpec> m_builtin; // core.settings 自带（永不 unmount）
     ValueChangedHook m_valueChanged;              // 写后联动（装配层注入，配置服务不解释 key）
     mutable QList<wb::IConfigurationService::Diagnostic> m_patternViolations;

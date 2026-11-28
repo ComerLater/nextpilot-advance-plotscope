@@ -50,6 +50,32 @@ set_target_properties(ps_gui_theme PROPERTIES AUTOMOC ON CXX_STANDARD 17 POSITIO
 
 add_library(ps_gui OBJECT
     # --- 外壳层 ---
+    # M4 第 2 笔：MenuId / MenuRegistry / ActionBar（全仓唯一 QAction 出口）
+    actions/ActionBar.cpp
+    actions/ActionBar.h
+
+    # M4：VSCode Workbench 的 Part / Layout（6 个 Part + Layout）
+    parts/Dimension.h
+    parts/Part.cpp
+    parts/Part.h
+    parts/Layout.cpp
+    parts/Layout.h
+    parts/RibbonPart.cpp
+    parts/RibbonPart.h
+    parts/ActivitybarPart.cpp
+    parts/ActivitybarPart.h
+    parts/SidebarPart.cpp
+    parts/SidebarPart.h
+    parts/PanelPart.cpp
+    parts/PanelPart.h
+    parts/EditorPart.cpp
+    parts/EditorPart.h
+    parts/StatusbarPart.cpp
+    parts/StatusbarPart.h
+    parts/ViewPane.cpp
+    parts/ViewPane.h
+    parts/ViewContainerModel.cpp
+    parts/ViewContainerModel.h
     shell/MainWindow.cpp
     shell/MainWindow.h
     shell/ShellBinder.cpp
@@ -104,7 +130,7 @@ target_include_directories(ps_gui PUBLIC
 # （ps_host / ps_context / ps_command / ps_gui_theme / ps_widgets / 其余 libs/*）
 # 与 Qt；不许出现任何业务模块、工具箱、解析器库，也不含 fastplot / ps_protocol——
 # 绘图在 plot 模块、协议在 protocol 模块，外壳零业务链接（A1a）。
-# 装配权上移到组合根（exe / 装配层），壳只接收服务接口（ISlotsService 等，经装配层注册）。
+# 装配权上移到组合根（exe / 装配层），壳只接收 workbench 读回服务接口（经装配层注册）。
 # 下方护栏在 configure 期硬拦。
 target_link_libraries(ps_gui PUBLIC ps_host ps_context ps_command ps_gui_theme ps_widgets
                                     ads::ads SARibbonBar::SARibbonBar

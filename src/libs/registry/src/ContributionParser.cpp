@@ -4,10 +4,8 @@
 #include <QJsonValue>
 #include <QSet>
 
-namespace nextpilot::plotscope::registry
-{
-namespace
-{
+namespace nextpilot::plotscope::registry {
+namespace {
 void addIssue(ParseResult &r, const QString &keyPath, const QString &msg)
 {
     r.ok = false;
@@ -27,25 +25,22 @@ bool isKnownTopKey(const QString &key)
 bool isKnownCommandField(const QString &key)
 {
     static const QSet<QString> allowed = {QStringLiteral("command"), QStringLiteral("title"),
-                                          QStringLiteral("category"), QStringLiteral("icon"),
-                                          QStringLiteral("order")};
+                                          QStringLiteral("category"), QStringLiteral("icon"), QStringLiteral("order")};
     return allowed.contains(key);
 }
 
 // menus 条目通用字段。
 bool isKnownMenuField(const QString &key)
 {
-    static const QSet<QString> allowed = {QStringLiteral("command"), QStringLiteral("group"),
-                                          QStringLiteral("when"), QStringLiteral("label"),
-                                          QStringLiteral("icon"), QStringLiteral("order")};
+    static const QSet<QString> allowed = {QStringLiteral("command"), QStringLiteral("group"), QStringLiteral("when"),
+                                          QStringLiteral("label"),   QStringLiteral("icon"),  QStringLiteral("order")};
     return allowed.contains(key);
 }
 
 bool isKnownViewContainerField(const QString &key)
 {
-    static const QSet<QString> allowed = {QStringLiteral("id"), QStringLiteral("title"),
-                                          QStringLiteral("area"), QStringLiteral("icon"),
-                                          QStringLiteral("order")};
+    static const QSet<QString> allowed = {QStringLiteral("id"), QStringLiteral("title"), QStringLiteral("area"),
+                                          QStringLiteral("icon"), QStringLiteral("order")};
     return allowed.contains(key);
 }
 
@@ -58,17 +53,15 @@ bool isKnownViewField(const QString &key)
 
 bool isKnownStatusField(const QString &key)
 {
-    static const QSet<QString> allowed = {QStringLiteral("id"), QStringLiteral("side"),
-                                          QStringLiteral("priority"), QStringLiteral("when"),
-                                          QStringLiteral("icon"), QStringLiteral("tooltip"),
-                                          QStringLiteral("commandId"), QStringLiteral("text")};
+    static const QSet<QString> allowed = {
+        QStringLiteral("id"),   QStringLiteral("side"),    QStringLiteral("priority"),  QStringLiteral("when"),
+        QStringLiteral("icon"), QStringLiteral("tooltip"), QStringLiteral("commandId"), QStringLiteral("text")};
     return allowed.contains(key);
 }
 
 bool isKnownCustomEditorField(const QString &key)
 {
-    static const QSet<QString> allowed = {QStringLiteral("viewType"),
-                                          QStringLiteral("displayName"),
+    static const QSet<QString> allowed = {QStringLiteral("viewType"), QStringLiteral("displayName"),
                                           QStringLiteral("selector"), QStringLiteral("priority")};
     return allowed.contains(key);
 }
@@ -125,14 +118,12 @@ bool isKnownContainerArea(const QString &area)
 }
 
 // 校验 id 字段：空/非字符串 → 记 issue 返回 false。
-bool requireId(const QJsonObject &obj, const QString &path, const QString &field,
-               ParseResult &r)
+bool requireId(const QJsonObject &obj, const QString &path, const QString &field, ParseResult &r)
 {
     const QJsonValue v = obj.value(field);
     if (!v.isString() || v.toString().isEmpty())
     {
-        addIssue(r, path + QLatin1Char('.') + field,
-                 QStringLiteral("缺 %1（或类型不符），跳过该条").arg(field));
+        addIssue(r, path + QLatin1Char('.') + field, QStringLiteral("缺 %1（或类型不符），跳过该条").arg(field));
         return false;
     }
     return true;
@@ -203,8 +194,7 @@ ParseResult parseContributes(const QJsonObject &contributes, const QString &owne
                 const QJsonObject obj = arr.at(i).toObject();
                 for (auto f = obj.constBegin(); f != obj.constEnd(); ++f)
                     if (!isKnownCommandField(f.key()))
-                        addIssue(result, path + QLatin1Char('.') + f.key(),
-                                 QStringLiteral("命令条目未知字段，跳过"));
+                        addIssue(result, path + QLatin1Char('.') + f.key(), QStringLiteral("命令条目未知字段，跳过"));
 
                 if (!requireId(obj, path, QStringLiteral("command"), result))
                     continue;
@@ -235,16 +225,12 @@ ParseResult parseContributes(const QJsonObject &contributes, const QString &owne
                 const QString placeKey = place.key();
                 // 固定 place 枚举 + menubar/<pageId> 前缀（§3.0.1 勘误④）。
                 const bool knownPlace =
-                    placeKey == QLatin1String("commandPalette") ||
-                    placeKey == QLatin1String("editor/context") ||
-                    placeKey == QLatin1String("view/title") ||
-                    placeKey == QLatin1String("view/item/context") ||
-                    placeKey == QLatin1String("statusbar") ||
-                    placeKey.startsWith(QLatin1String("menubar/"));
+                    placeKey == QLatin1String("commandPalette") || placeKey == QLatin1String("editor/context") ||
+                    placeKey == QLatin1String("view/title") || placeKey == QLatin1String("view/item/context") ||
+                    placeKey == QLatin1String("statusbar") || placeKey.startsWith(QLatin1String("menubar/"));
                 if (!knownPlace)
                 {
-                    addIssue(result, QStringLiteral("menus.") + placeKey,
-                             QStringLiteral("未支持的菜单 place，跳过"));
+                    addIssue(result, QStringLiteral("menus.") + placeKey, QStringLiteral("未支持的菜单 place，跳过"));
                     continue;
                 }
                 if (!place.value().isArray())
@@ -270,7 +256,7 @@ ParseResult parseContributes(const QJsonObject &contributes, const QString &owne
 
                     if (!requireId(obj, path, QStringLiteral("command"), result))
                         continue;
-                    // commandPalette 保持 M1 专用结构（向后兼容 ExtensionActivationService）。
+                    // commandPalette 保持 M1 专用结构（向后兼容 ExtensionService 命令绑定）。
                     if (placeKey == QLatin1String("commandPalette"))
                     {
                         CommandPaletteMenuItem item;
@@ -314,8 +300,7 @@ ParseResult parseContributes(const QJsonObject &contributes, const QString &owne
                 const QJsonObject obj = arr.at(i).toObject();
                 for (auto f = obj.constBegin(); f != obj.constEnd(); ++f)
                     if (!isKnownViewContainerField(f.key()))
-                        addIssue(result, path + QLatin1Char('.') + f.key(),
-                                 QStringLiteral("容器条目未知字段，跳过"));
+                        addIssue(result, path + QLatin1Char('.') + f.key(), QStringLiteral("容器条目未知字段，跳过"));
                 if (!requireId(obj, path, QStringLiteral("id"), result))
                     continue;
                 const QString id = obj.value(QStringLiteral("id")).toString();
@@ -359,8 +344,7 @@ ParseResult parseContributes(const QJsonObject &contributes, const QString &owne
                 const QJsonObject obj = arr.at(i).toObject();
                 for (auto f = obj.constBegin(); f != obj.constEnd(); ++f)
                     if (!isKnownViewField(f.key()))
-                        addIssue(result, path + QLatin1Char('.') + f.key(),
-                                 QStringLiteral("视图条目未知字段，跳过"));
+                        addIssue(result, path + QLatin1Char('.') + f.key(), QStringLiteral("视图条目未知字段，跳过"));
                 if (!requireId(obj, path, QStringLiteral("id"), result))
                     continue;
                 const QString id = obj.value(QStringLiteral("id")).toString();
@@ -423,16 +407,19 @@ ParseResult parseContributes(const QJsonObject &contributes, const QString &owne
                 const QJsonObject obj = arr.at(i).toObject();
                 for (auto f = obj.constBegin(); f != obj.constEnd(); ++f)
                     if (!isKnownStatusField(f.key()))
-                        addIssue(result, path + QLatin1Char('.') + f.key(),
-                                 QStringLiteral("状态栏条目未知字段，跳过"));
+                        addIssue(result, path + QLatin1Char('.') + f.key(), QStringLiteral("状态栏条目未知字段，跳过"));
                 if (!requireId(obj, path, QStringLiteral("id"), result))
                     continue;
                 const QString id = obj.value(QStringLiteral("id")).toString();
                 if (!claimId(id, path + QStringLiteral(".id")))
                     continue;
-                ContributedStatus s;
+                StatusSpec s;
                 s.id = id;
-                s.side = obj.value(QStringLiteral("side")).toString();
+                s.side =
+                    obj.value(QStringLiteral("side")).toString().compare(QLatin1String("right"), Qt::CaseInsensitive) ==
+                            0
+                        ? StatusSide::Right
+                        : StatusSide::Left;
                 s.priority = readInt(obj, QStringLiteral("priority"));
                 s.when = obj.value(QStringLiteral("when")).toString();
                 s.icon = obj.value(QStringLiteral("icon")).toString();
@@ -462,8 +449,7 @@ ParseResult parseContributes(const QJsonObject &contributes, const QString &owne
                 const QJsonObject obj = arr.at(i).toObject();
                 for (auto f = obj.constBegin(); f != obj.constEnd(); ++f)
                     if (!isKnownCustomEditorField(f.key()))
-                        addIssue(result, path + QLatin1Char('.') + f.key(),
-                                 QStringLiteral("编辑器条目未知字段，跳过"));
+                        addIssue(result, path + QLatin1Char('.') + f.key(), QStringLiteral("编辑器条目未知字段，跳过"));
                 if (!requireId(obj, path, QStringLiteral("viewType"), result))
                     continue;
                 const QString id = obj.value(QStringLiteral("viewType")).toString();
@@ -472,8 +458,7 @@ ParseResult parseContributes(const QJsonObject &contributes, const QString &owne
                 // （裁定 52443049；seenIds 命令/视图/颜色/状态栏/编辑器共用，无回退手段）。
                 if (!obj.value(QStringLiteral("selector")).isArray())
                 {
-                    addIssue(result, path + QStringLiteral(".selector"),
-                             QStringLiteral("selector 缺失或非法，整条拒"));
+                    addIssue(result, path + QStringLiteral(".selector"), QStringLiteral("selector 缺失或非法，整条拒"));
                     continue;
                 }
                 ContributedCustomEditor e;
@@ -499,16 +484,14 @@ ParseResult parseContributes(const QJsonObject &contributes, const QString &owne
                     sel.filenamePattern = sobj.value(QStringLiteral("filenamePattern")).toString();
                     if (sel.mime.isEmpty() && sel.filenamePattern.isEmpty())
                     {
-                        addIssue(result, selPath,
-                                 QStringLiteral("selector 缺 mime 与 filenamePattern，跳过"));
+                        addIssue(result, selPath, QStringLiteral("selector 缺 mime 与 filenamePattern，跳过"));
                         continue;
                     }
                     e.selector.append(sel);
                 }
                 if (e.selector.isEmpty())
                 {
-                    addIssue(result, path + QStringLiteral(".selector"),
-                             QStringLiteral("selector 全非法，整条拒"));
+                    addIssue(result, path + QStringLiteral(".selector"), QStringLiteral("selector 全非法，整条拒"));
                     continue;
                 }
                 if (!claimId(id, path + QStringLiteral(".viewType")))

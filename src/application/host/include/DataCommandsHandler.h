@@ -5,6 +5,7 @@
 #include "IIntentExecutor.h"
 #include "Intent.h"
 #include "OpDispatch.h"
+#include "IngestPipeline.h"
 
 #include <map>
 #include <vector>
@@ -12,7 +13,6 @@
 
 #include <QElapsedTimer>
 #include <QSocketNotifier>
-#include <QCoreApplication>
 #include <QCoreApplication>
 #include <QTimer>
 #include <QTcpServer>
@@ -50,8 +50,9 @@ class DataCommandsHandler final : public nextpilot::plotscope::intent::IIntentHa
 {
 public:
     explicit DataCommandsHandler(nextpilot::plotscope::context::AppContext &appCtx,
-                                 nextpilot::plotscope::intent::IIntentExecutor &executor)
-        : m_app(appCtx), m_executor(executor)
+                                 nextpilot::plotscope::intent::IIntentExecutor &executor,
+                                 nextpilot::plotscope::context::IngestPipeline &ingest)
+        : m_app(appCtx), m_executor(executor), m_ingest(ingest)
     {
         buildDispatch();
         // 泵：50Hz（20ms）批量 drain，单 tick 每源预算 256KB。
@@ -144,6 +145,7 @@ private:
     nextpilot::plotscope::foundation::Result<nextpilot::plotscope::intent::IntentResult> refreshDerives(const nextpilot::plotscope::intent::Intent &intent);
 
     nextpilot::plotscope::context::AppContext &m_app;
+    nextpilot::plotscope::context::IngestPipeline &m_ingest;
     nextpilot::plotscope::intent::IIntentExecutor &m_executor;
     nextpilot::plotscope::intent::OpDispatch m_dispatch;
 

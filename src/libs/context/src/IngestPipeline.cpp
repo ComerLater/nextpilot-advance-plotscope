@@ -10,16 +10,12 @@ namespace err = nextpilot::plotscope::foundation::err;
 using nextpilot::plotscope::parser::ParserHub;
 using nextpilot::plotscope::dataset::ValueType;
 
-using nextpilot::plotscope::dataset::DatasetHub;
 using nextpilot::plotscope::dataset::Dataset;
+using nextpilot::plotscope::dataset::DatasetRegistry;
 using nextpilot::plotscope::dataset::FrameColumn;
 using nextpilot::plotscope::parser::ParserEntry;
 
-
-IngestPipeline::IngestPipeline(DatasetHub &repo, QObject *parent)
-    : QObject(parent), m_repo(repo)
-{
-}
+IngestPipeline::IngestPipeline(DatasetRegistry &repo, QObject *parent) : QObject(parent), m_repo(repo) {}
 
 IngestPipeline::~IngestPipeline()
 {

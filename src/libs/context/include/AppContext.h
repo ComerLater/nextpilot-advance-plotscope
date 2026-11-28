@@ -1,10 +1,6 @@
 #pragma once
 
-#include "DatasetHub.h"
-#include "SourceHub.h"
-#include "ToolboxHub.h"
 #include "RegistryTree.h"
-#include "IngestPipeline.h"
 #include "InteractionHub.h"
 #include "StatusHub.h"
 #include "MessageLog.h"
@@ -13,24 +9,31 @@
 #include "Result.h"
 #include "Selection.h"
 #include "SettingsStore.h"
-#include "Transform.h"
 
 #include <QHash>
 #include <QVariant>
 #include <functional>
+#include <memory>
 #include <QJsonObject>
 #include <QObject>
 #include <QString>
 
-namespace nextpilot::plotscope::context
-{
+// vscode.workspace 对位（只前向声明，context 不依赖 workbench 实现）。
+namespace nextpilot::plotscope::workbench {
+class IWorkspace;
+}
 
-using nextpilot::plotscope::uischema::TransformHub;
+// A0 §八.2：注册表类型只在装配层内部持有，头文件对外只留前向声明。
+namespace nextpilot::plotscope::dataset {
+}
+namespace nextpilot::plotscope::registry {
+}
+namespace nextpilot::plotscope::uischema {
+}
+
+namespace nextpilot::plotscope::context {
 
 using nextpilot::plotscope::foundation::Result;
-using nextpilot::plotscope::dataset::DatasetHub;
-using nextpilot::plotscope::dataset::SourceHub;
-using nextpilot::plotscope::registry::ToolboxHub;
 using nextpilot::plotscope::registry::RegistryTree;
 using nextpilot::plotscope::uischema::Selection;
 
@@ -40,11 +43,10 @@ using nextpilot::plotscope::uischema::Selection;
 // 为什么需要它（而不是让模块各自去找）：
 //   在此之前，app 级状态分散在三处——
 //     App 持 repo/recorder、RuntimeHost 持 settings/toolbox、注册表是全局静态。
-//   于是模块取数据要走 ctx.data()，取设置要走 ctx.host().settings()，
 //   两条路径、两种持有方式。新增能力时不知道该挂哪儿——这是"上帝类"的温床。
 //
 // AppContext 把**运行态**收敛到一处，模块只认一个入口：
-//   ctx.app().data() / .settings() / .toolbox() / .sources() / .ingest()
+//   ctx.app().workspace().dataset() / .settings() / .toolbox() / .sources() / .ingest()
 //
 // 铁律（必须守住）：
 //  1. **绝不包含任何 QWidget 指针或 GUI 专属类型**。
@@ -69,9 +71,11 @@ public:
 
     // === 运行态访问器（模块唯一入口）===
 
-    // 数据集仓库（数据本体由 Rust 拥有，这里只是句柄仓库）。
-    DatasetHub &data() { return m_repo; }
-    const DatasetHub &data() const { return m_repo; }
+    // vscode.workspace 对位：模块按需读贡献查询面（驱动/解析器/id/itemContexts/报表模板），
+    // 不接触扩展注册表本体（A0 §八.3）。装配层在服务注册前注入。
+    void setWorkspace(nextpilot::plotscope::workbench::IWorkspace *workspace) { m_workspace = workspace; }
+    nextpilot::plotscope::workbench::IWorkspace &workspace() const { return *m_workspace; }
+    bool hasWorkspace() const { return m_workspace != nullptr; }
 
     // 统一设置（三作用域）。
     SettingsStore &settings() { return m_settings; }
@@ -79,15 +83,7 @@ public:
 
     // 扩展注册表（ExtensionRegistry 的对位）：内置包、外部扩展、vscode contributes
     // 都登记在这唯一一张表里——"贡献"是扩展的属性，不是第二个宿主（IKXUT9 §零.1）。
-    ToolboxHub &toolbox() { return m_toolbox; }
-    const ToolboxHub &toolbox() const { return m_toolbox; }
 
-    // 数据源实例登记（多源并存）。
-    SourceHub &sources() { return m_sources; }
-    const SourceHub &sources() const { return m_sources; }
-
-    // 摄取管道（单前端 → 多解析器扇出 → 多数据集）。
-    IngestPipeline &ingest() { return m_ingest; }
 
     // 交互注册表（viewAction / property / transform 的注册与派发）。
     // 这是运行时路由行为，与上面的静态运行态数据分开：AppContext 只 owns
@@ -106,8 +102,6 @@ public:
     // 派生序列注册表：独立派生字段（不写回 dataset，原始数据零污染）。
     // data.derive 登记结果，data.series/plot.channel 按派生名穿透读数，
     // 数据树经 data.derive.list 展示。
-    TransformHub &transforms() { return m_transforms; }
-    const TransformHub &transforms() const { return m_transforms; }
     DerivedSeriesHub &derivedHub() { return m_derivedHub; }
     const DerivedSeriesHub &derivedHub() const { return m_derivedHub; }
 
@@ -148,9 +142,9 @@ public:
     // 但存的是 id 指针而非数据副本——数据始终在仓库里，这里不复制一份。
     //
     // **两套 id 空间，不可混用**：
-    //   · activeSourceId —— **数据源** id（SourceHub 的键）。
+    //   · activeSourceId —— **数据源** id（SourceRegistry 的键）。
     //     谁重载/导出/关闭，以它为准。
-    //   · activeDatasetId —— **数据集** id（DatasetHub 的键）。活动通道
+    //   · activeDatasetId —— **数据集** id（DatasetRegistry 的键）。活动通道
     //     落在哪个数据集上。
     // 一个源可扇出多个解析器、产出多个数据集，故二者不是一回事。
     // 曾把 datasetId 写进 activeSourceId，于是 data.reload 拿数据集 id 去查源表，
@@ -172,7 +166,7 @@ public:
     //   走共享状态则是星形——新增视图只订阅信号，不影响已有视图。
     //
     // 注意：它只改活动**数据集**，不动 activeSourceId —— 源 id 由调用方
-    // 显式给出（数据集 → 源的反查用 SourceHub::sourceOfDataset）。
+    // 显式给出（数据集 → 源的反查用 SourceRegistry::sourceOfDataset）。
     void setActiveChannel(int datasetId, const QString &table, const QString &column);
 
     void clearActiveChannel();
@@ -228,25 +222,24 @@ Q_SIGNALS:
 private:
     // 注册树必须先声明（成员逆序析构：后声明的节点先亡、向仍活着的树摘除自身）。
     RegistryTree m_registryTree;
-    DatasetHub m_repo;
+    // §八.2：四个注册表实例收进 Impl（装配层内部持有），头文件不再出现字段。
+    struct Impl;
+    std::unique_ptr<Impl> m_impl;
+    nextpilot::plotscope::workbench::IWorkspace *m_workspace = nullptr;
     SettingsStore m_settings;
-    ToolboxHub m_toolbox; // 唯一扩展注册表：内置包 + contributes 贡献面都在此
-    SourceHub m_sources;
-    IngestPipeline m_ingest; // 依赖 m_repo，故必须在其后构造
 
     InteractionHub m_interactions;
     StatusHub m_status; // 状态栏登记处：模块推文案，壳订阅渲染（不含 QWidget）
     MessageLog m_messages;        // 进程级消息流（纯数据，面板订阅后增量渲染）
     PersistentStateHub m_states;  // 结构化状态的登记表（收集/恢复由外壳驱动）
-    TransformHub m_transforms;
     DerivedSeriesHub m_derivedHub; // 派生序列注册表：独立派生字段
     std::function<bool(const QString &, QString *)> m_invokeCommand;
     std::function<bool(const QString &, const QHash<QString, QVariant> &)> m_evalWhen;
     Selection m_selection;       // 当前统一选中对象
 
-    int m_activeSourceId = -1;   // 数据源 id（SourceHub 键）
+    int m_activeSourceId = -1;              // 数据源 id（SourceRegistry 键）
     QHash<int, double> m_sourceTimeOffsets; // 源级显示时间 offset（秒，缺省 0）
-    int m_activeDatasetId = -1;  // 活动通道所在的数据集 id（DatasetHub 键）
+    int m_activeDatasetId = -1;             // 活动通道所在的数据集 id（DatasetRegistry 键）
     QString m_activeTable;
     QString m_activeColumn;
 };

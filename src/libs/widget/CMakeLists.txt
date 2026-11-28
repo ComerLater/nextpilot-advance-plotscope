@@ -12,6 +12,8 @@
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui)
 
 add_library(ps_widgets OBJECT
+    CompositeBar.cpp
+    CompositeBar.h
     TransformEditorDialog.cpp
     TransformEditorDialog.h
     TransformField.cpp

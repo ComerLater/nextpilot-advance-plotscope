@@ -10,8 +10,7 @@
 // 它不认识任何 Widgets：只声明 UiAction（纯数据）。真正的对话框由外壳按 action id
 // 特判弹出（复用 ProtocolEditorDialog / ProtocolInspectorDialog），因此 CLI/headless
 // 装载本模块也不会引入 Qt Widgets。
-namespace nextpilot::plotscope::host
-{
+namespace nextpilot::plotscope::host {
 class ProtocolIntentHandler;
 }
 
@@ -23,13 +22,13 @@ class ProtocolModule final : public nextpilot::plotscope::host::IWorkbenchContri
 {
     Q_OBJECT
 public:
-    static nextpilot::plotscope::host::ModuleInfo moduleInfo();
+    static nextpilot::plotscope::registry::ExtensionDescription extensionDescription();
     static nextpilot::plotscope::host::IWorkbenchContribution *create();
 
-    nextpilot::plotscope::host::ModuleInfo info() const override;
+    nextpilot::plotscope::registry::ExtensionDescription description() const override;
     void initialize(nextpilot::plotscope::instantiation::InstantiationService &services) override;
     void onAttach(nextpilot::plotscope::host::IUiContext &ui) override;
-    nextpilot::plotscope::registry::ModuleContributions contributes() const override;
+    nextpilot::plotscope::registry::ContributesDoc contributes() const override;
 
 private:
     // 协议意图处理器（校验/试算/模板库）：headless 也注册，GUI 按钮最终也走它。

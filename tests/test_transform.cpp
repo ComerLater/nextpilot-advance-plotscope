@@ -1,4 +1,5 @@
 // 统一变换 + 选择 + 能力防错契约测试（headless）。
+#include "Intent.h"
 //
 // 钉死三件事：
 //   1. Selection 统一模型（源/表/列/曲线/轴）可序列化、key 稳定；

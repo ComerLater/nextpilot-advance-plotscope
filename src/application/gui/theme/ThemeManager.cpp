@@ -1,4 +1,5 @@
 #include "ThemeManager.h"
+#include "Intent.h"
 #include "ErrorCodes.h"
 #include "ThemeTokens.h"
 

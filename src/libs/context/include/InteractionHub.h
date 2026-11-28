@@ -18,14 +18,14 @@
 namespace nextpilot::plotscope::context
 {
 
-using nextpilot::plotscope::foundation::Result;
 using nextpilot::plotscope::foundation::fail;
-using nextpilot::plotscope::uischema::Selection;
-using nextpilot::plotscope::uischema::SelectionKind;
-using nextpilot::plotscope::uischema::TransformScriptOps;
+using nextpilot::plotscope::foundation::Result;
 using nextpilot::plotscope::uischema::FilterOps;
 using nextpilot::plotscope::uischema::MarkerOps;
-
+using nextpilot::plotscope::uischema::Selection;
+using nextpilot::plotscope::uischema::SelectionKind;
+using nextpilot::plotscope::uischema::TransformHub;
+using nextpilot::plotscope::uischema::TransformScriptOps;
 
 // 交互注册表：容纳"注册 + 派发"型扩展点（viewAction / property / transform）。
 // 这些是运行时路由行为，不是静态运行态数据，故独立于 AppContext。
@@ -96,6 +96,10 @@ public:
     bool hasTransformScriptOps() const { return m_transformScriptOps.valid(); }
     const TransformScriptOps &transformScriptOps() const { return m_transformScriptOps; }
 
+    // A0 §八.2：变换描述符注册表随交互 hub 走，AppContext 不再对外开 transforms()。
+    TransformHub &transforms() { return m_transforms; }
+    const TransformHub &transforms() const { return m_transforms; }
+
     // op 目录：速查面板/自动补全的数据源。存 provider 而非快照——意图 handler
     // 是各模块 initialize 时逐个注册的，快照会漏掉后注册者；调用时实时拉取，
     // 保证目录与实际可执行意图一致。
@@ -109,6 +113,7 @@ private:
     QHash<int, PropertySetter> m_propertySetters;
     TransformEvalFn m_transformEvaluator;
     TransformScriptOps m_transformScriptOps;
+    TransformHub m_transforms;
     FilterOps m_filterOps;
     MarkerOps m_markerOps;
     OpCatalogueFn m_opCatalogue;

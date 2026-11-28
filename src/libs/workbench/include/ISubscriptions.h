@@ -20,7 +20,7 @@ public:
     virtual ~ISubscriptions() = default;
 
     // 登记一个可撤销订阅；空句柄忽略。
-    virtual void add(Subscription sub) = 0;
+    virtual void add(foundation::Subscription sub) = 0;
     virtual int count() const = 0;
     // 全部退订并清空（owner 卸载时调用）。
     virtual void disposeAll() = 0;
@@ -31,7 +31,7 @@ class SubscriptionBag final : public ISubscriptions
 {
 public:
     ~SubscriptionBag() override { disposeAll(); }
-    void add(Subscription sub) override
+    void add(foundation::Subscription sub) override
     {
         if (sub)
             m_items.append(sub);
@@ -39,13 +39,13 @@ public:
     int count() const override { return m_items.size(); }
     void disposeAll() override
     {
-        for (const Subscription &s : m_items)
+        for (const foundation::Subscription &s : m_items)
             QObject::disconnect(s);
         m_items.clear();
     }
 
 private:
-    QVector<Subscription> m_items;
+    QVector<foundation::Subscription> m_items;
 };
 
 } // namespace nextpilot::plotscope::workbench

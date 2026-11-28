@@ -1,6 +1,5 @@
 #include "ScriptModule.h"
 
-#include "BuiltinModuleHub.h"
 #include "BatchRunner.h"
 #include "PythonHandler.h"
 #include "IIntentExecutor.h"
@@ -39,13 +38,11 @@ class ScriptModule::Handler final : public QObject, public IIntentHandler
 public:
     explicit Handler(IIntentExecutor &executor, JobRecorder *recorder,
                      ScriptFacade::ViewActionDispatcher viewDispatcher, QObject *parent)
-        : QObject(parent), m_executor(executor), m_recorder(recorder),
-          m_viewDispatcher(std::move(viewDispatcher)) {}
-
-    bool canHandle(const Intent &intent) const override
+        : QObject(parent), m_executor(executor), m_recorder(recorder), m_viewDispatcher(std::move(viewDispatcher))
     {
-        return intent.op == QStringLiteral("script.run");
     }
+
+    bool canHandle(const Intent &intent) const override { return intent.op == QStringLiteral("script.run"); }
 
     Result<IntentResult> execute(const Intent &intent) override
     {
@@ -86,23 +83,20 @@ private:
     ScriptFacade::ViewActionDispatcher m_viewDispatcher;
 };
 
-ModuleInfo ScriptModule::moduleInfo()
+ExtensionDescription ScriptModule::extensionDescription()
 {
-    return ModuleInfo{
-        QStringLiteral("mod.script"),
-        QStringLiteral("脚本模块"),
-        QStringLiteral("1.0"),
-        {QStringLiteral("script.runner")},
-        {} // 不强依赖具体模块：脚本能力通过门面按需发意图
-    };
+    ExtensionDescription d;
+    d.identifier = QStringLiteral("mod.script");
+    d.name = QStringLiteral("脚本模块");
+    d.version = QStringLiteral("1.0");
+    d.isBuiltin = true;
+    d.activationEvents = {QStringLiteral("*")};
+    return d;
 }
 
 IWorkbenchContribution *ScriptModule::create() { return new ScriptModule(); }
 
-ModuleInfo ScriptModule::info() const
-{
-    return moduleInfo();
-}
+ExtensionDescription ScriptModule::description() const { return extensionDescription(); }
 
 void ScriptModule::initialize(InstantiationService &services)
 {
@@ -183,15 +177,13 @@ void ScriptModule::initialize(InstantiationService &services)
             if (!picked.contains(QStringLiteral("dir")))
             {
                 Result<QVariant> po{QVariant()};
-                if (!batchReg->dispatchViewAction(QStringLiteral("data.batch.pick"),
-                                                  QVariantMap(), po)
-                    || !po.value().isValid())
+                if (!batchReg->dispatchViewAction(QStringLiteral("data.batch.pick"), QVariantMap(), po) ||
+                    !po.value().isValid())
                     return fail(err::Args, QStringLiteral("未选择批量目录/脚本"));
                 picked = po.value().toMap();
             }
-            if (!picked.contains(QStringLiteral("dir"))
-                || (!picked.contains(QStringLiteral("script"))
-                    && !picked.contains(QStringLiteral("source"))))
+            if (!picked.contains(QStringLiteral("dir")) ||
+                (!picked.contains(QStringLiteral("script")) && !picked.contains(QStringLiteral("source"))))
                 return fail(err::Args, QStringLiteral("批量运行需要 dir 与 script/source"));
             Intent bi;
             bi.op = QStringLiteral("data.batch.run");
@@ -235,13 +227,10 @@ void ScriptModule::initialize(InstantiationService &services)
         const auto *e = cat->find(id);
         if (!e)
             return fail(err::NoEnt, QStringLiteral("未知过滤器: %1").arg(id));
-        return Result<QJsonObject>(
-            nextpilot::plotscope::script::FilterCatalogue::descriptorToJson(e->cls));
+        return Result<QJsonObject>(nextpilot::plotscope::script::FilterCatalogue::descriptorToJson(e->cls));
     };
-    filterOps.applySeries = [cat](const QString &id, const QJsonObject &params,
-                                  const QVector<double> &t, const QVector<double> &v) {
-        return cat->applySeries(id, params, t, v);
-    };
+    filterOps.applySeries = [cat](const QString &id, const QJsonObject &params, const QVector<double> &t,
+                                  const QVector<double> &v) { return cat->applySeries(id, params, t, v); };
     services.getService<IScriptCapabilities>(QStringLiteral("script.capabilities"))
         ->registerFilterOps(std::move(filterOps));
 
@@ -286,16 +275,14 @@ void ScriptModule::initialize(InstantiationService &services)
     const QByteArray dirOverride = qgetenv("PS_SCRIPTS_DIR");
     m_scriptLib = std::make_unique<nextpilot::plotscope::script::LuaScriptLibrary>(capsRef.transforms());
     m_scriptLib->setOpsDir(dirOverride.isEmpty() ? QStringLiteral("scripts/ops")
-                                                  : QString::fromLocal8Bit(dirOverride.constData()));
+                                                 : QString::fromLocal8Bit(dirOverride.constData()));
     m_scriptLib->loadAll();
 
     TransformScriptOps ops;
     ops.resolve = [this](const QString &scriptId, const QString &snapshot) {
         return m_scriptLib->resolveSource(scriptId, snapshot);
     };
-    ops.save = [this](const QString &name, const QByteArray &source) {
-        return m_scriptLib->save(name, source);
-    };
+    ops.save = [this](const QString &name, const QByteArray &source) { return m_scriptLib->save(name, source); };
     ops.describe = [this](const QByteArray &source, const QString &name) {
         return m_scriptLib->describe(source, name);
     };
@@ -349,8 +336,7 @@ void ScriptModule::registerWorkbenchActions(nextpilot::plotscope::uischema::IScr
             {
                 Intent py;
                 py.op = QStringLiteral("script.py.exec");
-                py.params.insert(QStringLiteral("source"),
-                                 QString::fromUtf8(source));
+                py.params.insert(QStringLiteral("source"), QString::fromUtf8(source));
                 const Result<IntentResult> r = executor.execute(py);
                 if (!r)
                 {
@@ -508,13 +494,17 @@ void ScriptModule::registerWorkbenchActions(nextpilot::plotscope::uischema::IScr
         });
 
     // 控制通道：调试暂停期由编辑器工具条/快捷键触发。无会话/未暂停时明确报错。
-    struct DebugCmd { const char *id; void (nextpilot::plotscope::script::LuaEngine::*fn)(); };
+    struct DebugCmd
+    {
+        const char *id;
+        void (nextpilot::plotscope::script::LuaEngine::*fn)();
+    };
     static const DebugCmd kDebugCmds[] = {
         {"script.workbench.debug.continue", &nextpilot::plotscope::script::LuaEngine::debugContinue},
         {"script.workbench.debug.stepover", &nextpilot::plotscope::script::LuaEngine::debugStepOver},
-        {"script.workbench.debug.stepin",   &nextpilot::plotscope::script::LuaEngine::debugStepIn},
-        {"script.workbench.debug.stepout",  &nextpilot::plotscope::script::LuaEngine::debugStepOut},
-        {"script.workbench.debug.stop",     &nextpilot::plotscope::script::LuaEngine::debugStop},
+        {"script.workbench.debug.stepin", &nextpilot::plotscope::script::LuaEngine::debugStepIn},
+        {"script.workbench.debug.stepout", &nextpilot::plotscope::script::LuaEngine::debugStepOut},
+        {"script.workbench.debug.stop", &nextpilot::plotscope::script::LuaEngine::debugStop},
     };
     for (const DebugCmd &cmd : kDebugCmds)
     {
@@ -566,10 +556,9 @@ void ScriptModule::registerWorkbenchActions(nextpilot::plotscope::uischema::IScr
 
 ScriptModule::~ScriptModule() = default;
 
-ModuleContributions ScriptModule::contributes() const
+ContributesDoc ScriptModule::contributes() const
 {
-    ModuleContributions c;
-    c.owner = QStringLiteral("script");
+    ContributesDoc c;
 
     {
         ThemeTokenSpec t;
@@ -579,16 +568,15 @@ ModuleContributions ScriptModule::contributes() const
         c.themeTokens.append(t);
     }
 
-    c.ribbonPages.append(RibbonPageDecl{QStringLiteral("ribbon.page.script"),
-                                        QStringLiteral("脚本"), 4});
-    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.script.file"),
-                                          QStringLiteral("文件"), QStringLiteral("ribbon.page.script"), 0});
-    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.script.run"),
-                                          QStringLiteral("运行"), QStringLiteral("ribbon.page.script"), 1});
-    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.script.batch"),
-                                          QStringLiteral("批量"), QStringLiteral("ribbon.page.script"), 2});
-    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.script.console"),
-                                          QStringLiteral("控制台"), QStringLiteral("ribbon.page.script"), 3});
+    c.ribbonPages.append(RibbonPageDecl{QStringLiteral("ribbon.page.script"), QStringLiteral("脚本"), 4});
+    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.script.file"), QStringLiteral("文件"),
+                                          QStringLiteral("ribbon.page.script"), 0});
+    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.script.run"), QStringLiteral("运行"),
+                                          QStringLiteral("ribbon.page.script"), 1});
+    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.script.batch"), QStringLiteral("批量"),
+                                          QStringLiteral("ribbon.page.script"), 2});
+    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.script.console"), QStringLiteral("控制台"),
+                                          QStringLiteral("ribbon.page.script"), 3});
 
     ActivitySpec scriptActivity;
     scriptActivity.id = QStringLiteral("script");
@@ -603,9 +591,8 @@ ModuleContributions ScriptModule::contributes() const
     c.activities.append(scriptActivity);
 
     using nextpilot::plotscope::registry::UiAction;
-    const auto addRibbon = [&c](const QString &id, const QString &label, const QString &slot,
-                                const QString &data, int order, const QString &icon,
-                                bool large = false) {
+    const auto addRibbon = [&c](const QString &id, const QString &label, const QString &slot, const QString &data,
+                                int order, const QString &icon, bool large = false) {
         UiAction a;
         a.id = id;
         a.label = label;
@@ -677,4 +664,4 @@ void ScriptModule::onAttach(IUiContext &ui)
 
 #include "ErrorCodes.h"
 // 编译期自注册：新增脚本模块无需改 App / 宿主。
-PS_REGISTER_MODULE(ScriptModule)
+PS_REGISTER_EXTENSION(ScriptModule)

@@ -1,4 +1,6 @@
 // 画布导出 / 视图状态 / 图例开关 契约测试（fastplot 库能力接进 ng 后的视图薄包装）。
+#include "Intent.h"
+#include "test_registry_access.h"
 //
 // 验证：AxesView 把库的 exportPng/exportCsv/saveState/restoreState/legend
 // 正确暴露出来；导出文件真实落盘且非空；视图状态可 round-trip。
@@ -363,13 +365,13 @@ int main(int argc, char *argv[])
         CHECK(loaded);
         const int dsId = loaded.value().payload.toMap().value(QStringLiteral("dataset")).toInt();
         CHECK(dsId >= 0);
-        const int srcId = application.context().sources().sourceOfDataset(dsId);
+        const int srcId = application.context().workspace().sources().sourceOfDataset(dsId);
         CHECK(srcId >= 0);
-        const DataSourceInfo *srcInfo = application.context().sources().get(srcId);
+        const DataSourceInfo *srcInfo = application.context().workspace().sources().get(srcId);
         CHECK(srcInfo != nullptr && !srcInfo->datasetIds.isEmpty());
 
         // 动态取真实的 table.column（CSV 解析后 table 名不一定是 att）。
-        const Dataset *ds = application.context().data().get(dsId);
+        const Dataset *ds = application.context().workspace().dataset().get(dsId);
         CHECK(ds != nullptr && !ds->tableNames().isEmpty());
         const QString realTable = ds->tableNames().first();
         const Table *tbl = ds->table(realTable);
@@ -414,7 +416,7 @@ int main(int argc, char *argv[])
         doc.pages << page;
 
         // 应用 → 曲线绑上、颜色/视口就位。
-        CHECK(workspace->applyDocumentSpec(doc, application.context().sources()));
+        CHECK(workspace->applyDocumentSpec(doc, application.context().workspace().sources()));
         // 通过 toDocumentSpec 回读验证（不依赖 active 指向哪个 cell）。
         plot::PlotDocumentSpec round = workspace->toDocumentSpec();
         CHECK(round.pages.size() >= 1);
@@ -459,14 +461,14 @@ int main(int argc, char *argv[])
 
         // 从已加载的源拿真实 table.column 口径（同内容拷贝 → schema 一致）。
         const DataSourceInfo *anySrc = nullptr;
-        for (int id : application.context().sources().ids())
+        for (int id : application.context().workspace().sources().ids())
         {
-            const DataSourceInfo *info = application.context().sources().get(id);
+            const DataSourceInfo *info = application.context().workspace().sources().get(id);
             if (info && !info->datasetIds.isEmpty())
             { anySrc = info; break; }
         }
         CHECK(anySrc != nullptr);
-        const Dataset *ds0 = application.context().data().get(anySrc->datasetIds.first());
+        const Dataset *ds0 = application.context().workspace().dataset().get(anySrc->datasetIds.first());
         CHECK(ds0 != nullptr && !ds0->tableNames().isEmpty());
         const QString realTable = ds0->tableNames().first();
         const Table *tbl0 = ds0->table(realTable);
@@ -505,19 +507,19 @@ int main(int argc, char *argv[])
         page.root = canvasNode;
         doc.pages << page;
 
-        CHECK(workspace->applyDocumentSpec(doc, application.context().sources()));
+        CHECK(workspace->applyDocumentSpec(doc, application.context().workspace().sources()));
         CHECK(workspace->pendingBindCount() == 1);
         CHECK(workspace->pendingBindOrigins().contains(lateOrigin));
-        CHECK(application.context().sources().demandCount(lateOrigin) == 1);
-        CHECK(application.context().sources().unsatisfiedDemands().contains(lateOrigin));
+        CHECK(plotscope_test::sourceHub(application.context()).demandCount(lateOrigin) == 1);
+        CHECK(plotscope_test::sourceHub(application.context()).unsatisfiedDemands().contains(lateOrigin));
         // 空态：曲线还没接上。
         workspace->setActive(0);
         CHECK(workspace->activeCanvas() != nullptr && workspace->activeCanvas()->seriesCount() == 0);
         OK("晚到绑定 10a：布局先到 → 空态 + pending + demand 引用登记");
 
         // preflight（2.8）：对同一份文档应报告 origin 未到。
-        const QStringList pf = PlotWorkspace::preflightDocumentSpec(
-            doc, application.context().sources(), application.context().data());
+        const QStringList pf = PlotWorkspace::preflightDocumentSpec(doc, application.context().workspace().sources(),
+                                                                    application.context().workspace().dataset());
         CHECK(pf.size() == 1 && pf.first().contains(lateOrigin));
 
         // 数据晚到：加载同 origin 源 → sourceAdded/datasetAdded → 自动接回。
@@ -528,8 +530,8 @@ int main(int argc, char *argv[])
         CHECK(lateLoaded);
 
         CHECK(workspace->pendingBindCount() == 0);
-        CHECK(application.context().sources().demandCount(lateOrigin) == 0);
-        CHECK(application.context().sources().unsatisfiedDemands().isEmpty());
+        CHECK(plotscope_test::sourceHub(application.context()).demandCount(lateOrigin) == 0);
+        CHECK(plotscope_test::sourceHub(application.context()).unsatisfiedDemands().isEmpty());
         // 曲线已接上，颜色 = 存盘色。
         auto *lateCanvas = workspace->activeCanvas();
         CHECK(lateCanvas != nullptr && lateCanvas->seriesCount() == 1);
@@ -543,21 +545,21 @@ int main(int argc, char *argv[])
 
         // 10c：源被移除后 demand 仍在，同 origin 重新载入 → 源可被再次找回。
         {
-            const int lateSrcId = application.context().sources().sourceByOrigin(lateOrigin);
+            const int lateSrcId = application.context().workspace().sources().sourceByOrigin(lateOrigin);
             CHECK(lateSrcId >= 0);
             Intent rm;
             rm.op = QStringLiteral("data.remove");
             rm.params[QStringLiteral("id")] = lateSrcId;
             application.host().execute(rm);
-            CHECK(application.context().sources().sourceByOrigin(lateOrigin) < 0);
+            CHECK(application.context().workspace().sources().sourceByOrigin(lateOrigin) < 0);
             // demand 语义：登记→源移除→需求仍在；源重新登记→需求不变
             //（释放是绑定方职责，不由源生命周期自动清理）。
-            application.context().sources().demandOrigin(lateOrigin);
-            CHECK(application.context().sources().demandCount(lateOrigin) == 1);
+            application.context().workspace().sources().demandOrigin(lateOrigin);
+            CHECK(plotscope_test::sourceHub(application.context()).demandCount(lateOrigin) == 1);
             application.host().execute(loadLate);
-            CHECK(application.context().sources().demandCount(lateOrigin) == 1);
-            application.context().sources().releaseOrigin(lateOrigin);
-            CHECK(application.context().sources().demandCount(lateOrigin) == 0);
+            CHECK(plotscope_test::sourceHub(application.context()).demandCount(lateOrigin) == 1);
+            application.context().workspace().sources().releaseOrigin(lateOrigin);
+            CHECK(plotscope_test::sourceHub(application.context()).demandCount(lateOrigin) == 0);
             OK("晚到绑定 10c：demand 引用计数（登记/释放/不受源增删影响）");
         }
     }
@@ -582,13 +584,13 @@ int main(int argc, char *argv[])
         loadA.params[QStringLiteral("path")] = originA;
         const auto la = application.host().execute(loadA);
         CHECK(la);
-        const int srcA = application.context().sources().sourceByOrigin(originA);
+        const int srcA = application.context().workspace().sources().sourceByOrigin(originA);
         CHECK(srcA >= 0);
-        const int dsA = application.context().sources().get(srcA)->datasetIds.first();
+        const int dsA = application.context().workspace().sources().get(srcA)->datasetIds.first();
         CHECK(dsA >= 0);
 
         // 真实 table.column（schema 动态取，不写死表头）。
-        const Dataset *ds = application.context().data().get(dsA);
+        const Dataset *ds = application.context().workspace().dataset().get(dsA);
         CHECK(ds != nullptr && !ds->tableNames().isEmpty());
         const QString tbl = ds->tableNames().first();
         const QString col = ds->table(tbl)->columns.first().name;
@@ -621,7 +623,7 @@ int main(int argc, char *argv[])
         node.canvas = cs;
         page.root = node;
         doc.pages << page;
-        CHECK(workspace->applyDocumentSpec(doc, application.context().sources()));
+        CHECK(workspace->applyDocumentSpec(doc, application.context().workspace().sources()));
         workspace->setActive(0);
         auto *rbCanvas = workspace->activeCanvas();
         CHECK(rbCanvas && rbCanvas->seriesCount() == 1);
@@ -633,7 +635,7 @@ int main(int argc, char *argv[])
         rmA.op = QStringLiteral("data.remove");
         rmA.params[QStringLiteral("id")] = srcA;
         application.host().execute(rmA);
-        CHECK(application.context().sources().sourceOfDataset(dsA) < 0);
+        CHECK(application.context().workspace().sources().sourceOfDataset(dsA) < 0);
         CHECK(rbCanvas->seriesCount() == 1);
         CHECK(workspace->rebindStaleCurves() == 0);
 
@@ -652,9 +654,9 @@ int main(int argc, char *argv[])
         loadB.params[QStringLiteral("path")] = originB;
         const auto lb = application.host().execute(loadB);
         CHECK(lb);
-        const int srcB = application.context().sources().sourceByOrigin(originB);
+        const int srcB = application.context().workspace().sources().sourceByOrigin(originB);
         CHECK(srcB >= 0);
-        const int dsB = application.context().sources().get(srcB)->datasetIds.first();
+        const int dsB = application.context().workspace().sources().get(srcB)->datasetIds.first();
         CHECK(dsB >= 0 && dsB != dsA);
         // 自动重绑（datasetAdded 信号）已接回；再调一次幂等返回 0。
         CHECK(rbCanvas->seriesCount() == 1);
@@ -693,21 +695,21 @@ int main(int argc, char *argv[])
         lA.params[QStringLiteral("path")] = pA;
         const auto a = application.host().execute(lA);
         CHECK(a);
-        const int srcA12 = application.context().sources().sourceByOrigin(pA);
+        const int srcA12 = application.context().workspace().sources().sourceByOrigin(pA);
         CHECK(srcA12 >= 0);
-        const int dsA = application.context().sources().get(srcA12)->datasetIds.first();
+        const int dsA = application.context().workspace().sources().get(srcA12)->datasetIds.first();
         Intent lB;
         lB.op = QStringLiteral("data.load");
         lB.params[QStringLiteral("path")] = pB;
         const auto b = application.host().execute(lB);
         CHECK(b);
-        const int srcB12 = application.context().sources().sourceByOrigin(pB);
+        const int srcB12 = application.context().workspace().sources().sourceByOrigin(pB);
         CHECK(srcB12 >= 0);
-        const int dsB = application.context().sources().get(srcB12)->datasetIds.first();
+        const int dsB = application.context().workspace().sources().get(srcB12)->datasetIds.first();
         CHECK(dsA >= 0 && dsB >= 0 && dsA != dsB);
 
-        const Dataset *dA = application.context().data().get(dsA);
-        const Dataset *dB = application.context().data().get(dsB);
+        const Dataset *dA = application.context().workspace().dataset().get(dsA);
+        const Dataset *dB = application.context().workspace().dataset().get(dsB);
         CHECK(dA && dB && !dA->tableNames().isEmpty() && !dB->tableNames().isEmpty());
         const QString tblA = dA->tableNames().first();
         const QString tblB = dB->tableNames().first();
@@ -853,18 +855,18 @@ int main(int argc, char *argv[])
 
         // 真实加载数据集（undo 恢复链经 origin 回绑，虚拟 datasetId 无源可绑）。
         const QString fixture14 = QStringLiteral(PS_TEST_FIXTURE_DIR "/demo_flight.csv");
-        int src14 = application.context().sources().sourceByOrigin(fixture14);
+        int src14 = application.context().workspace().sources().sourceByOrigin(fixture14);
         if (src14 < 0)
         {
             Intent load14;
             load14.op = QStringLiteral("data.load");
             load14.params[QStringLiteral("path")] = fixture14;
             CHECK(application.host().execute(load14));
-            src14 = application.context().sources().sourceByOrigin(fixture14);
+            src14 = application.context().workspace().sources().sourceByOrigin(fixture14);
         }
         CHECK(src14 >= 0);
-        const int ds14 = application.context().sources().get(src14)->datasetIds.first();
-        const Dataset *d14 = application.context().data().get(ds14);
+        const int ds14 = application.context().workspace().sources().get(src14)->datasetIds.first();
+        const Dataset *d14 = application.context().workspace().dataset().get(ds14);
         CHECK(d14 != nullptr && !d14->tableNames().isEmpty());
         const QString tbl14 = d14->tableNames().first();
         const auto *t14 = d14->table(tbl14);
@@ -923,10 +925,10 @@ int main(int argc, char *argv[])
     {
         // XY：demo 数据集两列（roll 作 X、pitch 作 Y）。复用测试 14 已加载的源。
         const QString fixture15 = QStringLiteral(PS_TEST_FIXTURE_DIR "/demo_flight.csv");
-        int src15 = application.context().sources().sourceByOrigin(fixture15);
+        int src15 = application.context().workspace().sources().sourceByOrigin(fixture15);
         CHECK(src15 >= 0);
-        const int ds15 = application.context().sources().get(src15)->datasetIds.first();
-        const Dataset *d15 = application.context().data().get(ds15);
+        const int ds15 = application.context().workspace().sources().get(src15)->datasetIds.first();
+        const Dataset *d15 = application.context().workspace().dataset().get(ds15);
         CHECK(d15 != nullptr && !d15->tableNames().isEmpty());
         const QString tbl15 = d15->tableNames().first();
         const auto *t15 = d15->table(tbl15);
@@ -1055,10 +1057,10 @@ int main(int argc, char *argv[])
         // round-trip ×2：第一次 apply 落运行时，第二次验证幂等（不再丢字段）。
         const QJsonObject doc1 = workspace->toDocumentSpec().toJson();
         CHECK(workspace->applyDocumentSpec(plot::PlotDocumentSpec::fromJson(doc1),
-                                           application.context().sources()));
+                                           application.context().workspace().sources()));
         const QJsonObject doc2 = workspace->toDocumentSpec().toJson();
         CHECK(workspace->applyDocumentSpec(plot::PlotDocumentSpec::fromJson(doc2),
-                                           application.context().sources()));
+                                           application.context().workspace().sources()));
         const QJsonObject doc3 = workspace->toDocumentSpec().toJson();
 
         CHECK(normDoc(doc1) == normDoc(doc2)); // 富状态全量无损往返

@@ -1,14 +1,15 @@
 #pragma once
 
 #include "AppContext.h"
+#include "IDatasetAccess.h"
 #include "JobRecorder.h"
 #include "RuntimeHost.h"
 #include "WorkbenchServices.h"
+#include "ExtensionService.h"
 
 #include <QObject>
 
-namespace nextpilot::plotscope::app
-{
+namespace nextpilot::plotscope::app {
 
 // 组合根：**app 的装配点**。
 //
@@ -36,19 +37,23 @@ public:
     const nextpilot::plotscope::context::AppContext &context() const { return m_ctx; }
 
     // 便捷转发（内部使用）。
-    nextpilot::plotscope::dataset::DatasetHub &data() { return m_ctx.data(); }
+    // vscode.workspace 对位：业务读面统一从服务面取，不经 AppContext 的 registry。
+    nextpilot::plotscope::workbench::IWorkspace &workspace() { return m_ctx.workspace(); }
+    // 过渡期保留（S2 删）：写入路径仍需 registry 本体。
+    nextpilot::plotscope::dataset::IDatasetAccess &data() { return m_ctx.workspace().dataset(); }
     nextpilot::plotscope::host::RuntimeHost &host() { return m_host; }
     nextpilot::plotscope::intent::JobRecorder &recorder() { return m_recorder; }
+    nextpilot::plotscope::assembly::ExtensionService &extensions() { return m_extensions; }
 
     // headless=true 时不建 UI 上下文，模块的 onAttach 不被调用。
-    QHash<QString, QString> startup(bool headless,
-                                    const QStringList &disabled = {});
+    QHash<QString, QString> startup(bool headless, const QStringList &disabled = {});
 
 private:
     nextpilot::plotscope::context::AppContext m_ctx;
     nextpilot::plotscope::host::RuntimeHost m_host;
     nextpilot::plotscope::intent::JobRecorder m_recorder;
     nextpilot::plotscope::assembly::WorkbenchServices m_services;
+    nextpilot::plotscope::assembly::ExtensionService m_extensions;
 };
 
 } // namespace nextpilot::plotscope::app

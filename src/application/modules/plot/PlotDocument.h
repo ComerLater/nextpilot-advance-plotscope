@@ -19,7 +19,7 @@ struct CanvasSpec
     QString title;
     // 绑定哪个数据集：**按来源标识**（文件路径/端点）引用，不落 datasetId。
     // 理由：datasetId 是进程内分配的，重启后指向别的数据集；
-    // origin 是用户可识别的稳定标识，恢复时经 SourceHub 反查回来。
+    // origin 是用户可识别的稳定标识，恢复时经 SourceRegistry 反查回来。
     QString datasetOrigin;
     QString datasetId;     // 旧档兼容：仅反序列化时读，不写盘
     QStringList channels;  // 绘制的通道（table.column）

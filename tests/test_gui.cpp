@@ -25,16 +25,16 @@
 #include "BatchPanel.h"
 #include "GuiContext.h"
 #include "MainWindow.h"
-#include "ReportExporter.h" // 装配层：测试不走 gui_main，须显式注册 report.export viewAction
+#include "ReportExporter.h"        // 装配层：测试不走 gui_main，须显式注册 report.export viewAction
 #include "BuiltinWorkbenchViews.h" // 装配层：测试不走 gui_main，须显式装配壳内置工作台视图
 #include "BuiltinViewProviders.h"  // gui 侧：壳内置工作台视图 provider 注册半（复审必修 2）
 #include "DataViewFactories.h"     // data 模块视图装配（③）：datasetTree view + data.table editor
 #include "PlotViewFactories.h"     // plot 模块视图装配（A2c）：plot.properties view + instrument/workspace editor
 #include "ScriptViewFactories.h"   // script 模块视图装配（A2c）：files/console/debug view + editor/batchSummary editor
 #include "AutomotiveViewFactories.h" // automotive 领域视图装配（A2c）：canBrowser view
-#include "PropertyPanel.h"          // A2c：PropertyPanel 归位 modules/plot/gui（PUBLIC include 随库可达）
+#include "PropertyPanel.h"           // A2c：PropertyPanel 归位 modules/plot/gui（PUBLIC include 随库可达）
 #include "ThemeManager.h"
-#include "ToolboxHub.h"
+#include "ExtensionRegistry.h"
 #include "Contribution.h"
 #include "DialogLauncherHub.h"
 #include "AxesView.h"
@@ -53,6 +53,7 @@
 #include "FilterEditorDialog.h"
 
 #include "AppContext.h"
+#include "test_registry_access.h"
 #include "IngestPipeline.h"
 #include "ChannelMime.h"
 #include "RegistryTree.h"
@@ -122,16 +123,16 @@ using namespace nextpilot::plotscope::host;
 #define OK(msg) fprintf(stdout, "[ok] %s\n", msg)
 
 // 造一个 5000 行的内存数据集（三列），验证绘制路径的有界性。
-static int buildDataset(DatasetHub &repo, double t0 = 0.0)
+static int buildDataset(DatasetRegistry &repo, double t0 = 0.0)
 {
     Dataset ds = Dataset::create(QStringLiteral("gui-test"), QStringLiteral("mem"));
     QVector<double> ts, a, b;
     ts.reserve(5000);
     a.reserve(5000);
     b.reserve(5000);
-    QVector<double> mode;      // 整数值枚举（0/1/2 循环，每 100 样本一段）——状态视图用
+    QVector<double> mode; // 整数值枚举（0/1/2 循环，每 100 样本一段）——状态视图用
     mode.reserve(5000);
-    QVector<quint8> armed;     // bool 编码 0/1（kernel Bool 列布局 = quint8 数组）
+    QVector<quint8> armed; // bool 编码 0/1（kernel Bool 列布局 = quint8 数组）
     armed.reserve(5000);
     for (int i = 0; i < 5000; ++i)
     {
@@ -150,8 +151,8 @@ static int buildDataset(DatasetHub &repo, double t0 = 0.0)
         return -1;
     if (!ds.addF64Column(QStringLiteral("trace"), QStringLiteral("mode"), QString(), mode))
         return -1;
-    if (!ds.addColumnTyped(QStringLiteral("trace"), QStringLiteral("armed"), QString(),
-                           ValueType::Bool, armed.constData(), nullptr, armed.size()))
+    if (!ds.addColumnTyped(QStringLiteral("trace"), QStringLiteral("armed"), QString(), ValueType::Bool,
+                           armed.constData(), nullptr, armed.size()))
         return -1;
     ds.refreshSchema();
     return repo.add(ds);
@@ -264,15 +265,20 @@ int main(int argc, char *argv[])
         // 偏好对话框是 GUI 专属能力：动作必须绑 preferences.open（由外壳注册的
         // 系统级 handler 处理），不能绑 settings.*——那是 modules/settings 的存取
         // 域，模块不认识 QWidget，headless 里也不该出现任何界面语义。
-        const auto &slotReg2 = application.host().uiSlots();
-        const auto fileActs = slotReg2.actionsIn(QStringLiteral("ribbon.group.file.document"));
+        // 壳级动作现在只落 MenuRegistry（menubar/<pageId>，VSCode appendMenuItem 口径）；
+        // 读回按 group 聚合，不再经插槽容器。
+        auto *menus = application.host().menuRegistry();
+        CHECK(menus != nullptr);
+        const auto fileItems = menus->getMenuItems(MenuId::menubar(QStringLiteral("ribbon.page.file")));
         bool hasSettingsAction = false;
-        for (const auto &entry : fileActs)
+        for (const auto &item : fileItems)
         {
-            if (entry.action.id == QStringLiteral("file.settings"))
+            if (item.group != QStringLiteral("ribbon.group.file.document"))
+                continue;
+            if (item.action.id == QStringLiteral("file.settings"))
             {
                 hasSettingsAction = true;
-                CHECK(entry.action.intentOp == QStringLiteral("preferences.open"));
+                CHECK(item.action.intentOp == QStringLiteral("preferences.open"));
             }
         }
         CHECK(hasSettingsAction);
@@ -280,33 +286,44 @@ int main(int argc, char *argv[])
     }
 
     // --- 死插槽零消费者检查（验收 15 / D13，GUI 全装配后）---
-    // headless 只查槽 kind/area 白名单（模块未 onAttach，查不到消费者）；
-    // 真正的"声明了槽却无人消费"必须在 GUI 装配后查——此刻模块已自声明页/组并绑定动作。
+    // 页/组经 contributes → IRibbonService 读回；动作只落 MenuRegistry
+    // （menubar/<pageId>，按 IMenuItem.group 聚合）。壳不再维护插槽容器。
     {
-        const auto &slotReg = application.host().uiSlots();
-        for (const UiSlot &s : slotReg.allSlots())
+        auto *ribbonSvc =
+            application.host().services()
+                ? application.host().services()->getService<nextpilot::plotscope::workbench::IRibbonService>(
+                      QStringLiteral("ribbon.readback"))
+                : nullptr;
+        CHECK(ribbonSvc != nullptr);
+        auto *menus = application.host().menuRegistry();
+        CHECK(menus != nullptr);
+        const auto pages = ribbonSvc->ribbonPages();
+        CHECK(!pages.isEmpty());
+        for (const auto &p : pages)
         {
-            if (s.kind == SlotKind::RibbonPage)
+            const auto items = menus->getMenuItems(MenuId::menubar(p.id));
+            const auto groups = ribbonSvc->ribbonGroupsOf(p.id);
+            if (groups.isEmpty())
+                fprintf(stderr, "[死页] page=%s（无分组）\n", qPrintable(p.id));
+            CHECK(!groups.isEmpty());
+            for (const auto &g : groups)
             {
-                // 页必须至少有一个分组，否则是空页（死槽）。
-                CHECK(!slotReg.childrenOf(s.slotId).isEmpty());
-            }
-            else // RibbonGroup
-            {
-                // 组要么有动作，要么有子组（嵌套画廊），否则是死槽。
-                const bool hasActions = !slotReg.actionsIn(s.slotId).isEmpty();
-                const bool hasChildren = !slotReg.childrenOf(s.slotId).isEmpty();
-                if (!(hasActions || hasChildren))
-                    fprintf(stderr, "[死槽] area=%s owner=%s（声明了却无动作/子组）\n",
-                            qPrintable(s.slotId), qPrintable(s.owner));
-                CHECK(hasActions || hasChildren);
+                // 静态动作落 MenuRegistry（按 group 聚合）；动态动作经 IRibbonService 的 provider 读回。
+                bool hasActions = !ribbonSvc->dynamicActionsIn(g.id).isEmpty();
+                for (const auto &it : items)
+                {
+                    if (it.group == g.id)
+                        hasActions = true;
+                }
+                // 唯一例外：ribbon.group.plot.series 是 toolbox 飞控/机器人包的动作挂载点，
+                // 包不随 ps_test_gui 装配时该组按设计为空；除此之外的空组一律是死组。
+                const bool isPackExtensionPoint = g.id == QStringLiteral("ribbon.group.plot.series");
+                if (!hasActions && !isPackExtensionPoint)
+                    fprintf(stderr, "[死组] page=%s group=%s\n", qPrintable(p.id), qPrintable(g.id));
+                CHECK(hasActions || isPackExtensionPoint);
             }
         }
-        // 旧方位名 / 菜单名不得再作为槽存在。
-        for (const char *dead : {"dock.left", "dock.right", "dock.bottom", "canvas.center",
-                                 "canvas.tool", "menu.plot"})
-            CHECK(slotReg.slot(QString::fromLatin1(dead)) == nullptr);
-        OK("死插槽零消费者检查：每个声明的页有分组、每个组有动作或子组");
+        OK("死插槽零消费者检查：每个 Ribbon 页有分组、每个分组有动作");
 
         // 启动期 panelTypes 声明命中（验收 4）：装配完成后不得有未命中声明面的视图 id。
         const QStringList missing = window.binder()->missingPanelTypes();
@@ -364,13 +381,11 @@ int main(int argc, char *argv[])
 
         // 真实进度链路（P2）：摄取管道 progressChanged 必须被 data 模块订阅并推到状态栏，
         // total>0 显示百分比、total=0 显示已读字节数。此前只有 start/finish 两端点占位。
-        IngestPipeline &ingest = application.context().ingest();
+        IngestPipeline &ingest = application.host().ingestPipeline();
         Q_EMIT ingest.progressChanged(1, 42, 100);
-        CHECK(ui->statusText(QStringLiteral("data.loading.progress")) ==
-              QStringLiteral("加载 42%"));
+        CHECK(ui->statusText(QStringLiteral("data.loading.progress")) == QStringLiteral("加载 42%"));
         Q_EMIT ingest.progressChanged(1, 512, 0);
-        CHECK(ui->statusText(QStringLiteral("data.loading.progress")) ==
-              QStringLiteral("加载 512 字节"));
+        CHECK(ui->statusText(QStringLiteral("data.loading.progress")) == QStringLiteral("加载 512 字节"));
 
         // 注：游标 10Hz 节流已归位 plot 域（PlotWorkspace::pushCursorStatus，D2），
         // 壳与 hub 不认识业务键；游标真实推送路径的断言见下文「游标读数」行为段。
@@ -421,10 +436,7 @@ int main(int argc, char *argv[])
         {
         public:
             QList<nextpilot::plotscope::registry::ContributedCustomEditor> customEditors() const override { return {}; }
-            QString editorViewTypeFor(const nextpilot::plotscope::registry::ResourceRef &) const override
-            {
-                return {};
-            }
+            QString editorViewTypeFor(const nextpilot::plotscope::registry::ResourceRef &) const override { return {}; }
             nextpilot::plotscope::registry::IEditorProvider *providerFor(const QString &) const override
             {
                 return nullptr;
@@ -445,10 +457,10 @@ int main(int argc, char *argv[])
         openIntent.params[QStringLiteral("section")] = QStringLiteral("core.data"); // 带 section 也不误诊为分组错
         const auto failed = failingHandler.execute(openIntent);
 
-        CHECK(!failed.ok());                                                       // 必须失败
-        CHECK(failed.error().code == QStringLiteral("enoview"));                   // 稳定错误码
-        CHECK(failed.error().message.contains(QStringLiteral("未能打开")));         // 真实根因
-        CHECK(failingHandler.sectionFocusDiagnostic().isEmpty());                   // 不再写误导的分组诊断
+        CHECK(!failed.ok());                                                // 必须失败
+        CHECK(failed.error().code == QStringLiteral("enoview"));            // 稳定错误码
+        CHECK(failed.error().message.contains(QStringLiteral("未能打开"))); // 真实根因
+        CHECK(failingHandler.sectionFocusDiagnostic().isEmpty());           // 不再写误导的分组诊断
         OK("编辑器不可用：openSettings 返回 Result 错误码(enoview)，不静默 success");
     }
 
@@ -547,8 +559,7 @@ int main(int argc, char *argv[])
         CHECK(QFileInfo::exists(path));
         {
             SettingsStore reloaded(path); // 构造即从磁盘读入
-            CHECK(reloaded.value(QStringLiteral("plot.time.format")).toString()
-                  == QStringLiteral("hms"));
+            CHECK(reloaded.value(QStringLiteral("plot.time.format")).toString() == QStringLiteral("hms"));
             CHECK(reloaded.value(QStringLiteral("app/theme")).toString() == QStringLiteral("dark"));
         }
         OK("App 作用域偏好落盘：flush 写盘 + 重新加载值一致");
@@ -567,37 +578,72 @@ int main(int argc, char *argv[])
     // 绑定器创建了 SARibbonBar：窗口顶部区就是它
     CHECK(window.menuWidget() != nullptr);
     // 插槽声明了页签/分组；动作由模块在 onAttach 里登记
-    const auto &slotReg = application.host().uiSlots();
+    // 页/组声明读回（contributes.ribbonPages/ribbonGroups）；动作读回（MenuRegistry 的 menubar/<pageId>）。
+    auto *ribbonSvc = application.host().services()
+                          ? application.host().services()->getService<nextpilot::plotscope::workbench::IRibbonService>(
+                                QStringLiteral("ribbon.readback"))
+                          : nullptr;
+    CHECK(ribbonSvc != nullptr);
+    auto *menusReg = application.host().menuRegistry();
+    CHECK(menusReg != nullptr);
+    const auto groupActions = [&](const QString &groupId) {
+        QList<IMenuItem> out;
+        for (const auto &page : ribbonSvc->ribbonPages())
+            for (const auto &item : menusReg->getMenuItems(MenuId::menubar(page.id)))
+                if (item.group == groupId)
+                    out.append(item);
+        return out;
+    };
+    const auto allGroups = [&]() {
+        QList<RibbonGroupDecl> out;
+        for (const auto &page : ribbonSvc->ribbonPages())
+            out.append(ribbonSvc->ribbonGroupsOf(page.id));
+        return out;
+    };
+    const auto hasGroup = [&](const QString &groupId) {
+        for (const auto &g : allGroups())
+            if (g.id == groupId)
+                return true;
+        return false;
+    };
     // Ribbon 分 9 页：开始/文件/数据/绘图/脚本/协议/分析/报告/视图。
-    CHECK(slotReg.slotsOfKind(SlotKind::RibbonPage).size() == 9);
-    CHECK(slotReg.slotsOfKind(SlotKind::RibbonGroup).size() >= 8);
+    CHECK(ribbonSvc->ribbonPages().size() == 9);
+    CHECK(allGroups().size() >= 8);
     // 绘图模块 onAttach 往绘图页"操作"分组放了"重绘"动作
-    CHECK(slotReg.actionsIn(QStringLiteral("ribbon.group.plot.action")).size() >= 1);
+    CHECK(groupActions(QStringLiteral("ribbon.group.plot.action")).size() >= 1);
     // 数据模块 onAttach 往数据页"常用"分组放了 reload/export/clearCache 三个动作
-    const auto dataActs = slotReg.actionsIn(QStringLiteral("ribbon.group.data.common"));
+    const auto dataActs = groupActions(QStringLiteral("ribbon.group.data.common"));
     // Step 6：精确集合（5 条：quickOpen/recent/reload/export/clearCache，快照 2026-11-26）。
     CHECK(dataActs.size() == 5);
     const QSet<QString> dataCommonIds = {QStringLiteral("data.action.quickOpen"), QStringLiteral("data.action.recent"),
                                          QStringLiteral("data.action.reload"), QStringLiteral("data.action.export"),
                                          QStringLiteral("data.action.clearCache")};
-    { QSet<QString> ids; for (const auto &b : dataActs) ids.insert(b.action.id);
-      CHECK(ids == dataCommonIds); }
+    {
+        QSet<QString> ids;
+        for (const auto &b : dataActs)
+            ids.insert(b.action.id);
+        CHECK(ids == dataCommonIds);
+    }
     bool hasReload = false, hasExport = false;
     for (const auto &entry : dataActs)
     {
-        if (entry.action.intentOp == QStringLiteral("data.reload")) hasReload = true;
-        if (entry.action.intentOp == QStringLiteral("data.export")) hasExport = true;
+        if (entry.action.intentOp == QStringLiteral("data.reload"))
+            hasReload = true;
+        if (entry.action.intentOp == QStringLiteral("data.export"))
+            hasExport = true;
     }
     CHECK(hasReload && hasExport); // 动作绑的是真实意图，不是空按钮
     // 录制组：两个动作都绑真实意图，组必须存在（否则按钮无处可挂）
-    CHECK(slotReg.slot(QStringLiteral("ribbon.group.data.record")) != nullptr);
-    const auto recActs = slotReg.actionsIn(QStringLiteral("ribbon.group.data.record"));
+    CHECK(hasGroup(QStringLiteral("ribbon.group.data.record")));
+    const auto recActs = groupActions(QStringLiteral("ribbon.group.data.record"));
     CHECK(recActs.size() == 2);
     bool hasRecStart = false, hasRecStop = false;
     for (const auto &entry : recActs)
     {
-        if (entry.action.intentOp == QStringLiteral("data.record.start")) hasRecStart = true;
-        if (entry.action.intentOp == QStringLiteral("data.record.stop")) hasRecStop = true;
+        if (entry.action.intentOp == QStringLiteral("data.record.start"))
+            hasRecStart = true;
+        if (entry.action.intentOp == QStringLiteral("data.record.stop"))
+            hasRecStop = true;
     }
     CHECK(hasRecStart && hasRecStop);
     OK("ribbon 按插槽数据绑定：页签/分组/动作数量符合声明");
@@ -606,12 +652,12 @@ int main(int argc, char *argv[])
     {
         // 图型库：12 种图型，按"常用/曲线/地图3D/仪表"分组，缩略图 icon 声明齐全
         // （A2c：visual 字段并入 icon，值域 plot/<kind>）。
-        const auto plotActs = slotReg.actionsIn(QStringLiteral("ribbon.group.plot.type"));
+        const auto plotActs = groupActions(QStringLiteral("ribbon.group.plot.type"));
         CHECK(plotActs.size() == 12);
         QSet<QString> groups;
         for (const auto &entry : plotActs)
         {
-            CHECK(!entry.action.galleryGroup.isEmpty()); // 都是 gallery 项
+            CHECK(!entry.action.galleryGroup.isEmpty());                  // 都是 gallery 项
             CHECK(entry.action.icon.startsWith(QStringLiteral("plot/"))); // 缩略图 id 入 icon
             groups.insert(entry.action.galleryGroup);
         }
@@ -619,23 +665,28 @@ int main(int argc, char *argv[])
         CHECK(groups.contains(QStringLiteral("曲线")));
         CHECK(groups.contains(QStringLiteral("仪表")));
         // 来源库：至少 csv/ulog/custom-protocol 三种格式驱动进了 gallery。
-        const auto srcActs = slotReg.actionsIn(QStringLiteral("ribbon.group.data.sources"));
+        const auto srcActs = groupActions(QStringLiteral("ribbon.group.data.sources"));
         // Step 6：精确集合（11 条 = 4 个 common 前置 + 7 个格式驱动 gallery 项，
         // 快照 2026-11-26；新增格式驱动在此表显式加行，防静默漂移）。
         CHECK(srcActs.size() == 11);
-        { QSet<QString> ids; for (const auto &b : srcActs) ids.insert(b.action.id);
-          for (const char *id : {"data.source.common.csv", "data.source.common.custom-protocol",
-                                 "data.source.common.ulog", "data.source.common.mdf4",
-                                 "data.source.csv", "data.source.custom-protocol", "data.source.ulog",
-                                 "data.source.mdf4", "data.source.rosbag2", "data.source.blf",
-                                 "data.source.apbin"})
-              CHECK(ids.contains(QString::fromLatin1(id))); }
+        {
+            QSet<QString> ids;
+            for (const auto &b : srcActs)
+                ids.insert(b.action.id);
+            for (const char *id :
+                 {"data.source.common.csv", "data.source.common.custom-protocol", "data.source.common.ulog",
+                  "data.source.common.mdf4", "data.source.csv", "data.source.custom-protocol", "data.source.ulog",
+                  "data.source.mdf4", "data.source.rosbag2", "data.source.blf", "data.source.apbin"})
+                CHECK(ids.contains(QString::fromLatin1(id)));
+        }
         bool hasCsv = false, hasCustom = false;
         for (const auto &entry : srcActs)
         {
             CHECK(!entry.action.galleryGroup.isEmpty());
-            if (entry.action.id.contains(QStringLiteral("csv"))) hasCsv = true;
-            if (entry.action.id.contains(QStringLiteral("custom-protocol"))) hasCustom = true;
+            if (entry.action.id.contains(QStringLiteral("csv")))
+                hasCsv = true;
+            if (entry.action.id.contains(QStringLiteral("custom-protocol")))
+                hasCustom = true;
         }
         CHECK(hasCsv && hasCustom);
         OK("图库纯数据声明：12 图型分 4 组 + 格式驱动进来源库，headless 可读");
@@ -643,11 +694,11 @@ int main(int argc, char *argv[])
 
     // --- 2a-3) 快捷键是动作属性（纯数据），骨架动作声明了默认值 ---
     {
-        const auto dataActs2 = slotReg.actionsIn(QStringLiteral("ribbon.group.home.data"));
+        const auto dataActs2 = groupActions(QStringLiteral("ribbon.group.home.data"));
         bool hasOpenShortcut = false;
         for (const auto &entry : dataActs2)
-            if (entry.action.id == QStringLiteral("app.action.openData")
-                && entry.action.shortcut == QStringLiteral("Ctrl+O"))
+            if (entry.action.id == QStringLiteral("app.action.openData") &&
+                entry.action.shortcut == QStringLiteral("Ctrl+O"))
                 hasOpenShortcut = true;
         CHECK(hasOpenShortcut); // 打开数据 = Ctrl+O
         OK("快捷键作为动作属性：打开数据声明 Ctrl+O");
@@ -656,20 +707,19 @@ int main(int argc, char *argv[])
     // --- 2a-4) Ribbon 页顺序 + 分组归属 + action 顺序 ---
     {
         // 页顺序：slotsOfKind 现在按 order 升序，而不是声明顺序。
-        const auto pages = slotReg.slotsOfKind(SlotKind::RibbonPage);
+        const auto pages = ribbonSvc->ribbonPages();
         CHECK(pages.size() == 9);
-        const QStringList expectPages = {QStringLiteral("开始"), QStringLiteral("文件"),
-            QStringLiteral("数据"), QStringLiteral("绘图"), QStringLiteral("脚本"),
-            QStringLiteral("协议"), QStringLiteral("分析"), QStringLiteral("报告"),
-            QStringLiteral("视图")};
+        const QStringList expectPages = {QStringLiteral("开始"), QStringLiteral("文件"), QStringLiteral("数据"),
+                                         QStringLiteral("绘图"), QStringLiteral("脚本"), QStringLiteral("协议"),
+                                         QStringLiteral("分析"), QStringLiteral("报告"), QStringLiteral("视图")};
         for (int i = 0; i < pages.size(); ++i)
             CHECK(pages.at(i).label == expectPages.at(i));
         // 组顺序：同页内按 group.order 升序（老设计 panel 数组顺序）。
-        const auto plotGroups = slotReg.childrenOf(QStringLiteral("ribbon.page.plot"));
+        const auto plotGroups = ribbonSvc->ribbonGroupsOf(QStringLiteral("ribbon.page.plot"));
         // 绘图页分组按用户要求重排：页面 → 布局 → 显示 → 交互 → 导出 → 图表类型(gallery)。
-        const QStringList expectGroups = {QStringLiteral("页面"), QStringLiteral("布局"),
-            QStringLiteral("显示"), QStringLiteral("交互"), QStringLiteral("导出"),
-            QStringLiteral("图表类型"), QStringLiteral("曲线与轴")};
+        const QStringList expectGroups = {QStringLiteral("页面"),    QStringLiteral("布局"), QStringLiteral("显示"),
+                                          QStringLiteral("交互"),    QStringLiteral("导出"), QStringLiteral("图表类型"),
+                                          QStringLiteral("曲线与轴")};
         CHECK(plotGroups.size() == expectGroups.size());
         for (int i = 0; i < plotGroups.size(); ++i)
             CHECK(plotGroups.at(i).label == expectGroups.at(i));
@@ -677,9 +727,9 @@ int main(int argc, char *argv[])
     }
     {
         // 分组归属：页面=新建页 / 布局=增删拆分 / 显示=网格图例 / 画布操作=缩放自适应。
-        const auto idsIn = [&slotReg](const QString &area) {
+        const auto idsIn = [&groupActions](const QString &area) {
             QStringList ids;
-            for (const auto &b : slotReg.actionsIn(area))
+            for (const auto &b : groupActions(area))
                 ids << b.action.id;
             return ids;
         };
@@ -699,7 +749,7 @@ int main(int argc, char *argv[])
         const auto toolIds = idsIn(QStringLiteral("ribbon.group.plot.tool"));
         CHECK(toolIds.contains(QStringLiteral("plot.autoscale")));
         // 文件页：老设计"截图"是独立一组，不再塞在"导出"组。
-        CHECK(slotReg.slot(QStringLiteral("ribbon.group.file.screenshot")) != nullptr);
+        CHECK(hasGroup(QStringLiteral("ribbon.group.file.screenshot")));
         CHECK(idsIn(QStringLiteral("ribbon.group.file.screenshot")).contains(QStringLiteral("file.screenshot")));
         CHECK(!idsIn(QStringLiteral("ribbon.group.file.export")).contains(QStringLiteral("file.screenshot")));
         // 页面组除新建页还有删除页（用户要求）。
@@ -715,20 +765,20 @@ int main(int argc, char *argv[])
     }
     {
         // action 组内顺序按 order 升序（不再依赖模块装载顺序）。
-        const auto layout = slotReg.actionsIn(QStringLiteral("ribbon.group.plot.layout"));
+        const auto layout = groupActions(QStringLiteral("ribbon.group.plot.layout"));
         for (int i = 1; i < layout.size(); ++i)
             CHECK(layout.at(i - 1).action.order <= layout.at(i).action.order);
         // 老布局组首项是"网格"（figure.grid, order 0）。
         CHECK(!layout.isEmpty());
         CHECK(layout.first().action.id == QStringLiteral("figure.grid"));
         // gallery 分类出现顺序：plot 类型 = 常用→曲线→地图/3D→仪表。
-        const auto plots = slotReg.actionsIn(QStringLiteral("ribbon.group.plot.type"));
+        const auto plots = groupActions(QStringLiteral("ribbon.group.plot.type"));
         QStringList catOrder;
         for (const auto &b : plots)
             if (!catOrder.contains(b.action.galleryGroup))
                 catOrder << b.action.galleryGroup;
-        CHECK(catOrder == (QStringList{QStringLiteral("常用"), QStringLiteral("曲线"),
-                                       QStringLiteral("地图 / 3D"), QStringLiteral("仪表")}));
+        CHECK(catOrder == (QStringList{QStringLiteral("常用"), QStringLiteral("曲线"), QStringLiteral("地图 / 3D"),
+                                       QStringLiteral("仪表")}));
         OK("action 顺序可控：组内按 order 升序，gallery 分类按老设计顺序");
     }
 
@@ -747,8 +797,7 @@ int main(int argc, char *argv[])
                     return a;
             return nullptr;
         };
-        const QStringList ids = {QStringLiteral("data.action.reload"),
-                                 QStringLiteral("data.action.export"),
+        const QStringList ids = {QStringLiteral("data.action.reload"), QStringLiteral("data.action.export"),
                                  QStringLiteral("data.action.clearCache")};
         for (const QString &id : ids)
         {
@@ -756,7 +805,7 @@ int main(int argc, char *argv[])
             CHECK(action != nullptr); // 按钮确实渲染出来了
             const int before = binder->actionTriggerCount(id);
             status->clearMessage();
-            action->trigger(); // 真实点击
+            action->trigger();                                   // 真实点击
             CHECK(binder->actionTriggerCount(id) == before + 1); // 点击到达绑定器
             // 关键断言：op 必须被 handler 认领。业务错误（如无活动源、未指定导出
             // 路径）是允许的，但绝不能停在"没有模块能处理意图"——那是把 id 当 op 的症状。
@@ -974,9 +1023,7 @@ int main(int argc, char *argv[])
         QCoreApplication::processEvents();
 
         const QJsonObject geo = binder->geometrySnapshot();
-        auto rect = [&geo](const QString &name) {
-            return geo.value(name).toObject();
-        };
+        auto rect = [&geo](const QString &name) { return geo.value(name).toObject(); };
         auto x = [&rect](const QString &name) { return rect(name).value(QStringLiteral("x")).toInt(); };
         auto y = [&rect](const QString &name) { return rect(name).value(QStringLiteral("y")).toInt(); };
         auto w = [&rect](const QString &name) { return rect(name).value(QStringLiteral("w")).toInt(); };
@@ -997,21 +1044,20 @@ int main(int argc, char *argv[])
         // Panel 只在 Editor 下方：水平范围不越出 Editor。
         CHECK(y(QStringLiteral("panel")) >= y(QStringLiteral("editor")) + h(QStringLiteral("editor")) - 2);
         CHECK(x(QStringLiteral("panel")) >= x(QStringLiteral("editor")) - 2);
-        CHECK(x(QStringLiteral("panel")) + w(QStringLiteral("panel"))
-              <= x(QStringLiteral("editor")) + w(QStringLiteral("editor")) + 2);
+        CHECK(x(QStringLiteral("panel")) + w(QStringLiteral("panel")) <=
+              x(QStringLiteral("editor")) + w(QStringLiteral("editor")) + 2);
 
         // 状态栏全宽，位于所有停靠区下方。
-        fprintf(stdout, "[geom] win=%dx%d status=(%d,%d %dx%d) left=(%d,%d %dx%d) editor=(%d,%d %dx%d) bottom=(%d,%d %dx%d)\n",
-                window.width(), window.height(),
-                x(QStringLiteral("statusBar")), y(QStringLiteral("statusBar")),
-                w(QStringLiteral("statusBar")), h(QStringLiteral("statusBar")),
-                x(QStringLiteral("primarySidebar")), y(QStringLiteral("primarySidebar")),
-                w(QStringLiteral("primarySidebar")), h(QStringLiteral("primarySidebar")),
-                x(QStringLiteral("editor")), y(QStringLiteral("editor")),
-                w(QStringLiteral("editor")), h(QStringLiteral("editor")),
-                x(QStringLiteral("panel")), y(QStringLiteral("panel")),
-                w(QStringLiteral("panel")), h(QStringLiteral("panel")));
-        CHECK(y(QStringLiteral("statusBar")) >= y(QStringLiteral("primarySidebar")) + h(QStringLiteral("primarySidebar")) - 2);
+        fprintf(stdout,
+                "[geom] win=%dx%d status=(%d,%d %dx%d) left=(%d,%d %dx%d) editor=(%d,%d %dx%d) bottom=(%d,%d %dx%d)\n",
+                window.width(), window.height(), x(QStringLiteral("statusBar")), y(QStringLiteral("statusBar")),
+                w(QStringLiteral("statusBar")), h(QStringLiteral("statusBar")), x(QStringLiteral("primarySidebar")),
+                y(QStringLiteral("primarySidebar")), w(QStringLiteral("primarySidebar")),
+                h(QStringLiteral("primarySidebar")), x(QStringLiteral("editor")), y(QStringLiteral("editor")),
+                w(QStringLiteral("editor")), h(QStringLiteral("editor")), x(QStringLiteral("panel")),
+                y(QStringLiteral("panel")), w(QStringLiteral("panel")), h(QStringLiteral("panel")));
+        CHECK(y(QStringLiteral("statusBar")) >=
+              y(QStringLiteral("primarySidebar")) + h(QStringLiteral("primarySidebar")) - 2);
         CHECK(x(QStringLiteral("statusBar")) >= 0);
         CHECK(w(QStringLiteral("statusBar")) >= window.width() - 40);
         OK("ADS 几何：左右全高、Panel 只在 Editor 下方、StatusBar 全宽");
@@ -1019,11 +1065,8 @@ int main(int argc, char *argv[])
 
     // --- 4a2) 底部先到：首个 dock 请求也必须先装中央，禁止退回 root ---
     {
-        RegistryTree registryTree;
-        auto slotHub = std::make_unique<UiSlotHub>(registryTree);
         QMainWindow isolated;
-        assembly::SlotsServiceAdapter isolatedSlots(*slotHub);
-        ShellBinder binder2{&isolated, &isolatedSlots};
+        ShellBinder binder2{&isolated, nullptr, nullptr};
         auto *bottom = new QLabel(QStringLiteral("底部面板"));
         binder2.dock(Region::Panel, QStringLiteral("底部"), bottom);
         isolated.resize(900, 640);
@@ -1037,19 +1080,15 @@ int main(int argc, char *argv[])
         const QJsonObject bottomRect = geo.value(QStringLiteral("panel")).toObject();
         CHECK(!editor.isEmpty());
         CHECK(!bottomRect.isEmpty());
-        CHECK(bottomRect.value(QStringLiteral("y")).toInt()
-              >= editor.value(QStringLiteral("y")).toInt()
-                     + editor.value(QStringLiteral("h")).toInt() - 2);
+        CHECK(bottomRect.value(QStringLiteral("y")).toInt() >=
+              editor.value(QStringLiteral("y")).toInt() + editor.value(QStringLiteral("h")).toInt() - 2);
         OK("底部先到：dock() 先安装中央，Panel 仍挂 Editor 下方");
     }
 
     // --- 4a3) 空容器不占像素（验收 14）：位置已开、零视图时该区域不存在、宽度 0 ---
     {
-        RegistryTree emptyTree;
-        auto emptySlots = std::make_unique<UiSlotHub>(emptyTree);
         QMainWindow emptyWindow;
-        assembly::SlotsServiceAdapter emptySlotSvc(*emptySlots);
-        ShellBinder emptyBinder{&emptyWindow, &emptySlotSvc};
+        ShellBinder emptyBinder{&emptyWindow, nullptr, nullptr};
         emptyWindow.resize(900, 640);
         emptyWindow.show();
         QEventLoop emptyLoop;
@@ -1110,13 +1149,11 @@ int main(int argc, char *argv[])
 
         // Ribbon"脚本"页签贡献（2.1.10）：file（新建/打开）+ run（运行/调试运行）+ 控制台。
         {
-            const auto &scriptSlots = application.host().uiSlots();
-            const auto *fileGrp = scriptSlots.slot(QStringLiteral("ribbon.group.script.file"));
-            CHECK(fileGrp != nullptr);
+            CHECK(hasGroup(QStringLiteral("ribbon.group.script.file")));
             QStringList fileIds, runIds;
-            for (const auto &b : scriptSlots.actionsIn(QStringLiteral("ribbon.group.script.file")))
+            for (const auto &b : groupActions(QStringLiteral("ribbon.group.script.file")))
                 fileIds << b.action.id;
-            for (const auto &b : scriptSlots.actionsIn(QStringLiteral("ribbon.group.script.run")))
+            for (const auto &b : groupActions(QStringLiteral("ribbon.group.script.run")))
                 runIds << b.action.id;
             CHECK(fileIds.contains(QStringLiteral("script.workbench.new")));
             CHECK(fileIds.contains(QStringLiteral("script.workbench.open")));
@@ -1198,8 +1235,8 @@ int main(int argc, char *argv[])
         // badge 与 Activity 顺序配置可改、可读。
         binder->setActivityBadge(QStringLiteral("diagnostics"), 7);
         CHECK(binder->activityBadge(QStringLiteral("diagnostics")) == 7);
-        binder->setActivityOrder({QStringLiteral("script"), QStringLiteral("data"),
-                                  QStringLiteral("analysis"), QStringLiteral("diagnostics")});
+        binder->setActivityOrder({QStringLiteral("script"), QStringLiteral("data"), QStringLiteral("analysis"),
+                                  QStringLiteral("diagnostics")});
         CHECK(binder->activityIds().first() == QStringLiteral("script"));
         binder->setActivityOrder(activityIds);
 
@@ -1249,8 +1286,7 @@ int main(int argc, char *argv[])
     }
     CHECK(panel != nullptr);
 
-    const QString fixture =
-        QStringLiteral(PS_TEST_FIXTURE_DIR "/demo_flight.csv");
+    const QString fixture = QStringLiteral(PS_TEST_FIXTURE_DIR "/demo_flight.csv");
     // 加载生命周期推送捕获：真实 data.load 入口应先推 "加载中…"，摄取结束回终态。
     QStringList progressEvents;
     QObject::connect(window.context(), &GuiContext::statusTextChanged, &window,
@@ -1279,10 +1315,8 @@ int main(int argc, char *argv[])
     }
     CHECK(finishIdx >= 0);
     CHECK(startIdx < finishIdx); // 顺序：start → …progress… → finish
-    CHECK(window.context()->statusText(QStringLiteral("data.loading.progress")) ==
-          QStringLiteral("空闲"));
-    const int loadedDsId =
-        loaded.value().payload.toMap().value(QStringLiteral("dataset")).toInt();
+    CHECK(window.context()->statusText(QStringLiteral("data.loading.progress")) == QStringLiteral("空闲"));
+    const int loadedDsId = loaded.value().payload.toMap().value(QStringLiteral("dataset")).toInt();
     CHECK(loadedDsId >= 0);
 
     panel->refresh();
@@ -1292,8 +1326,8 @@ int main(int argc, char *argv[])
     // 字段视图（默认 chip）：一源一行，源展开直接是表 → 列（dataset 层透明化）。
     CHECK(panel->shownSourceId() >= 0);
     CHECK(panel->activeChip() == 0);
-    CHECK(panel->datasetNodeCount() == 1);   // 数据模型层仍有 1 个数据集
-    CHECK(panel->tableNodeCount(0) >= 1);    // 源下直接挂载至少一张表
+    CHECK(panel->datasetNodeCount() == 1); // 数据模型层仍有 1 个数据集
+    CHECK(panel->tableNodeCount(0) >= 1);  // 源下直接挂载至少一张表
     OK("数据源面板：一源一行 + 字段视图（源 → 表 → 列）层级正确");
 
     // 字段/参数/消息 三 chip：对齐老 dock 与截图的领域信息分层。
@@ -1308,9 +1342,9 @@ int main(int argc, char *argv[])
     // data.reload 要按**源** id 找源；若视图把数据集 id 写进活动源，
     // handler 就永远找不到源。这里断言：反查能回到真正拥有该数据集的源。
     {
-        const int sourceId = application.context().sources().sourceOfDataset(loadedDsId);
+        const int sourceId = plotscope_test::sourceHub(application.context()).sourceOfDataset(loadedDsId);
         CHECK(sourceId >= 0);
-        const DataSourceInfo *info = application.context().sources().get(sourceId);
+        const DataSourceInfo *info = plotscope_test::sourceHub(application.context()).get(sourceId);
         CHECK(info != nullptr);
         CHECK(info->datasetIds.contains(loadedDsId));
     }
@@ -1322,7 +1356,7 @@ int main(int argc, char *argv[])
     // 于是"重载"永远报"没有可重载的数据源"。这里显式给源 id 重载，
     // 并验证数据集 id 稳定（重载后绘图视图不因 id 漂移失联）。
     {
-        const int sourceId = application.context().sources().sourceOfDataset(loadedDsId);
+        const int sourceId = plotscope_test::sourceHub(application.context()).sourceOfDataset(loadedDsId);
         CHECK(sourceId >= 0);
         Intent rel;
         rel.op = QStringLiteral("data.reload");
@@ -1330,8 +1364,7 @@ int main(int argc, char *argv[])
         const auto r = application.host().execute(rel);
         CHECK(r);
         // 重载后数据集 id 不变（稳定 id 机制）。
-        const int newDsId =
-            r.value().payload.toMap().value(QStringLiteral("dataset")).toInt();
+        const int newDsId = r.value().payload.toMap().value(QStringLiteral("dataset")).toInt();
         CHECK(newDsId == loadedDsId);
         // 源列表仍然只有一个源（重载是替换不是新增）。
         panel->refresh();
@@ -1339,14 +1372,12 @@ int main(int argc, char *argv[])
         OK("data.reload：按源 id 重载成功，数据集 id 稳定（绘图不失效）");
     }
 
-
-
     // --- 5c-b) 数据表格查看器（2.2.3）：树选表 → 中央页签按需创建 → 表格同步 ---
     //
     // 回归点：面板必须**按需创建**（初始中央区只有画布 + 已有的脚本编辑器页签），
     // 绑定走 data.table.open → show 两段式，与画布平级不挤占。
     {
-        const Dataset *loadedDs = application.data().get(loadedDsId);
+        const Dataset *loadedDs = plotscope_test::datasetHub(application.context()).get(loadedDsId);
         CHECK(loadedDs != nullptr && loadedDs->tableCount() >= 1);
         const QString firstTable = loadedDs->tableNames().first();
 
@@ -1422,10 +1453,9 @@ int main(int argc, char *argv[])
         CHECK(out2.error().message.contains(QStringLiteral("报告模板不存在")));
 
         // Ribbon 动作已声明（报告页/导出组/大按钮）——走 UiSlotHub 插槽数据。
-        const auto reportActs = slotReg.actionsIn(QStringLiteral("ribbon.group.report.export"));
+        const auto reportActs = groupActions(QStringLiteral("ribbon.group.report.export"));
         CHECK(reportActs.size() == 1);
-        CHECK(!reportActs.isEmpty()
-              && reportActs.first().action.id == QStringLiteral("report.workbench.export"));
+        CHECK(!reportActs.isEmpty() && reportActs.first().action.id == QStringLiteral("report.workbench.export"));
         CHECK(reportActs.first().action.large); // 大按钮
         OK("报告导出：view action 同路径出 PDF、模板缺省报错、Ribbon 入口就位");
     }
@@ -1483,10 +1513,9 @@ int main(int argc, char *argv[])
         CHECK(!sm.value(QStringLiteral("cancelled")).toBool());
 
         // Ribbon"批量"组就位（大按钮）
-        const auto batchActs = slotReg.actionsIn(QStringLiteral("ribbon.group.script.batch"));
+        const auto batchActs = groupActions(QStringLiteral("ribbon.group.script.batch"));
         CHECK(batchActs.size() == 1);
-        CHECK(!batchActs.isEmpty()
-              && batchActs.first().action.id == QStringLiteral("script.workbench.batch"));
+        CHECK(!batchActs.isEmpty() && batchActs.first().action.id == QStringLiteral("script.workbench.batch"));
         CHECK(batchActs.first().action.large);
         OK("批量处理：script.workbench.batch 全链路出汇总表（2 成功 1 失败），Ribbon 入口就位");
     }
@@ -1500,8 +1529,7 @@ int main(int argc, char *argv[])
         st.op = QStringLiteral("script.py.status");
         const Result<IntentResult> str = application.host().execute(st);
         CHECK(str && str.value().payload.toMap().value(QStringLiteral("available")).toBool());
-        const bool pyNumpy =
-            str.value().payload.toMap().value(QStringLiteral("numpy")).toBool();
+        const bool pyNumpy = str.value().payload.toMap().value(QStringLiteral("numpy")).toBool();
         if (!pyNumpy)
         {
             // CI 设了 PS_REQUIRE_PY_NUMPY：缺依赖必须红（跳过会让 GUI py 路径无人覆盖）。
@@ -1517,8 +1545,7 @@ int main(int argc, char *argv[])
             CHECK(ui != nullptr);
             // .py 运行路由：script.workbench.run（编辑器 F5 同一 view action）
             QVariantMap rp;
-            rp.insert(QStringLiteral("source"),
-                      QByteArrayLiteral("print('py-gui-ok')\n7 * 6\n"));
+            rp.insert(QStringLiteral("source"), QByteArrayLiteral("print('py-gui-ok')\n7 * 6\n"));
             rp.insert(QStringLiteral("name"), QStringLiteral("pytest_demo.py"));
             Result<QVariant> rout{QVariant()};
             CHECK(application.context().interactions().dispatchViewAction(QStringLiteral("script.workbench.run"), rp,
@@ -1526,10 +1553,10 @@ int main(int argc, char *argv[])
             CHECK(rout.ok());
 
             // ds 注入 + 写回 v2（数据面与 headless 同路径）
-            const Dataset *before = application.data().get(loadedDsId);
+            const Dataset *before = plotscope_test::datasetHub(application.context()).get(loadedDsId);
             CHECK(before && before->tableCount() >= 1);
             const QString colName = before->table(0)->columns.first().name;
-            const int countBefore = application.data().count();
+            const int countBefore = plotscope_test::datasetHub(application.context()).count();
             QVariantMap ep;
             ep.insert(QStringLiteral("dataset"), loadedDsId);
             ep.insert(QStringLiteral("source"),
@@ -1545,11 +1572,10 @@ int main(int argc, char *argv[])
             wi.op = QStringLiteral("script.py.writeback");
             const Result<IntentResult> wr = application.host().execute(wi);
             CHECK(wr);
-            const int v2Id =
-                wr.value().payload.toMap().value(QStringLiteral("dataset")).toInt();
+            const int v2Id = wr.value().payload.toMap().value(QStringLiteral("dataset")).toInt();
             CHECK(v2Id >= 0 && v2Id != loadedDsId);
-            CHECK(application.data().count() == countBefore + 1);
-            const Dataset *v2 = application.data().get(v2Id);
+            CHECK(plotscope_test::datasetHub(application.context()).count() == countBefore + 1);
+            const Dataset *v2 = plotscope_test::datasetHub(application.context()).get(v2Id);
             CHECK(v2 && v2->table(0)->column(QStringLiteral("py_derived")) != nullptr);
             OK("Python 桥：.py 运行路由 + ds 注入 + 写回 v2 数据集（GUI 同路径）");
         }
@@ -1561,7 +1587,7 @@ int main(int argc, char *argv[])
     // 视图 schema 漂移）。现改为 ps_preview_filter 只读预览：payload 带 time/value，
     // 并发 derivedSeriesReady 给画布；数据集的表/列/行数前后必须一致。
     {
-        const Dataset *before = application.data().get(loadedDsId);
+        const Dataset *before = plotscope_test::datasetHub(application.context()).get(loadedDsId);
         CHECK(before != nullptr && before->tableCount() >= 1);
         const Table *tbl = before->table(0);
         CHECK(tbl != nullptr && !tbl->columns.isEmpty());
@@ -1601,7 +1627,7 @@ int main(int argc, char *argv[])
         CHECK(!g_derivedName.isEmpty());
 
         // 关键断言：派生后数据集结构完全没变（没有新列、行数一致）。
-        const Dataset *after = application.data().get(loadedDsId);
+        const Dataset *after = plotscope_test::datasetHub(application.context()).get(loadedDsId);
         CHECK(after != nullptr);
         CHECK(after->tableCount() == before->tableCount());
         const Table *tblAfter = after->table(tableName);
@@ -1639,8 +1665,7 @@ int main(int argc, char *argv[])
         fit.params[QStringLiteral("table")] = tableName;
         fit.params[QStringLiteral("column")] = columnName;
         fit.params[QStringLiteral("filter")] = QStringLiteral("scale");
-        fit.params[QStringLiteral("params")] =
-            QVariant(QJsonObject{{QStringLiteral("value_scale"), 2.0}});
+        fit.params[QStringLiteral("params")] = QVariant(QJsonObject{{QStringLiteral("value_scale"), 2.0}});
         const auto fr = application.host().execute(fit);
         CHECK(fr);
         const QVariantMap fpm = fr.value().payload.toMap();
@@ -1651,14 +1676,14 @@ int main(int argc, char *argv[])
         CHECK(std::abs(fval.first() - firstRaw * 2.0) < 1e-9); // scale.cpp: v*2
         CHECK(g_filterCount == 1);
         // 过滤器同样零改动数据集。
-        CHECK(application.data().get(loadedDsId)->table(tableName)->rows == rowsBefore);
+        CHECK(plotscope_test::datasetHub(application.context()).get(loadedDsId)->table(tableName)->rows == rowsBefore);
         OK("data.filter：FilterOps 全链路（list>=12 + scale 数值 + 信号 + 数据集零改动）");
     }
 
     // --- 5e) data.marker：Marker 规则扫通道 -> PlotMarker -> 画布叠加 ---
     {
         CHECK(application.context().interactions().hasMarkerOps());
-        const Dataset *mds = application.data().get(loadedDsId);
+        const Dataset *mds = plotscope_test::datasetHub(application.context()).get(loadedDsId);
         CHECK(mds != nullptr && mds->tableCount() > 0);
         const Table *mTbl = mds->table(0);
         CHECK(mTbl != nullptr && !mTbl->columns.isEmpty());
@@ -1686,14 +1711,14 @@ int main(int argc, char *argv[])
             CHECK(mlist.at(1).toMap().value(QStringLiteral("kind")).toString() == QStringLiteral("valueBand"));
         }
         // 数据集零改动。
-        CHECK(application.data().get(loadedDsId)->table(0)->rows == mTbl->rows);
+        CHECK(plotscope_test::datasetHub(application.context()).get(loadedDsId)->table(0)->rows == mTbl->rows);
         OK("data.marker：MarkerOps 规则执行(3 marker) + 画布叠加 + 数据集零改动");
     }
 
     // --- 5f) data.state：状态视图 —— bool/整数值通道游程编码 → 画布顶部色带 ---
     int stateDsId = -1;
     {
-        const int dsId = buildDataset(application.data());
+        const int dsId = buildDataset(plotscope_test::datasetHub(application.context()));
         stateDsId = dsId;
         CHECK(dsId >= 0);
         // 整数值枚举列（0/1/2 每 100 样本一段）：分段 + 画布叠加。
@@ -1718,8 +1743,8 @@ int main(int argc, char *argv[])
             CHECK(!segs.isEmpty());
             // 首段标签是枚举整数的十进制串。
             const QString firstLabel = segs.first().toMap().value(QStringLiteral("label")).toString();
-            CHECK(firstLabel == QStringLiteral("0") || firstLabel == QStringLiteral("1")
-                  || firstLabel == QStringLiteral("2"));
+            CHECK(firstLabel == QStringLiteral("0") || firstLabel == QStringLiteral("1") ||
+                  firstLabel == QStringLiteral("2"));
         }
         // bool 列：标签 true/false。
         Intent st2;
@@ -1753,7 +1778,8 @@ int main(int argc, char *argv[])
         const auto br = application.host().execute(bad);
         CHECK(!static_cast<bool>(br)); // sig = i*0.5 含非整数值
         // 数据集零改动。
-        CHECK(application.data().get(dsId)->table(QStringLiteral("trace"))->rows == 5000);
+        CHECK(plotscope_test::datasetHub(application.context()).get(dsId)->table(QStringLiteral("trace"))->rows ==
+              5000);
         OK("data.state：状态视图（枚举分段+bool 标签+非整数拒绝+画布叠加）");
     }
 
@@ -1764,8 +1790,7 @@ int main(int argc, char *argv[])
         Intent sit;
         sit.op = QStringLiteral("script.run");
         sit.params[QStringLiteral("source")] = QByteArray(
-            "app.call(\"data.state\", {dataset=" + QByteArray::number(dsId)
-            + ", table=\"trace\", column=\"mode\"})");
+            "app.call(\"data.state\", {dataset=" + QByteArray::number(dsId) + ", table=\"trace\", column=\"mode\"})");
         // app.call 失败会 luaL_error 使整个脚本失败：CHECK(scr) 即证明
         // 脚本能路由 data.state 意图并成功分段叠加（画布行为 5f 已验）。
         const auto scr = application.host().execute(sit);
@@ -1842,7 +1867,8 @@ int main(int argc, char *argv[])
         CHECK(aiResult.value(QStringLiteral("count")).toInt() == 32);
 
         // 数据集零改动。
-        CHECK(application.data().get(dsId)->table(QStringLiteral("trace"))->rows == 5000);
+        CHECK(plotscope_test::datasetHub(application.context()).get(dsId)->table(QStringLiteral("trace"))->rows ==
+              5000);
         OK("data.series：意图/脚本读数/AI read_series 三通道 + 失败路径 + 零改动");
     }
 
@@ -1858,9 +1884,9 @@ int main(int argc, char *argv[])
         xformInfo.name = QStringLiteral("xform-src");
         xformInfo.origin = QStringLiteral("test://trace-origin");
         xformInfo.state = SourceState::Closed;
-        const int xformSrc = application.context().sources().add(xformInfo);
+        const int xformSrc = plotscope_test::sourceHub(application.context()).add(xformInfo);
         CHECK(xformSrc >= 0);
-        CHECK(application.context().sources().addDataset(xformSrc, dsId));
+        CHECK(plotscope_test::sourceHub(application.context()).addDataset(xformSrc, dsId));
 
         // dataset 未挂源（buildDataset 直接入仓）——用显式 origin 测 set 的 origin 路径。
         const QString origin = QStringLiteral("test://trace-origin");
@@ -1876,7 +1902,8 @@ int main(int argc, char *argv[])
         setI.params[QStringLiteral("origin")] = origin;
         setI.params[QStringLiteral("table")] = QStringLiteral("trace");
         setI.params[QStringLiteral("column")] = QStringLiteral("alt");
-        setI.params[QStringLiteral("transform")] = QJsonDocument(QJsonObject::fromVariantMap(xform)).toJson(QJsonDocument::Compact);
+        setI.params[QStringLiteral("transform")] =
+            QJsonDocument(QJsonObject::fromVariantMap(xform)).toJson(QJsonDocument::Compact);
         const auto setR = application.host().execute(setI);
         CHECK(static_cast<bool>(setR));
 
@@ -1902,7 +1929,8 @@ int main(int argc, char *argv[])
         }
 
         // (3) 原始数据零改动（变换是非破坏视图的核心铁律）。
-        CHECK(application.data().get(dsId)->table(QStringLiteral("trace"))->rows == 5000);
+        CHECK(plotscope_test::datasetHub(application.context()).get(dsId)->table(QStringLiteral("trace"))->rows ==
+              5000);
 
         // (4) clear 后恢复原始读数 + settings 里配方被移除。
         {
@@ -1956,7 +1984,7 @@ int main(int argc, char *argv[])
     // 结果登记宿主层派生注册表，data.series/plot.channel 按派生名穿透，
     // data.derive.list 提供可发现性。
     {
-        // (1) 专用 fixture：不动 stateDsId（DatasetHub::get 是 const 不可变访问，
+        // (1) 专用 fixture：不动 stateDsId（DatasetRegistry::get 是 const 不可变访问，
         // 且其 trace 表已有 5000 行——四元数列需要独立的 100 行时间轴）。
         // trace 表 t=i*0.01（基准轴），aux 表 t=i*0.05（独立采样率，跨表重采样用）。
         Dataset fds = Dataset::create(QStringLiteral("att-fixture"), QStringLiteral("mem"));
@@ -1984,18 +2012,16 @@ int main(int argc, char *argv[])
         for (int i = 0; i < m; ++i)
             at[i] = i * 0.05;
         CHECK(fds.addTable(QStringLiteral("aux"), at) >= 0);
-        CHECK(fds.addF64Column(QStringLiteral("aux"), QStringLiteral("q2.y"), QString(),
-                               QVector<double>(m, 0.0)));
-        CHECK(fds.addF64Column(QStringLiteral("aux"), QStringLiteral("q2.z"), QString(),
-                               QVector<double>(m, 0.0)));
+        CHECK(fds.addF64Column(QStringLiteral("aux"), QStringLiteral("q2.y"), QString(), QVector<double>(m, 0.0)));
+        CHECK(fds.addF64Column(QStringLiteral("aux"), QStringLiteral("q2.z"), QString(), QVector<double>(m, 0.0)));
         // NaN 防线用列：单个 null/NaN 样本（kernel 读 null 即 NaN）。
         QVector<double> nw = qw;
         nw[10] = std::nan("");
         CHECK(fds.addF64Column(QStringLiteral("trace"), QStringLiteral("qn.w"), QString(), nw));
         fds.refreshSchema();
-        const int dsId = application.data().add(fds);
+        const int dsId = plotscope_test::datasetHub(application.context()).add(fds);
         CHECK(dsId >= 0);
-        const Dataset *ds = application.data().get(dsId);
+        const Dataset *ds = plotscope_test::datasetHub(application.context()).get(dsId);
         CHECK(ds != nullptr);
 
         // (2) SISO 派生登记 + data.series 穿透。
@@ -2104,15 +2130,14 @@ int main(int argc, char *argv[])
             d.params[QStringLiteral("name")] = QStringLiteral("attx");
             const auto dr = application.host().execute(d);
             if (!dr)
-                fprintf(stderr, "[dbg] cross-table fail: %s / %s\n",
-                        qPrintable(dr.error().code), qPrintable(dr.error().message));
+                fprintf(stderr, "[dbg] cross-table fail: %s / %s\n", qPrintable(dr.error().code),
+                        qPrintable(dr.error().message));
             CHECK(static_cast<bool>(dr));
             const QVariantMap p = dr.value().payload.toMap();
             CHECK(p.value(QStringLiteral("count")).toInt() == 100);
             const QVariantList outs = p.value(QStringLiteral("outputs")).toList();
             CHECK(outs.size() == 3);
-            CHECK(outs.first().toMap().value(QStringLiteral("name")).toString()
-                  == QStringLiteral("attx.roll"));
+            CHECK(outs.first().toMap().value(QStringLiteral("name")).toString() == QStringLiteral("attx.roll"));
             const QVariantList rv = outs.first().toMap().value(QStringLiteral("value")).toList();
             CHECK(rv.size() == 100);
             // t=0（边界延拓）、t=0.07（落在 aux 两样本之间线性插值）、t=0.99（延拓）全部 30°。
@@ -2196,8 +2221,8 @@ int main(int argc, char *argv[])
             // sig/q.w/q.x/q.y/q.z/qn.w 六列，追加帧必须按顺序全给。
             const int m2 = 20;
             QVector<TimeNs> nts;
-            QVector<double> nw2(m2, std::cos(half)), nx2(m2, std::sin(half)),
-                ny2(m2, 0.0), nz2(m2, 0.0), nsig2(m2, 0.0), nqn2(m2, std::cos(half));
+            QVector<double> nw2(m2, std::cos(half)), nx2(m2, std::sin(half)), ny2(m2, 0.0), nz2(m2, 0.0),
+                nsig2(m2, 0.0), nqn2(m2, std::cos(half));
             nts.reserve(m2);
             for (int i = 0; i < m2; ++i)
                 nts.append(static_cast<TimeNs>(std::llround((1.00 + i * 0.01) * 1000000000.0)));
@@ -2275,8 +2300,7 @@ int main(int argc, char *argv[])
                 CHECK(!rp.value(QStringLiteral("incremental")).toBool());
                 CHECK(rp.value(QStringLiteral("count")).toInt() == 120);
                 const QVariantList outs2 = rp.value(QStringLiteral("outputs")).toList();
-                CHECK(outs2.first().toMap().value(QStringLiteral("unit")).toString()
-                      == QStringLiteral("rad"));
+                CHECK(outs2.first().toMap().value(QStringLiteral("unit")).toString() == QStringLiteral("rad"));
             }
 
             // data.derive.refresh：无新数据 → 幂等（refreshed=0）。
@@ -2299,8 +2323,8 @@ int main(int argc, char *argv[])
     //   源 A：t ∈ [0, 5)（buildDataset 已建 dsId，0 起点但未挂源）
     //   源 B：t ∈ [10, 15)
     {
-        auto &sources = application.context().sources();
-        auto &repo = application.data();
+        auto &sources = plotscope_test::sourceHub(application.context());
+        auto &repo = plotscope_test::datasetHub(application.context());
 
         DataSourceInfo infoA;
         infoA.name = QStringLiteral("align-A");
@@ -2311,7 +2335,7 @@ int main(int argc, char *argv[])
         infoB.state = SourceState::Closed;
         const int srcB = sources.add(infoB);
         CHECK(srcA >= 0 && srcB >= 0 && srcA != srcB);
-        const int dsA = buildDataset(repo, 0.0);  // t ∈ [0, 5)
+        const int dsA = buildDataset(repo, 0.0); // t ∈ [0, 5)
         CHECK(dsA >= 0);
         const int dsB = buildDataset(repo, 10.0); // t ∈ [10, 15)
         CHECK(dsB >= 0);
@@ -2329,8 +2353,7 @@ int main(int argc, char *argv[])
         // ① offset.set / sourceTimeOffset 生效（宿主态配方，数据零改动）。
         {
             const auto rr = va(QStringLiteral("plot.offset.set"),
-                               {{QStringLiteral("sourceId"), srcB},
-                                {QStringLiteral("offsetSec"), 2.5}});
+                               {{QStringLiteral("sourceId"), srcB}, {QStringLiteral("offsetSec"), 2.5}});
             CHECK(rr.first);
             CHECK(application.context().sourceTimeOffset(srcB) == 2.5);
             CHECK(application.context().sourceTimeOffset(srcA) == 0.0);
@@ -2341,33 +2364,29 @@ int main(int argc, char *argv[])
         // 含 fixture 行号时间源的 2999s，故用与基准无关的相对差断言：
         // B-A offset 差 = (base-14.999)-(base-4.999) = -10）。
         {
-            const auto rr = va(QStringLiteral("plot.align"),
-                               {{QStringLiteral("mode"), QStringLiteral("end")}});
+            const auto rr = va(QStringLiteral("plot.align"), {{QStringLiteral("mode"), QStringLiteral("end")}});
             CHECK(rr.first);
             const QVariantMap am = rr.second.value().toMap();
-            CHECK(am.contains(QString::number(srcA))
-                  && am.contains(QString::number(srcB)));
-            CHECK(qAbs(am.value(QString::number(srcB)).toDouble()
-                       - am.value(QString::number(srcA)).toDouble() - (-10.0)) < 1e-6);
+            CHECK(am.contains(QString::number(srcA)) && am.contains(QString::number(srcB)));
+            CHECK(qAbs(am.value(QString::number(srcB)).toDouble() - am.value(QString::number(srcA)).toDouble() -
+                       (-10.0)) < 1e-6);
         }
         OK("plot.align end：两源结束时刻对齐（B-A offset 差=-10，基准无关）");
 
         // ③ Align start：把所有源开始时刻平移到同一基准（全局最早 tMin），
         // 同样用相对差断言：B-A offset 差 = (base-10)-(base-0) = -10。
         {
-            const auto rr = va(QStringLiteral("plot.align"),
-                               {{QStringLiteral("mode"), QStringLiteral("start")}});
+            const auto rr = va(QStringLiteral("plot.align"), {{QStringLiteral("mode"), QStringLiteral("start")}});
             CHECK(rr.first);
             const QVariantMap am = rr.second.value().toMap();
-            CHECK(qAbs(am.value(QString::number(srcB)).toDouble()
-                       - am.value(QString::number(srcA)).toDouble() - (-10.0)) < 1e-6);
+            CHECK(qAbs(am.value(QString::number(srcB)).toDouble() - am.value(QString::number(srcA)).toDouble() -
+                       (-10.0)) < 1e-6);
         }
         OK("plot.align start：两源开始时刻对齐（B-A offset 差=-10，基准无关）");
 
         // ④ offset.clear（带 sourceId）：单源归零。
         {
-            const auto rr = va(QStringLiteral("plot.offset.clear"),
-                               {{QStringLiteral("sourceId"), srcB}});
+            const auto rr = va(QStringLiteral("plot.offset.clear"), {{QStringLiteral("sourceId"), srcB}});
             CHECK(rr.first);
             CHECK(application.context().sourceTimeOffset(srcB) == 0.0);
         }
@@ -2381,21 +2400,20 @@ int main(int argc, char *argv[])
                {{QStringLiteral("sourceId"), srcB}, {QStringLiteral("offsetSec"), 1.0}});
             const auto rr = va(QStringLiteral("plot.offset.clear"), {});
             CHECK(rr.first);
-            CHECK(application.context().sourceTimeOffset(srcA) == 0.0
-                  && application.context().sourceTimeOffset(srcB) == 0.0);
+            CHECK(application.context().sourceTimeOffset(srcA) == 0.0 &&
+                  application.context().sourceTimeOffset(srcB) == 0.0);
         }
         OK("plot.offset.clear：无参全清两源归零");
 
         // ⑥ 数据集零改动（offset 是显示配方，不动数据）。
         const Dataset *dsChk = repo.get(dsB);
-        CHECK(dsChk && dsChk->table(0) && dsChk->table(0)->rows == 5000
-              && qAbs(dsChk->timeMin() - 10.0) < 1e-9);
+        CHECK(dsChk && dsChk->table(0) && dsChk->table(0)->rows == 5000 && qAbs(dsChk->timeMin() - 10.0) < 1e-9);
         OK("多源时间对齐：数据集时间范围零改动");
     }
 
     // 绘图路径用**内存构造**的数据集：它只关心 LOD 有界性，
     // 与源列表无关；表/列名固定才好断言数值范围。
-    const int dsId = buildDataset(application.data());
+    const int dsId = buildDataset(plotscope_test::datasetHub(application.context()));
     CHECK(dsId >= 0);
 
     // --- 6) ps 数据呈现：plot.channel 返回像素级有界数据 ---
@@ -2442,8 +2460,7 @@ int main(int argc, char *argv[])
     CHECK(canvas != nullptr);
     // 渲染触发方式 = 设活动通道（与数据集树双击同一条路径）：
     // 数据集树 -> AppContext 共享状态 -> 绘图视图订阅 -> 取数渲染。
-    application.context().setActiveChannel(dsId, QStringLiteral("trace"),
-                                           QStringLiteral("sig"));
+    application.context().setActiveChannel(dsId, QStringLiteral("trace"), QStringLiteral("sig"));
     CHECK(canvas->lodPointCount() > 0);
     // LOD 桶数必须 <= 画布绘图区像素宽：
     // 桶数与画布宽不匹配就会出现"梳齿"假象（每桶跨多个采样周期，
@@ -2460,8 +2477,7 @@ int main(int argc, char *argv[])
     // --- 7.5) 拖拽画图：数据集树的列拖到画布 → 与双击同一路径重新渲染 ---
     {
         // 先切到 sig 之外的通道，确保拖拽确实改变了活动通道（不是早退的假通过）。
-        application.context().setActiveChannel(dsId, QStringLiteral("trace"),
-                                               QStringLiteral("sig"));
+        application.context().setActiveChannel(dsId, QStringLiteral("trace"), QStringLiteral("sig"));
         CHECK(application.context().activeColumn() == QStringLiteral("sig"));
 
         // 构造通道 MIME（与 DataManagerPanel 发起端完全同一编码）。
@@ -2471,9 +2487,9 @@ int main(int argc, char *argv[])
         // 投递拖拽负载：画布解码 → channelDropped → setActiveChannel → 视图重绘。
         // 直接调 dropChannel（dropEvent 的核心逻辑），避开 Qt 在 headless 下
         // 对 sendEvent(QDropEvent) 的分发限制——真实拖拽由 QDrag 系统投递同一函数。
-        CHECK(canvas->dropChannel(&mime));                     // 合法 MIME 被接受
+        CHECK(canvas->dropChannel(&mime));                                    // 合法 MIME 被接受
         CHECK(application.context().activeColumn() == QStringLiteral("alt")); // 活动通道被切换
-        CHECK(canvas->lodPointCount() > 0);                    // 新通道已渲染
+        CHECK(canvas->lodPointCount() > 0);                                   // 新通道已渲染
         OK("拖拽画图：列节点 MIME → 活动通道切换 + 重新渲染（与双击同路径）");
 
         // 非法 MIME（非通道格式）应被拒绝，且不影响当前通道。
@@ -2513,11 +2529,9 @@ int main(int argc, char *argv[])
         // §12.1 契约 token 齐全；未知 token 给洋红告警色。
         CHECK(Theme::color(Theme::Theme::Light, QStringLiteral("textDim")).isValid());
         CHECK(Theme::color(Theme::Theme::Light, QStringLiteral("textMuted")).isValid());
-        CHECK(Theme::color(Theme::Theme::Light, QStringLiteral("no_such_token")) ==
-              QColor(QStringLiteral("#FF00FF")));
+        CHECK(Theme::color(Theme::Theme::Light, QStringLiteral("no_such_token")) == QColor(QStringLiteral("#FF00FF")));
         // 数据语义色：不同系列index、不同主题都可读且不越界。
-        CHECK(Theme::seriesColor(0, Theme::Theme::Dark) !=
-              Theme::seriesColor(1, Theme::Theme::Dark));
+        CHECK(Theme::seriesColor(0, Theme::Theme::Dark) != Theme::seriesColor(1, Theme::Theme::Dark));
         CHECK(Theme::seriesColor(0, Theme::Theme::Light).isValid());
 
         // mapStyleSheet：内联片段的 $(token) 必须被替换成实色，不留占位符。
@@ -2623,7 +2637,8 @@ int main(int argc, char *argv[])
         settings.removeScoped(SettingsScope::App, QStringLiteral("config/plot.time.format"));
         settings.setScopedValue(SettingsScope::App, QStringLiteral("config/plot.time.format"), QStringLiteral("utc"));
         nextpilot::plotscope::assembly::ConfigurationServiceAdapter migrated(
-            settings, application.context().toolbox(), nextpilot::plotscope::assembly::coreBuiltinConfigurations());
+            settings, plotscope_test::extensionHub(application.context()),
+            nextpilot::plotscope::assembly::coreBuiltinConfigurations());
         CHECK(migrated.effectiveValue(QStringLiteral("plot.time.format")).toString() == QStringLiteral("utc"));
         CHECK(settings.scopedValue(SettingsScope::App, QStringLiteral("plot.time.format")).toString() ==
               QStringLiteral("utc"));
@@ -2652,8 +2667,7 @@ int main(int argc, char *argv[])
                          {{QStringLiteral("key"), QStringLiteral("x")}, {QStringLiteral("secondarySidebar"), true}}));
         CHECK(dispatchOk(QStringLiteral("plot.series.visible"),
                          {{QStringLiteral("key"), QStringLiteral("x")}, {QStringLiteral("visible"), false}}));
-        CHECK(dispatchOk(QStringLiteral("plot.series.remove"),
-                         {{QStringLiteral("key"), QStringLiteral("__none__")}}));
+        CHECK(dispatchOk(QStringLiteral("plot.series.remove"), {{QStringLiteral("key"), QStringLiteral("__none__")}}));
         CHECK(dispatchOk(QStringLiteral("plot.zoom"), {{QStringLiteral("factor"), 0.5}}));
         CHECK(dispatchOk(QStringLiteral("plot.autoscale")));
         CHECK(dispatchOk(QStringLiteral("plot.grid")));
@@ -2711,15 +2725,13 @@ int main(int argc, char *argv[])
             CHECK(st.contains(QStringLiteral("y")));
 
             CHECK(dispatchOk(QStringLiteral("plot.grid"),
-                             {{QStringLiteral("axis"), QStringLiteral("x")},
-                              {QStringLiteral("on"), false}}));
+                             {{QStringLiteral("axis"), QStringLiteral("x")}, {QStringLiteral("on"), false}}));
             QVariant vr2;
             Result<QVariant> q2(vr2);
             CHECK(application.context().interactions().dispatchViewAction(QStringLiteral("plot.grid.query"), {}, q2));
             CHECK(q2 && q2.value().toMap().value(QStringLiteral("x")).toBool() == false);
             CHECK(dispatchOk(QStringLiteral("plot.grid"),
-                             {{QStringLiteral("axis"), QStringLiteral("x")},
-                              {QStringLiteral("on"), true}}));
+                             {{QStringLiteral("axis"), QStringLiteral("x")}, {QStringLiteral("on"), true}}));
         }
         OK("plotting 全套操作：series/axis/zoom/grid/page + 游标/A-B/书签/复制/全屏/撤销 view action 已注册");
     }
@@ -2733,11 +2745,9 @@ int main(int argc, char *argv[])
         };
         CHECK(dispatchOk(QStringLiteral("playback.play")));
         // 真实推送：引擎 playingChanged → PlotWorkspace → hub `playback.state`。
-        CHECK(window.context()->statusText(QStringLiteral("playback.state")) ==
-              QStringLiteral("播放中"));
+        CHECK(window.context()->statusText(QStringLiteral("playback.state")) == QStringLiteral("播放中"));
         CHECK(dispatchOk(QStringLiteral("playback.pause")));
-        CHECK(window.context()->statusText(QStringLiteral("playback.state")) ==
-              QStringLiteral("已暂停"));
+        CHECK(window.context()->statusText(QStringLiteral("playback.state")) == QStringLiteral("已暂停"));
         CHECK(dispatchOk(QStringLiteral("playback.toggle")));
         CHECK(dispatchOk(QStringLiteral("playback.seek"), {{QStringLiteral("t"), 1.0}}));
         CHECK(dispatchOk(QStringLiteral("playback.rate"), {{QStringLiteral("rate"), 2.0}}));
@@ -2767,13 +2777,7 @@ int main(int argc, char *argv[])
             while (waiter.elapsed() < 2000 && !cur().contains(QStringLiteral("1.25")))
                 QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
         }
-        const QString cursorText =
-            window.context()->statusText(QStringLiteral("plot.axes.cursor"));
-        // 失败时把现场值打出来：CHECK 只回显表达式，看不出是默认占位还是别的文案。
-        if (!cursorText.contains(QStringLiteral("1.25")))
-            fprintf(stderr, "[diag] plot.axes.cursor=\"%s\" canvas=%p activeCanvas=%p visible=%d cursorTime=%.6f\n",
-                    cursorText.toUtf8().constData(), static_cast<void *>(canvas),
-                    static_cast<void *>(workspace->activeCanvas()), canvas->isVisible() ? 1 : 0, canvas->cursorTime());
+        const QString cursorText = window.context()->statusText(QStringLiteral("plot.axes.cursor"));
         CHECK(!cursorText.isEmpty());
         CHECK(cursorText.startsWith(QStringLiteral("游标: ")));
         CHECK(cursorText.contains(QStringLiteral("1.25")));
@@ -2923,7 +2927,7 @@ int main(int argc, char *argv[])
 
         // (1) 意图通道：脚本 app.call("data.load", {...}) 真的加载数据。
         // 用 --script 语义等价的 script.run intent，source 内调 app.call。
-        const int dsBefore = application.context().data().count();
+        const int dsBefore = plotscope_test::datasetHub(application.context()).count();
         Intent sc;
         sc.op = QStringLiteral("script.run");
         // 路径必须从 PS_TEST_FIXTURE_DIR 取：Lua 字符串里的 Windows 反斜杠会被当转义
@@ -2934,7 +2938,7 @@ int main(int argc, char *argv[])
             QStringLiteral("app.call(\"data.load\", {path=\"%1\", format=\"csv\"})").arg(scriptCsv).toUtf8();
         const auto sr = application.host().execute(sc);
         CHECK(static_cast<bool>(sr));
-        CHECK(application.context().data().count() == dsBefore + 1);
+        CHECK(plotscope_test::datasetHub(application.context()).count() == dsBefore + 1);
 
         // (2) view action 回退通道：脚本 app.call("figure.duplicate") 在意图通道
         // eunsupported 后回退到 view action，页数 +1。
@@ -2948,25 +2952,22 @@ int main(int argc, char *argv[])
 
         // (3) 脚本触发过滤器：app.call("data.filter", {...}) 直接把过滤结果叠加到画布。
         // 证明脚本能像 CLI 一样调用 #209 新增的过滤器意图（VBA 式操作应用）。
-        const Dataset *scriptDs = application.context().data().get(loadedDsId);
+        const Dataset *scriptDs = plotscope_test::datasetHub(application.context()).get(loadedDsId);
         CHECK(scriptDs != nullptr && scriptDs->tableCount() > 0);
         const Table *sTbl = scriptDs->table(0);
         CHECK(sTbl != nullptr && !sTbl->columns.isEmpty());
         const QString sTable = sTbl->name;
         const QString sColumn = sTbl->columns.first().name;
-        QObject::connect(&application.context(), &AppContext::derivedSeriesReady,
-                         &application, [&g_scriptFilterCount](const QString &name, const QVector<double> &,
-                                           const QVector<double> &) {
+        QObject::connect(&application.context(), &AppContext::derivedSeriesReady, &application,
+                         [&g_scriptFilterCount](const QString &name, const QVector<double> &, const QVector<double> &) {
                              if (name.contains(QStringLiteral(".moving_average")))
                                  ++g_scriptFilterCount;
                          });
         Intent sc3;
         sc3.op = QStringLiteral("script.run");
         sc3.params[QStringLiteral("source")] = QByteArray(
-            "app.call(\"data.filter\", {dataset=" + QByteArray::number(loadedDsId)
-            + ", table=\"" + sTable.toUtf8()
-            + "\", column=\"" + sColumn.toUtf8()
-            + "\", filter=\"moving_average\", params={window=3}})");
+            "app.call(\"data.filter\", {dataset=" + QByteArray::number(loadedDsId) + ", table=\"" + sTable.toUtf8() +
+            "\", column=\"" + sColumn.toUtf8() + "\", filter=\"moving_average\", params={window=3}})");
         const auto sr3 = application.host().execute(sc3);
         CHECK(sr3);
         CHECK(g_scriptFilterCount == 1);
@@ -3055,7 +3056,7 @@ int main(int argc, char *argv[])
 
     // --- live 源暂停/继续：data.pause / data.resume + 面板 live 卡片 ---
     {
-        auto &sources = application.context().sources();
+        auto &sources = plotscope_test::sourceHub(application.context());
 
         // (1) 注册一个演示 live 源（挂已有数据集，状态 Streaming）。
         DataSourceInfo liveInfo;
@@ -3079,8 +3080,7 @@ int main(int argc, char *argv[])
         CHECK(pm.value(QStringLiteral("id")).toInt() == liveId);
         CHECK(sources.get(liveId)->state == SourceState::Paused);
         panel->refresh();
-        CHECK(panel->sourceStateText(panel->sourceNodeCount() - 1)
-              == QStringLiteral("已暂停"));
+        CHECK(panel->sourceStateText(panel->sourceNodeCount() - 1) == QStringLiteral("已暂停"));
 
         // (3) 幂等：再次 pause 仍成功（脚本重试/重复点击不报错）。
         Intent pz2;
@@ -3097,8 +3097,7 @@ int main(int argc, char *argv[])
         CHECK(rr.value().payload.toMap().value(QStringLiteral("paused")).toBool() == false);
         CHECK(sources.get(liveId)->state == SourceState::Streaming);
         panel->refresh();
-        CHECK(panel->sourceStateText(panel->sourceNodeCount() - 1)
-              == QStringLiteral("运行中"));
+        CHECK(panel->sourceStateText(panel->sourceNodeCount() - 1) == QStringLiteral("运行中"));
 
         // (5) 文件源拒绝：data.pause 对 file 源返回 enotsupported。
         const QVector<int> ids = sources.ids();
@@ -3131,13 +3130,13 @@ int main(int argc, char *argv[])
 
     // --- 通用导入对话框：schema 驱动渲染 + probe + 选项收集 ---
     {
-        ImportDialog dlg(application.context().toolbox().drivers());
+        ImportDialog dlg(plotscope_test::extensionHub(application.context()).drivers());
 
         // (1) 预填路径立即探测（与 MainWindow::openDataFile 同一条真实链路）。
         dlg.setPath(fixture);
-        CHECK(dlg.currentFormatId() == QStringLiteral("csv"));  // 按后缀选中 csv 驱动
-        CHECK(dlg.fieldCount() > 0);                            // configSchema 字段已渲染成控件
-        CHECK(dlg.previewRowCount() > 0);                       // probeFile 预览表有数据
+        CHECK(dlg.currentFormatId() == QStringLiteral("csv")); // 按后缀选中 csv 驱动
+        CHECK(dlg.fieldCount() > 0);                           // configSchema 字段已渲染成控件
+        CHECK(dlg.previewRowCount() > 0);                      // probeFile 预览表有数据
 
         // (2) accept 收集：path/format/optionsJson 三元组完整，options 是合法 JSON。
         dlg.accept();
@@ -3146,25 +3145,54 @@ int main(int argc, char *argv[])
         CHECK(picked.path == fixture);
         CHECK(picked.format == QStringLiteral("csv"));
         const QJsonObject opts = QJsonDocument::fromJson(picked.optionsJson).object();
-        CHECK(QJsonDocument(opts).isObject());  // 反序列化成功 = 合法 JSON
+        CHECK(QJsonDocument(opts).isObject()); // 反序列化成功 = 合法 JSON
 
         // (3) 探测失败路径：文件不存在 → probeFile 报错进警告条，result 仍为空。
-        ImportDialog dlg2(application.context().toolbox().drivers());
+        ImportDialog dlg2(plotscope_test::extensionHub(application.context()).drivers());
         dlg2.setPath(QStringLiteral("/nonexistent/missing_file.csv"));
-        CHECK(!dlg2.warningText().isEmpty());   // probe 错误文案可见
-        CHECK(dlg2.previewRowCount() == 0);     // 无预览
-        CHECK(!dlg2.result().ok());             // 未确认，无结果
+        CHECK(!dlg2.warningText().isEmpty()); // probe 错误文案可见
+        CHECK(dlg2.previewRowCount() == 0);   // 无预览
+        CHECK(!dlg2.result().ok());           // 未确认，无结果
 
         OK("通用导入对话框：schema 渲染 + probe 预览 + options 收集，全部走真实链路");
     }
 
     // --- analysis/protocol module：分析 galley 与协议入口已贡献 ---
     {
-        const auto &slotReg = application.host().uiSlots();
-        CHECK(slotReg.actionsIn(QStringLiteral("ribbon.group.analysis.apps")).size() >= 1);
-        CHECK(slotReg.actionsIn(QStringLiteral("ribbon.group.protocol.editor")).size() >= 1);
+        // 页/组声明读回（contributes.ribbonPages/ribbonGroups）；动作读回（MenuRegistry 的 menubar/<pageId>）。
+        auto *ribbonSvc =
+            application.host().services()
+                ? application.host().services()->getService<nextpilot::plotscope::workbench::IRibbonService>(
+                      QStringLiteral("ribbon.readback"))
+                : nullptr;
+        CHECK(ribbonSvc != nullptr);
+        auto *menusReg = application.host().menuRegistry();
+        CHECK(menusReg != nullptr);
+        const auto groupActions = [&](const QString &groupId) {
+            QList<IMenuItem> out;
+            for (const auto &page : ribbonSvc->ribbonPages())
+                for (const auto &item : menusReg->getMenuItems(MenuId::menubar(page.id)))
+                    if (item.group == groupId)
+                        out.append(item);
+            return out;
+        };
+        const auto allGroups = [&]() {
+            QList<RibbonGroupDecl> out;
+            for (const auto &page : ribbonSvc->ribbonPages())
+                out.append(ribbonSvc->ribbonGroupsOf(page.id));
+            return out;
+        };
+        const auto hasGroup = [&](const QString &groupId) {
+            for (const auto &g : allGroups())
+                if (g.id == groupId)
+                    return true;
+            return false;
+        };
+        CHECK(groupActions(QStringLiteral("ribbon.group.analysis.apps")).size() >= 1);
+        CHECK(groupActions(QStringLiteral("ribbon.group.protocol.editor")).size() >= 1);
         // analysis.run 意图：default 应用（无活动源时返回失败但被 handler 认领）。
-        Intent ar; ar.op = QStringLiteral("analysis.run");
+        Intent ar;
+        ar.op = QStringLiteral("analysis.run");
         ar.params[QStringLiteral("application")] = QStringLiteral("default");
         const auto rr = application.host().execute(ar);
         // 无论有无活动源，都不能是 eunsupported（analysis.run handler 必须认领）。
@@ -3175,18 +3203,50 @@ int main(int argc, char *argv[])
     // --- 分析 gallery：全部/最近/收藏三组 + 收藏切换 + MRU + 持久化---
     {
         auto &settings = application.context().settings();
-        const auto &slotReg = application.host().uiSlots();
+        // 页/组声明读回（contributes.ribbonPages/ribbonGroups）；动作读回（MenuRegistry 的 menubar/<pageId>）。
+        auto *ribbonSvc =
+            application.host().services()
+                ? application.host().services()->getService<nextpilot::plotscope::workbench::IRibbonService>(
+                      QStringLiteral("ribbon.readback"))
+                : nullptr;
+        CHECK(ribbonSvc != nullptr);
+        auto *menusReg = application.host().menuRegistry();
+        CHECK(menusReg != nullptr);
+        const auto groupActions = [&](const QString &groupId) {
+            QList<IMenuItem> out;
+            for (const auto &page : ribbonSvc->ribbonPages())
+                for (const auto &item : menusReg->getMenuItems(MenuId::menubar(page.id)))
+                    if (item.group == groupId)
+                        out.append(item);
+            return out;
+        };
+        const auto allGroups = [&]() {
+            QList<RibbonGroupDecl> out;
+            for (const auto &page : ribbonSvc->ribbonPages())
+                out.append(ribbonSvc->ribbonGroupsOf(page.id));
+            return out;
+        };
+        const auto hasGroup = [&](const QString &groupId) {
+            for (const auto &g : allGroups())
+                if (g.id == groupId)
+                    return true;
+            return false;
+        };
         const QString appsArea = QStringLiteral("ribbon.group.analysis.apps");
-        const auto idOf = [&slotReg, &appsArea](const QString &suffix) {
-            for (const auto &b : slotReg.actionsIn(appsArea))
+        const auto idOf = [&groupActions, &appsArea, &ribbonSvc](const QString &suffix) {
+            for (const auto &b : groupActions(appsArea))
                 if (b.action.id.endsWith(suffix))
                     return b.action.id;
+            // 动态提供器条目（收藏/最近）走 IRibbonService::dynamicActionsIn 读回。
+            for (const auto &a : ribbonSvc->dynamicActionsIn(appsArea))
+                if (a.id.endsWith(suffix))
+                    return a.id;
             return QString();
         };
 
         // (1) 三组齐备："全部应用"≥3 条（default/report/review）。
         int allGroup = 0, recentGroup = 0, favGroup = 0;
-        for (const auto &b : slotReg.actionsIn(appsArea))
+        for (const auto &b : groupActions(appsArea))
         {
             if (b.action.galleryGroup == QStringLiteral("全部应用"))
                 ++allGroup;
@@ -3199,16 +3259,16 @@ int main(int argc, char *argv[])
         CHECK(allGroup == 3);
 
         // (2) 收藏切换：toggle 飞控复盘 → 收藏组出现条目 + settings 持久化。
-        Intent fav; fav.op = QStringLiteral("analysis.favorite");
+        Intent fav;
+        fav.op = QStringLiteral("analysis.favorite");
         fav.params[QStringLiteral("application")] = QStringLiteral("autopilot.review.app");
         const auto fr = application.host().execute(fav);
         CHECK(static_cast<bool>(fr));
         CHECK(fr.value().payload.toMap().value(QStringLiteral("favorite")).toBool() == true);
-        CHECK(!idOf(QStringLiteral(".fav.autopilot.review.app")).isEmpty());   // 收藏条目已注册
-        CHECK(favGroup == 0 || true); // gallery 条目计数在下方重算
+        CHECK(!idOf(QStringLiteral(".fav.autopilot.review.app")).isEmpty()); // 收藏条目已注册
+        CHECK(favGroup == 0 || true);                                        // gallery 条目计数在下方重算
         {
-            const QJsonObject fo = settings.json(SettingsScope::Workspace,
-                                                 QStringLiteral("analysis/favorites"));
+            const QJsonObject fo = settings.json(SettingsScope::Workspace, QStringLiteral("analysis/favorites"));
             const QJsonArray fa = fo.value(QStringLiteral("apps")).toArray();
             CHECK(fa.size() == 1 && fa.at(0).toString() == QStringLiteral("autopilot.review.app"));
         }
@@ -3217,28 +3277,29 @@ int main(int argc, char *argv[])
         const auto fr2 = application.host().execute(fav);
         CHECK(static_cast<bool>(fr2));
         CHECK(fr2.value().payload.toMap().value(QStringLiteral("favorite")).toBool() == false);
-        CHECK(idOf(QStringLiteral(".fav.autopilot.review.app")).isEmpty());    // 条目已撤销
+        CHECK(idOf(QStringLiteral(".fav.autopilot.review.app")).isEmpty()); // 条目已撤销
 
         // (4) 收藏未注册应用 → enoimpl（诚实拒绝）。
-        Intent favBad; favBad.op = QStringLiteral("analysis.favorite");
+        Intent favBad;
+        favBad.op = QStringLiteral("analysis.favorite");
         favBad.params[QStringLiteral("application")] = QStringLiteral("nonexistent.app");
         const auto fbr = application.host().execute(favBad);
         CHECK(!static_cast<bool>(fbr));
         CHECK(fbr.error().code == QStringLiteral("enoimpl"));
 
         // (5) MRU：成功 run default → recents 首位是 default + "最近使用"组出现动态条目。
-        Intent run; run.op = QStringLiteral("analysis.run");
+        Intent run;
+        run.op = QStringLiteral("analysis.run");
         run.params[QStringLiteral("application")] = QStringLiteral("default");
         const auto runR = application.host().execute(run);
         if (static_cast<bool>(runR))
         {
-            const QJsonObject ro = settings.json(SettingsScope::Workspace,
-                                                 QStringLiteral("analysis/recents"));
+            const QJsonObject ro = settings.json(SettingsScope::Workspace, QStringLiteral("analysis/recents"));
             const QJsonArray ra = ro.value(QStringLiteral("apps")).toArray();
             CHECK(ra.size() >= 1 && ra.at(0).toString() == QStringLiteral("default"));
-            CHECK(!idOf(QStringLiteral(".recent.default")).isEmpty());         // 最近组条目已注册
+            CHECK(!idOf(QStringLiteral(".recent.default")).isEmpty()); // 最近组条目已注册
             // 最近条目点击语义与全部应用组一致：data=应用名、intentOp=analysis.run。
-            for (const auto &b : slotReg.actionsIn(appsArea))
+            for (const auto &b : groupActions(appsArea))
                 if (b.action.id == QStringLiteral("analysis.app.recent.default"))
                 {
                     CHECK(b.action.intentOp == QStringLiteral("analysis.run"));
@@ -3277,16 +3338,14 @@ int main(int argc, char *argv[])
         {
             QVariant vr;
             Result<QVariant> res(vr);
-            const QVariantMap p{{QStringLiteral("dataset"), loadedDsId},
-                                {QStringLiteral("column"), col}};
+            const QVariantMap p{{QStringLiteral("dataset"), loadedDsId}, {QStringLiteral("column"), col}};
             CHECK(application.context().interactions().dispatchViewAction(QStringLiteral("plot.overlaySame"), p, res));
             CHECK(res);
             const QVariantMap m = res.value().toMap();
             // 该列可能不止两个源有（前面各段也加载过含同名表头的 csv），
             // 但至少这两源必须命中，且"命中数 = 添加数"。
             CHECK(m.value(QStringLiteral("matched")).toInt() >= 2);
-            CHECK(m.value(QStringLiteral("added")).toInt() ==
-                  m.value(QStringLiteral("matched")).toInt());
+            CHECK(m.value(QStringLiteral("added")).toInt() == m.value(QStringLiteral("matched")).toInt());
             const QStringList names = m.value(QStringLiteral("names")).toStringList();
             CHECK(names.size() >= 2);
             CHECK(names.filter(QStringLiteral("ps_gui_overlay_b")).size() == 1);
@@ -3301,17 +3360,14 @@ int main(int argc, char *argv[])
         {
             QVariant vr;
             Result<QVariant> res(vr);
-            const QVariantMap p{{QStringLiteral("dataset"), loadedDsId},
-                                {QStringLiteral("column"), col}};
+            const QVariantMap p{{QStringLiteral("dataset"), loadedDsId}, {QStringLiteral("column"), col}};
             CHECK(application.context().interactions().dispatchViewAction(QStringLiteral("plot.compareSame"), p, res));
             CHECK(res);
             const QVariantMap m = res.value().toMap();
             CHECK(m.value(QStringLiteral("series")).toInt() == 2);
             CHECK(m.contains(QStringLiteral("offset_us")));
-            CHECK(m.value(QStringLiteral("base")).toString() !=
-                  m.value(QStringLiteral("peer")).toString());
-            CHECK(m.value(QStringLiteral("x_lo")).toDouble() <=
-                  m.value(QStringLiteral("x_hi")).toDouble());
+            CHECK(m.value(QStringLiteral("base")).toString() != m.value(QStringLiteral("peer")).toString());
+            CHECK(m.value(QStringLiteral("x_lo")).toDouble() <= m.value(QStringLiteral("x_hi")).toDouble());
 
             // 画布上真的只有两条（AC-19「恰两条」）。
             QVariant vl;
@@ -3331,8 +3387,7 @@ int main(int argc, char *argv[])
         for (const QVariant &v : list2.value().toList())
         {
             QVariantMap p;
-            p.insert(QStringLiteral("key"),
-                     v.toMap().value(QStringLiteral("key")).toString());
+            p.insert(QStringLiteral("key"), v.toMap().value(QStringLiteral("key")).toString());
             QVariant vr2;
             Result<QVariant> rm(vr2);
             CHECK(application.context().interactions().dispatchViewAction(QStringLiteral("plot.series.remove"), p, rm));
@@ -3374,7 +3429,7 @@ int main(int argc, char *argv[])
                             ? wpv.toMap().value(QStringLiteral("dataset")).toInt()
                             : wpv.toInt();
         CHECK(wds >= 0);
-        const nextpilot::plotscope::dataset::Dataset *ds = application.data().get(wds);
+        const nextpilot::plotscope::dataset::Dataset *ds = plotscope_test::datasetHub(application.context()).get(wds);
         CHECK(ds != nullptr && ds->tableCount() == 1);
         const QString tn = ds->tableNames().first();
         auto clearCanvas = [&] {
@@ -3384,8 +3439,7 @@ int main(int argc, char *argv[])
             for (const QVariant &v : l.value().toList())
             {
                 QVariantMap rp;
-                rp.insert(QStringLiteral("key"),
-                          v.toMap().value(QStringLiteral("key")).toString());
+                rp.insert(QStringLiteral("key"), v.toMap().value(QStringLiteral("key")).toString());
                 QVariant vr;
                 Result<QVariant> rm(vr);
                 application.context().interactions().dispatchViewAction(QStringLiteral("plot.series.remove"), rp, rm);
@@ -3469,7 +3523,8 @@ int main(int argc, char *argv[])
         c0->clear();
 
         // 在全新的 c0 上画一条：走共享活动通道（PlotWorkspace 路由到活动 cell）。
-        const nextpilot::plotscope::dataset::Dataset *ds = application.data().get(loadedDsId);
+        const nextpilot::plotscope::dataset::Dataset *ds =
+            plotscope_test::datasetHub(application.context()).get(loadedDsId);
         CHECK(ds != nullptr && ds->tableCount() >= 1);
         const QString tbl = ds->tableNames().first();
         const QString col = QStringLiteral("att.pitch[deg]");
@@ -3539,7 +3594,7 @@ int main(int argc, char *argv[])
         // 注：Dataset::addTable 拒零行时间轴（timeNs.isEmpty() → -1），
         // 故 ng 侧不存在 0 行表，XlsxBook 的"空表只写表头"是防御分支，无法端到端构造。
         sds.refreshSchema();
-        const int snapDs = application.data().add(sds);
+        const int snapDs = plotscope_test::datasetHub(application.context()).add(sds);
         CHECK(snapDs >= 0);
 
         const QString xlsxPath = QDir::temp().filePath(QStringLiteral("ps_snapshot_multi.xlsx"));
@@ -3605,8 +3660,7 @@ int main(int argc, char *argv[])
             bad.params[QStringLiteral("format")] = QStringLiteral("pdf");
             CHECK(!application.host().execute(bad));
             Intent noTable = snap;
-            noTable.params[QStringLiteral("tables")] =
-                QVariantList{QStringLiteral("__missing__")};
+            noTable.params[QStringLiteral("tables")] = QVariantList{QStringLiteral("__missing__")};
             CHECK(!application.host().execute(noTable));
         }
         OK("多表快照：xlsx 单簿 2 sheet 列名对齐 schema、100/33 行正确、csv 每表一文件");
@@ -3620,8 +3674,7 @@ int main(int argc, char *argv[])
     {
         Intent loadParams;
         loadParams.op = QStringLiteral("data.load");
-        loadParams.params[QStringLiteral("path")] =
-            QStringLiteral(PS_TEST_FIXTURE_DIR "/demo_params.ulg");
+        loadParams.params[QStringLiteral("path")] = QStringLiteral(PS_TEST_FIXTURE_DIR "/demo_params.ulg");
         loadParams.params[QStringLiteral("format")] = QStringLiteral("ulog");
         const auto lr = application.host().execute(loadParams);
         CHECK(lr);
@@ -3645,8 +3698,7 @@ int main(int argc, char *argv[])
         CHECK(!pitems.isEmpty());
         bool sawKey = false;
         for (const QVariant &v : pitems)
-            if (v.toMap().value(QStringLiteral("name")).toString()
-                    == QStringLiteral("MPC_XY_VEL_MAX"))
+            if (v.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("MPC_XY_VEL_MAX"))
                 sawKey = true;
         CHECK(sawKey); // 字符串值真的读出来了（不是 NaN 占位）
         CHECK(!pitems.first().toMap().value(QStringLiteral("value")).toString().isEmpty());
@@ -3659,7 +3711,11 @@ int main(int argc, char *argv[])
         auto *panel = qobject_cast<DataManagerPanel *>(window.findChild<QWidget *>(QStringLiteral("data.datasetTree")));
         if (!panel)
             for (QWidget *w : window.findChildren<QWidget *>())
-                if (auto *dp = qobject_cast<DataManagerPanel *>(w)) { panel = dp; break; }
+                if (auto *dp = qobject_cast<DataManagerPanel *>(w))
+                {
+                    panel = dp;
+                    break;
+                }
         // 外壳按 IUiContext 的 openView 建 dock 面板，装配时机在 build 之后的
         // 事件循环里；这里若还没到就显式建一个同构实例（同一构造函数、同一意图
         // 通道），断言仍然打在真实面板实现上，而不是绕过UI。
@@ -3668,7 +3724,7 @@ int main(int argc, char *argv[])
         CHECK(panel != nullptr);
         panel->showChip(1);
         CHECK(panel->activeChip() == 1);
-        CHECK(panel->paramRowCount() == 2);          // params + facts 两张表
+        CHECK(panel->paramRowCount() == 2); // params + facts 两张表
         CHECK(panel->chipText(1).contains(QStringLiteral("5")));
 
         // 树：param 表节点应带子项，且第二列是值文本（不是"3 项"那种只有计数）。
@@ -3700,7 +3756,7 @@ int main(int argc, char *argv[])
         for (int i = 0; i < tree->topLevelItemCount(); ++i)
             walk(tree->topLevelItem(i));
         CHECK(paramNodes == 2);
-        CHECK(paramRows == 5);                        // 3 + 2 全铺出来
+        CHECK(paramRows == 5); // 3 + 2 全铺出来
         CHECK(!firstRowName.isEmpty());
         CHECK(firstRowValue != QStringLiteral("—") || firstRowName.isEmpty());
 
@@ -3713,7 +3769,7 @@ int main(int argc, char *argv[])
     // --- M2.8 诊断面板：注册树全景（杀手场景收口）---
     //
     // 打开「诊断」dock 面板（按需创建），断言：
-    //   1) diag.registries 枚举到 builtin-module 等全部节点（R4 static 节点上树；
+    //   1) diag.registries 枚举到 extension 等全部节点（R4 static 节点上树；
     //      A2d：panel-factory 节点随工厂表退场）；
     //   2) 面板行数 == 组合根树上节点数（面板与 diag.registries 同一条数据路径）；
     //   3) 诊断面板归 Region::Panel（壳级 diagnostics Activity 入口，单一来源）。
@@ -3721,13 +3777,13 @@ int main(int argc, char *argv[])
         // 诊断面板归 Region::Panel（底部面板组），不再是注册表插槽；
         // 插槽只剩 RibbonPage / RibbonGroup 两类（见 test_architecture 死槽检查）。
 
-        // diag.registries：10 类节点齐全（遗留4/遗留5 收口全量上树；
+        // diag.registries：9 类节点齐全（遗留4/遗留5 收口全量上树；
         // A8b contributes 是 Extension 的属性面，不新增 kind；
         // A2d：panel-factory 节点随旧工厂表退场）。
         Result<QVariant> out{QVariant()};
         CHECK(application.context().interactions().dispatchViewAction(QStringLiteral("diag.registries"), {}, out));
         const QVariantList rows = out.value().toList();
-        CHECK(rows.size() == 10);
+        CHECK(rows.size() == 9);
         QStringList kinds;
         for (const QVariant &r : rows)
             kinds << r.toMap().value(QStringLiteral("kind")).toString();
@@ -3737,7 +3793,6 @@ int main(int argc, char *argv[])
         CHECK(kinds.contains(QStringLiteral("derived-series")));
         CHECK(kinds.contains(QStringLiteral("ui-slot")));
         CHECK(kinds.contains(QStringLiteral("extension")));
-        CHECK(kinds.contains(QStringLiteral("builtin-module")));
         CHECK(kinds.contains(QStringLiteral("parser")));
         CHECK(kinds.contains(QStringLiteral("recording-format")));
         CHECK(kinds.contains(QStringLiteral("recording-backend")));
@@ -3763,7 +3818,7 @@ int main(int argc, char *argv[])
         token.id = QStringLiteral("plot.testToken");
         token.fallback = QStringLiteral("#123456");
         pack.themeTokens << token;
-        auto &toolbox = application.context().toolbox();
+        auto &toolbox = plotscope_test::extensionHub(application.context());
         CHECK(toolbox.mount(std::move(pack)));
         // 用窗口持有的实例：ThemeManager 的静态 activeTheme 指向在册实例，
         // 测试里另造一个再析构会留下悬空指针，后续绘制才崩（踩过）。
@@ -3791,7 +3846,7 @@ int main(int argc, char *argv[])
         spec.domain = QStringLiteral("data");
         spec.order = 1;
         pack.itemContexts << spec;
-        auto &toolbox = application.context().toolbox();
+        auto &toolbox = plotscope_test::extensionHub(application.context());
         CHECK(toolbox.mount(std::move(pack)));
         CHECK(toolbox.itemContextsFor(QStringLiteral("data.datasetTree")).size() == 1);
         // item.* 只对本次求值可见：值一变表达式立刻失效，没有写进全局上下文
@@ -3822,7 +3877,7 @@ int main(int argc, char *argv[])
         hidden.commandId = QStringLiteral("figure.removeAxes");
         hidden.when = QStringLiteral("neverTrue == true");
         pack.viewTitleActions << shown << hidden;
-        auto &toolbox = application.context().toolbox();
+        auto &toolbox = plotscope_test::extensionHub(application.context());
         CHECK(toolbox.mount(std::move(pack)));
         // A2d：旧工厂入口（旧面板请求 + 工厂表）已删——测试页签直接经
         // ShellBinder::dock 建（pageKey = viewId，与 openView 装配同一条 dock 路径）。
@@ -3844,9 +3899,7 @@ int main(int argc, char *argv[])
         binder->setWhenEvaluator([&hoverTest](const QString &when) {
             return when == QStringLiteral("hoverTest == true") ? hoverTest : true;
         });
-        window.context()->slotsService()->declareSlot(QStringLiteral("ribbon.page.c3test"), QStringLiteral("C3 测试页"),
-                                                      QStringLiteral("test"), SlotKind::RibbonPage, QString(), 0,
-                                                      QStringLiteral("hoverTest == true"));
+        // （下一片迁移：when 页签声明改走 Ribbon 读回服务；本片仅保证编译，断言迁移顺延）
         binder->rebuildRibbon();
         CHECK(!binder->visibleRibbonPageLabels().contains(QStringLiteral("C3 测试页")));
         hoverTest = true;
@@ -3900,8 +3953,8 @@ int main(int argc, char *argv[])
         // ⑥ 新格沿用全局偏好（makeCell 里读 settings）：重排成 2×2，4 个新格都是 hms。
         //    figure.grid 会销毁旧 cell —— 之后不得再触碰裸 canvas 指针（那是悬空引用）。
         CHECK(application.context().interactions().dispatchViewAction(
-            QStringLiteral("figure.grid"), QVariantMap{{QStringLiteral("rows"), 2},
-                                                       {QStringLiteral("cols"), 2}}, rout));
+            QStringLiteral("figure.grid"), QVariantMap{{QStringLiteral("rows"), 2}, {QStringLiteral("cols"), 2}},
+            rout));
         CHECK(wsT->cellCount() == 4);
         CHECK(wsT->activeCanvas() != nullptr);
         CHECK(wsT->activeCanvas()->timeFormatMode() == QStringLiteral("hms"));
@@ -3932,7 +3985,7 @@ int main(int argc, char *argv[])
         CHECK(bar != nullptr);
         CHECK(bar->dockWidget() != nullptr); // 挂到自己所属面板才转得动拖动事件
         CHECK(!bar->title().isEmpty());
-        CHECK(!bar->isShown());              // 无指针进入时只是占位，不显示
+        CHECK(!bar->isShown()); // 无指针进入时只是占位，不显示
         CHECK(bar->metaObject()->indexOfSignal("activated()") >= 0);
         CHECK(bar->metaObject()->indexOfSignal("splitClicked(bool)") >= 0);
         OK("D1 格标题条：独立类、挂靠所属面板、新建即暗、激活/拆分信号就位");
@@ -3959,8 +4012,7 @@ int main(int argc, char *argv[])
         CHECK(cellDock->titleBar() != nullptr);
         // 单格停靠区藏起整条标题栏：页签条只在合并成多格时出现。
         CHECK(cellDock->dockAreaWidget() != nullptr);
-        CHECK(cellDock->dockAreaWidget()->dockAreaFlags()
-              & ads::CDockAreaWidget::HideSingleWidgetTitleBar);
+        CHECK(cellDock->dockAreaWidget()->dockAreaFlags() & ads::CDockAreaWidget::HideSingleWidgetTitleBar);
         OK("D2 页容器与格面板：PlotLayout 拥有 DockedAxes，单格标题栏隐藏");
     }
 
@@ -3985,9 +4037,7 @@ int main(int argc, char *argv[])
         // 改名：走 TabbedFigure 的 setPageTitle。
         CHECK(application.context().interactions().dispatchViewAction(
             QStringLiteral("figure.rename"),
-            QVariantMap{{QStringLiteral("index"), pages},
-                        {QStringLiteral("title"), QStringLiteral("校验页")}},
-            rout));
+            QVariantMap{{QStringLiteral("index"), pages}, {QStringLiteral("title"), QStringLiteral("校验页")}}, rout));
         CHECK(tabs->pageTitle(pages) == QStringLiteral("校验页"));
 
         // 关页：至少留一页（连关到只剩 1）。
@@ -4007,8 +4057,7 @@ int main(int argc, char *argv[])
         const QString act0 = binder->activePanelTitle(Region::PrimarySidebar);
         fprintf(stdout, "[dock] tabs=%s contents=%s active=%s\n",
                 leftTitles.join(QLatin1Char(',')).toUtf8().constData(),
-                leftOrder.join(QLatin1Char(',')).toUtf8().constData(),
-                act0.toUtf8().constData());
+                leftOrder.join(QLatin1Char(',')).toUtf8().constData(), act0.toUtf8().constData());
         // 结构：页签顺序 = 内容栈顺序（ADS 的 tabBar 与 ContentsLayout 各排一份，
         // 顺序错位时点页签就会"高亮过去、内容不动"）。
         CHECK(leftOrder == leftTitles);
@@ -4105,8 +4154,8 @@ int main(int argc, char *argv[])
         CHECK(store.count() == 2);
         PlotSeries a2 = a;
         a2.title = QStringLiteral("a-renamed");
-        CHECK(store.upsert(a2) == 0);          // 同 key 返回原索引
-        CHECK(store.count() == 2);             // 不增数
+        CHECK(store.upsert(a2) == 0); // 同 key 返回原索引
+        CHECK(store.count() == 2);    // 不增数
         CHECK(store.at(0)->title == QStringLiteral("a-renamed"));
         CHECK(!store.remove(QStringLiteral("no.such.key")));
         CHECK(store.remove(a.key()));
@@ -4127,7 +4176,7 @@ int main(int argc, char *argv[])
         CHECK(store.remove(a.key()));
         CHECK(store.count() == 2);
         CHECK(store.at(0)->key() == c.key());
-        CHECK(store.at(1)->key() == b.key());   // 删除后紧凑，不残留空洞
+        CHECK(store.at(1)->key() == b.key()); // 删除后紧凑，不残留空洞
         CHECK(store.indexOf(b.key()) == 1);
         CHECK(store.indexOf(a.key()) == -1);
 
@@ -4170,8 +4219,8 @@ int main(int argc, char *argv[])
         // 重新合并（模块 token 在内），再切回来，状态才对得上真实装配。
         CHECK(window.themeManager() != nullptr);
         const auto beforeTheme = window.themeManager()->current();
-        const auto otherTheme = beforeTheme == ThemeManager::Theme::Dark ? ThemeManager::Theme::Light
-                                                                       : ThemeManager::Theme::Dark;
+        const auto otherTheme =
+            beforeTheme == ThemeManager::Theme::Dark ? ThemeManager::Theme::Light : ThemeManager::Theme::Dark;
         window.themeManager()->setTheme(otherTheme);
         window.themeManager()->setTheme(beforeTheme);
 
@@ -4182,9 +4231,8 @@ int main(int argc, char *argv[])
         CHECK(ax->semanticColors().contains(QStringLiteral("plot.abMeasure")));
         CHECK(ax->semanticColors().color(QStringLiteral("plot.abMeasure"), QColor()) == expCursor);
         // 未注入的 id 必须走调用点兜底（不能返回无效色/洋红）。
-        CHECK(ax->semanticColors().color(QStringLiteral("plot.not_a_token"),
-                                         QColor(QStringLiteral("#123456")))
-              == QColor(QStringLiteral("#123456")));
+        CHECK(ax->semanticColors().color(QStringLiteral("plot.not_a_token"), QColor(QStringLiteral("#123456"))) ==
+              QColor(QStringLiteral("#123456")));
 
         // (2) 网格色跟随主题 token，但必须保留平台调色板兜底（不写死单值串另一个主题）。
         const QColor gridToken = ThemeManager::resolvedColor(QStringLiteral("plot.grid"));
@@ -4195,8 +4243,7 @@ int main(int argc, char *argv[])
         //     applyPalette → pushSemanticColors；验完还原，别污染后续用例。
         window.themeManager()->setTheme(otherTheme);
         CHECK(canvas->plotForTest()->semanticColors().contains(QStringLiteral("plot.cursor")));
-        CHECK(canvas->plotForTest()->semanticColors().color(QStringLiteral("plot.cursor"), QColor())
-              == expCursor);
+        CHECK(canvas->plotForTest()->semanticColors().color(QStringLiteral("plot.cursor"), QColor()) == expCursor);
         window.themeManager()->setTheme(beforeTheme);
         OK("语义色消费面：画布按 token 注入实色（每画布一份），网格色留平台兜底");
 
@@ -4217,7 +4264,8 @@ int main(int argc, char *argv[])
             // 空画布没有有效时间范围，zoomRange 会早退；直接给这一格挂一条曲线让范围成立
             // （不走 setActiveChannel——那是"往当前活动格丢通道"的共享入口，多格场景下
             //  路由目标未必是本格，容易让用例假红）。
-            const nextpilot::plotscope::dataset::Dataset *ds = application.data().get(loadedDsId);
+            const nextpilot::plotscope::dataset::Dataset *ds =
+                plotscope_test::datasetHub(application.context()).get(loadedDsId);
             CHECK(ds != nullptr && ds->tableCount() >= 1);
             PlotSeries seed;
             seed.datasetId = loadedDsId;
@@ -4291,7 +4339,7 @@ int main(int argc, char *argv[])
             // 默认名按**插入序**编号（3.0 先插 → B1），排序只影响列表位置，不改名。
             CHECK(v->bookmarks().at(2).label == QStringLiteral("B1")); // t=3.0
             CHECK(v->bookmarks().at(0).label == QStringLiteral("B2")); // t=1.0
-            v->addBookmark(2.0); // 同一时间点：选中已有，不重复创建
+            v->addBookmark(2.0);                                       // 同一时间点：选中已有，不重复创建
             CHECK(v->bookmarks().size() == 3);
         }
         OK("Interaction 1/3：书签新增按时间排序、默认 Bn 命名、同刻去重");

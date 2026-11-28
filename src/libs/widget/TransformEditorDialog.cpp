@@ -1,4 +1,5 @@
 #include "TransformEditorDialog.h"
+#include "Intent.h"
 
 #include "AppContext.h"
 #include "TransformField.h"

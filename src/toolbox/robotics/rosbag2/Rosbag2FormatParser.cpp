@@ -13,10 +13,7 @@ QString Rosbag2FormatParser::displayName() const
     return QStringLiteral("ROS2 bag 格式解析器");
 }
 
-nextpilot::plotscope::registry::Domain Rosbag2FormatParser::domain() const
-{
-    return Domain::Robotics;
-}
+nextpilot::plotscope::parser::Domain Rosbag2FormatParser::domain() const { return Domain::Robotics; }
 
 QStringList Rosbag2FormatParser::suffixes() const
 {

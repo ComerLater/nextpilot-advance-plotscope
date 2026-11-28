@@ -4,7 +4,7 @@
 // 不链任何 module/extension/host。若哪天 Dataset 又偷偷依赖了 core 业务类型，
 // 这里会直接链接失败——这就是抽库的硬承诺，不是口头声明。
 #include "Dataset.h"          // 来自 ps_dataset（不是 ps_core）
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 #include "RegistryTree.h"
 #include "Result.h"           // 来自 ps_foundation
 
@@ -54,9 +54,9 @@ int main(int argc, char **argv)
     CHECK(view->size() == 4);
     CHECK(view->value.last() == 40.0);
 
-    // 2. DatasetHub 仓库：存/取/删，Result 来自 foundation，不依赖 core。
+    // 2. DatasetRegistry 仓库：存/取/删，Result 来自 foundation，不依赖 core。
     RegistryTree tree;
-    DatasetHub repo(tree); // M2.8：构造即上树
+    DatasetRegistry repo(tree); // M2.8：构造即上树
     Result<DatasetId> added = repo.addWithId(ds, QStringLiteral("standalone"));
     CHECK(added.ok());
     const DatasetId id = added.value();

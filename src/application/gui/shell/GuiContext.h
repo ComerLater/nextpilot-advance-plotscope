@@ -2,11 +2,9 @@
 
 #include "AppContext.h"
 #include "IEditorService.h"
-#include "IPanelsService.h"
-#include "ISlotsService.h"
+#include "IThemeService.h"
 #include "IViewsService.h"
 #include "IWorkbenchContribution.h"
-#include "UiSlotTypes.h"
 
 #include <QHash>
 #include <QObject>
@@ -31,11 +29,11 @@ class GuiContext final : public QObject, public nextpilot::plotscope::host::IUiC
 {
     Q_OBJECT
 public:
-    GuiContext(QMainWindow *window, nextpilot::plotscope::workbench::ISlotsService *slotSvc, ShellBinder *binder,
-               nextpilot::plotscope::context::AppContext &appCtx,
+    GuiContext(QMainWindow *window, ShellBinder *binder, nextpilot::plotscope::context::AppContext &appCtx,
                nextpilot::plotscope::intent::IIntentExecutor *executor = nullptr,
                nextpilot::plotscope::workbench::IViewsService *viewsService = nullptr,
-               nextpilot::plotscope::workbench::IEditorService *editorService = nullptr, QObject *parent = nullptr);
+               nextpilot::plotscope::workbench::IEditorService *editorService = nullptr,
+               const nextpilot::plotscope::workbench::IThemeService *themeService = nullptr, QObject *parent = nullptr);
 
     // nextpilot::plotscope::host::IUiContext（只留工作台服务；灌回已搬装配层，
     // 裁定 52442006 Step 3——IContributionsInstaller）
@@ -58,18 +56,12 @@ public:
     QString pickFilePath(const QString &title, const QString &filter) override;
 
     // A8b-M2：装配层在 host.activate 后把各模块的声明式 contributes 灌进来。
-    // 模块在 onAttach 声明的语义色 token（验收 8）：装配层灌回写进槽位表
-    // （ISlotsService）；MainWindow 装配后与包 token 合并灌进 ThemeManager。
-    // 按 id 去重，先声明者优先。
+    // 模块在 onAttach 声明的语义色 token（验收 8）：经 IThemeService 读回；
+    // MainWindow 装配后与包 token 合并灌进 ThemeManager。按 id 去重，先声明者优先。
     QList<nextpilot::plotscope::registry::ThemeTokenSpec> moduleThemeTokens() const
     {
-        return m_slots ? m_slots->moduleThemeTokens()
-                       : QList<nextpilot::plotscope::registry::ThemeTokenSpec>{};
+        return m_themeService ? m_themeService->tokens() : QList<nextpilot::plotscope::registry::ThemeTokenSpec>{};
     }
-
-    // 槽位表服务（裁定 52442006 Step 4）：MainWindow/test 经它读写插槽，
-    // 不再出现扩展槽位表类型。未装配（bare 壳）时为 nullptr。
-    nextpilot::plotscope::workbench::ISlotsService *slotsService() const { return m_slots; }
 
     // 模块声明的状态栏项与当前文本（验收 7）：MainWindow 装配后据此排布。
     QList<nextpilot::plotscope::registry::StatusSpec> statusSpecs() const
@@ -99,16 +91,17 @@ private:
     void dockCentral(QWidget *widget, const QString &titleOverride = QString());
 
     QMainWindow *m_window = nullptr;
-    nextpilot::plotscope::workbench::ISlotsService *m_slots = nullptr;
     ShellBinder *m_binder = nullptr;
     nextpilot::plotscope::context::AppContext &m_appCtx;
     nextpilot::plotscope::intent::IIntentExecutor *m_executor = nullptr;
 
     // 视图/编辑器打开服务（A2b 笔2b 复审必修 A）：openView/openEditor 的唯一执行体，
-    // 与 IPanelsService 同一路构造注入；借用指针，生命周期归装配层。未装配（bare 壳）为
-    // nullptr，openView/openEditor 诚实返回 nullptr——不允许桥回旧工厂表。
+    // 借用指针，生命周期归装配层。未装配（bare 壳）为 nullptr，openView/openEditor
+    // 诚实返回 nullptr——不允许桥回旧工厂表。
     nextpilot::plotscope::workbench::IViewsService *m_viewsService = nullptr;
     nextpilot::plotscope::workbench::IEditorService *m_editorService = nullptr;
+    // 主题 token 读回服务（借用；未装配为 nullptr）。
+    const nextpilot::plotscope::workbench::IThemeService *m_themeService = nullptr;
 
     // 状态栏：登记与文案都在 AppContext::status()（libs/context），
     // 本类只做"IUiContext → hub"的转发与信号中继；**不含节流**——

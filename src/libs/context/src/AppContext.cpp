@@ -1,23 +1,35 @@
 #include "AppContext.h"
+#include "DatasetRegistry.h"
+#include "ExtensionRegistry.h"
+#include "SourceRegistry.h"
+#include "Transform.h"
 
 namespace nextpilot::plotscope::context
 {
 
+// A0 §八.2：注册表实例收进 Impl，AppContext 头文件不再暴露这些类型的字段。
+// Impl 声明在 m_registryTree 之后，逆序析构时先亡、向仍活着的树摘除节点。
+struct AppContext::Impl
+{
+    explicit Impl(RegistryTree &tree) : repo(tree), toolbox(tree), sources(tree) {}
+
+    dataset::DatasetRegistry repo;       // M2.8：数据集仓库上树
+    registry::ExtensionRegistry toolbox; // 唯一扩展注册表：内置包 + contributes 贡献面
+    dataset::SourceRegistry sources;     // M2.8 遗留5 收口：数据源上树
+};
 
 AppContext::AppContext(const QString &settingsPath, QObject *parent)
-    : QObject(parent),
-      m_registryTree(),             // 组合根唯一持有树（成员逆序析构：节点先亡、向仍活着的树摘除）
-      m_repo(m_registryTree),       // M2.8：数据集仓库上树
-      m_settings(settingsPath),
-      m_toolbox(m_registryTree),    // 唯一扩展注册表：内置包 + contributes 贡献面
-      m_sources(m_registryTree),    // M2.8 遗留5 收口：数据源上树
-      m_ingest(m_repo),             // 摄取管道依赖数据集仓库
-      m_interactions(m_registryTree),        // M2.8 遗留5 收口：交互注册表上树
-      m_derivedHub(m_registryTree)      // M2.8 遗留5 收口：派生序列上树
+    : QObject(parent), m_registryTree(), // 组合根唯一持有树（成员逆序析构：节点先亡、向仍活着的树摘除）
+      m_impl(std::make_unique<Impl>(m_registryTree)), m_settings(settingsPath),
+
+      m_interactions(m_registryTree), // M2.8 遗留5 收口：交互注册表上树
+      m_derivedHub(m_registryTree)    // M2.8 遗留5 收口：派生序列上树
 {
 }
 
 AppContext::~AppContext() = default;
+
+// 四个访问器在 .cpp 定义：头文件只留前向声明，调用方需自备完整类型头。
 
 void AppContext::setActiveSourceId(int id)
 {

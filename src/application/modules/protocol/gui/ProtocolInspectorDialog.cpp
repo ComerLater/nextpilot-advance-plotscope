@@ -2,6 +2,7 @@
 
 #include "ThemeManager.h"
 #include "AppContext.h"
+#include "IWorkspace.h"
 #include "DialogLauncherHub.h"
 
 #include "DecodedFrame.h"
@@ -140,8 +141,8 @@ void ProtocolInspectorDialog::rebuildProtocolList()
     m_protocolList->clear();
     for (nextpilot::plotscope::parser::IMessageParser *p : m_parsers)
     {
-        auto *item = new QListWidgetItem(QStringLiteral("%1  ·  %2")
-                                             .arg(p->protocolName(), nextpilot::plotscope::registry::domainName(p->domain())));
+        auto *item = new QListWidgetItem(
+            QStringLiteral("%1  ·  %2").arg(p->protocolName(), nextpilot::plotscope::parser::domainName(p->domain())));
         item->setData(Qt::UserRole, p->id());
         m_protocolList->addItem(item);
     }
@@ -331,7 +332,7 @@ namespace
 void launchProtocolInspector(QWidget *parent, nextpilot::plotscope::context::AppContext &appCtx,
                              nextpilot::plotscope::intent::IIntentExecutor &)
 {
-    nextpilot::plotscope::protocol::ProtocolInspectorDialog::run(appCtx.toolbox().parsers(), parent);
+    nextpilot::plotscope::protocol::ProtocolInspectorDialog::run(appCtx.workspace().messageParsers(), parent);
 }
 } // namespace
 

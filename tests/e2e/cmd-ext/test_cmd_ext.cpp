@@ -1,13 +1,13 @@
 // A8b-M1 e2e cmd-ext：内置测试扩展一条命令 → 接到命令面板 → 执行成功 → 卸载撤回。
 //
 // 走与 gui_main 相同的装配路径：扩展 contributes（来自扫描/manifest）→
-// assembly::ExtensionActivationService.bind(CommandRegistry*, RuntimeHost&) → host.execute(intent)。
+// assembly::ExtensionService.bindCommands(CommandRegistry*, RuntimeHost&) → host.execute(intent)。
 // 用真实 RuntimeHost 与 CommandRegistry，不 mock；不构造完整 MainWindow（保持测试稳定）。
 
 #include "App.h"
 #include "AppContext.h"
 #include "RuntimeHost.h"
-#include "ExtensionActivationService.h"
+#include "ExtensionService.h"
 #include "command/CommandRegistry.h"
 #include "ContributionParser.h"
 #include "ContributionsFormat.h"
@@ -36,17 +36,16 @@ using namespace nextpilot::plotscope::registry;
 using namespace nextpilot::plotscope::command;
 using namespace nextpilot::plotscope::intent;
 
-namespace
-{
+namespace {
 int g_failed = 0;
-#define CHECK(cond)                                                            \
-    do                                                                         \
-    {                                                                          \
-        if (!(cond))                                                           \
-        {                                                                      \
-            std::printf("FAIL line %d: %s\n", __LINE__, #cond);                \
-            ++g_failed;                                                        \
-        }                                                                      \
+#define CHECK(cond)                                                                                                    \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if (!(cond))                                                                                                   \
+        {                                                                                                              \
+            std::printf("FAIL line %d: %s\n", __LINE__, #cond);                                                        \
+            ++g_failed;                                                                                                \
+        }                                                                                                              \
     } while (0)
 
 // A8b-M3-a 第 2 笔：假 "web" provider（§9 h 判据）——壳不改一行即可打开网页页签。
@@ -57,8 +56,7 @@ public:
     {
         return ref.mime == QLatin1String("text/html");
     }
-    QWidget *createEditor(const nextpilot::plotscope::registry::ResourceRef &,
-                          QWidget *parent) override
+    QWidget *createEditor(const nextpilot::plotscope::registry::ResourceRef &, QWidget *parent) override
     {
         return new QWidget(parent);
     }
@@ -98,12 +96,14 @@ int main(int argc, char *argv[])
     })";
     auto obj = QJsonDocument::fromJson(QByteArray(manifest)).object();
     ContributesDoc doc = parseContributes(obj, QStringLiteral("plotscope.helloworld")).doc;
-    CHECK(application.context().toolbox().mountContribution(doc));
+    CHECK((*static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
+               application.context().registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension)))
+              .mountContribution(doc));
 
-    // 装配层同款接线：激活服务把贡献命令灌进一个命令表 + 注册执行 handler。
+    // 装配层同款接线：扩展服务把贡献命令灌进一个命令表 + 注册执行 handler。
     CommandRegistry commands;
-    assembly::ExtensionActivationService activation(application.context());
-    activation.bind(&commands, application.host());
+    auto &activation = application.extensions();
+    activation.bindCommands(&commands, application.host());
 
     // 面板出现：贡献命令已进命令表（buildCommandItems 从 commands() 读）。
     CHECK(activation.boundCommandCount() == 2); // hello.say + workbench.action.openSettings（core.settings）
@@ -121,7 +121,8 @@ int main(int argc, char *argv[])
 
     // A8b-M2 e2e 视图用例：contributes 声明经唯一扩展注册表可读，侧栏容器/视图/视图标题动作
     // /右键项/colors/statusbar 都在；ViewRegistry 能按容器查视图并挂 provider。
-    auto &ext = application.context().toolbox();
+    auto &ext = (*static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
+        application.context().registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension)));
     CHECK(ext.contributedViewContainers().size() == 1);
     CHECK(ext.contributedViewContainers().at(0).item.id == QLatin1String("hello.container"));
     CHECK(ext.contributedViewContainers().at(0).item.area == QLatin1String("sidebar"));
@@ -145,9 +146,9 @@ int main(int argc, char *argv[])
     auto *services = application.host().services();
     CHECK(services != nullptr);
     auto *viewSvc =
-        services ? services->getService<nextpilot::plotscope::workbench::IViewsService>(
-                       QStringLiteral("views.readback"))
-                 : nullptr;
+        services
+            ? services->getService<nextpilot::plotscope::workbench::IViewsService>(QStringLiteral("views.readback"))
+            : nullptr;
     CHECK(viewSvc != nullptr);
     if (viewSvc)
     {
@@ -182,26 +183,23 @@ int main(int argc, char *argv[])
 
     // viewId 注册内容工厂后 openView 走 ViewRegistry::create 同一条链（这里工厂
     // headless 返回 nullptr，只验证链路命中 provider）。
-    ViewRegistry *viewsReg =
-        services ? services->getService<ViewRegistry>(QStringLiteral("views.registry")) : nullptr;
+    ViewRegistry *viewsReg = services ? services->getService<ViewRegistry>(QStringLiteral("views.registry")) : nullptr;
     CHECK(viewsReg != nullptr);
     if (viewsReg)
     {
         CHECK(viewsReg->viewsIn(QStringLiteral("hello.container")).size() == 2);
         CHECK(viewsReg->registerViewProvider(
             QStringLiteral("hello.view"),
-            [](context::AppContext &, intent::IIntentExecutor &, QWidget *) -> QWidget * {
-                return nullptr;
-            },
+            [](context::AppContext &, intent::IIntentExecutor &, QWidget *) -> QWidget * { return nullptr; },
             QStringLiteral("plotscope.helloworld")));
         CHECK(viewsReg->provider(QStringLiteral("hello.view")) != nullptr);
-        CHECK(viewSvc->openView(QStringLiteral("hello.view"), application.context(),
-                                application.host(), nullptr) == nullptr);
+        CHECK(viewSvc->openView(QStringLiteral("hello.view"), application.context(), application.host(), nullptr) ==
+              nullptr);
     }
 
     // ---- A8b-M3-a 第 2 笔 e2e：customEditors + registerEditorProvider + 四语义链路 ----
-    using nextpilot::plotscope::workbench::IEditorService;
     using nextpilot::plotscope::registry::ResourceRef;
+    using nextpilot::plotscope::workbench::IEditorService;
     CHECK(ext.contributedCustomEditors().size() == 1);
     CHECK(ext.contributedCustomEditors().at(0).item.viewType == QLatin1String("web"));
     // e2e：manifest configuration 解析进同一张贡献表（属性数/默认值/scope）。
@@ -211,7 +209,7 @@ int main(int argc, char *argv[])
         // 容器，循环结束即析构。ASan 报 heap-use-after-free；macOS 上则表现为这里 4 条断言
         // 读到垃圾值（同一处 bug、不同分配器不同表现）。先把列表落到局部变量再取地址。
         const auto helloCfgs = ext.contributedConfigurations();
-        const ToolboxHub::OwnedConfiguration *helloCfg = nullptr;
+        const ExtensionRegistry::OwnedConfiguration *helloCfg = nullptr;
         for (const auto &c : helloCfgs)
             if (c.owner == QLatin1String("plotscope.helloworld"))
             {
@@ -272,12 +270,9 @@ int main(int argc, char *argv[])
             CHECK(countOk);
         }
     }
-    auto *editorSvc = services ? services->getService<IEditorService>(
-                                     QStringLiteral("editor.readback"))
-                               : nullptr;
+    auto *editorSvc = services ? services->getService<IEditorService>(QStringLiteral("editor.readback")) : nullptr;
     CHECK(editorSvc != nullptr);
-    ResourceRef html{QStringLiteral("https://example.com"), QStringLiteral("text/html"),
-                     QStringLiteral("示例页")};
+    ResourceRef html{QStringLiteral("https://example.com"), QStringLiteral("text/html"), QStringLiteral("示例页")};
     ResourceRef txt{QStringLiteral("/tmp/a.txt"), QStringLiteral("text/plain"), QStringLiteral("备注")};
     if (editorSvc && viewsReg)
     {
@@ -290,28 +285,26 @@ int main(int argc, char *argv[])
                 settingsDeclared = true;
         CHECK(settingsDeclared);
         // 防冒名：owner 不等于声明者 → 拒。
-        CHECK(viewsReg->registerEditorProvider(QStringLiteral("web"), &g_webProvider,
-                                               QStringLiteral("evil")) == nullptr);
+        CHECK(viewsReg->registerEditorProvider(QStringLiteral("web"), &g_webProvider, QStringLiteral("evil")) ==
+              nullptr);
         // 防冒名（M3-b）：settings 的声明者只能是 core.settings。
         CHECK(viewsReg->registerEditorProvider(QStringLiteral("workbench.editor.settings2"), &g_webProvider,
                                                QStringLiteral("evil")) == nullptr);
         // 声明者注册 → 成功，返回可撤销句柄（editorViewTypeFor 要求 provider 在位，先注册再匹配）。
-        auto webDispose = viewsReg->registerEditorProvider(
-            QStringLiteral("web"), &g_webProvider, QStringLiteral("plotscope.helloworld"));
+        auto webDispose = viewsReg->registerEditorProvider(QStringLiteral("web"), &g_webProvider,
+                                                           QStringLiteral("plotscope.helloworld"));
         CHECK(webDispose != nullptr);
         // 资源匹配：mime text/html → 扩展的 web；text/plain → 内置 text。
         CHECK(editorSvc->editorViewTypeFor(html) == QLatin1String("web"));
         CHECK(editorSvc->editorViewTypeFor(txt) == QLatin1String("text"));
         // 壳不改一行：openEditor("web", html) 命中假 provider，返回不透明控件。
         QWidget *webPage =
-            editorSvc->openEditor(QStringLiteral("web"), html, application.context(),
-                                  application.host(), nullptr);
+            editorSvc->openEditor(QStringLiteral("web"), html, application.context(), application.host(), nullptr);
         CHECK(webPage != nullptr);
         delete webPage;
         // 内置 text 编辑器零扩展可用：打开 → 控件；保存 → 本地文件可写校验。
-        QWidget *textPage = editorSvc->openEditor(QStringLiteral("text"), txt,
-                                                  application.context(), application.host(),
-                                                  nullptr);
+        QWidget *textPage =
+            editorSvc->openEditor(QStringLiteral("text"), txt, application.context(), application.host(), nullptr);
         CHECK(textPage != nullptr);
         delete textPage;
         CHECK(editorSvc->providerFor(QStringLiteral("text")) != nullptr);
@@ -470,7 +463,9 @@ int main(int argc, char *argv[])
         if (cfgSvc)
             cfgSvc->setUserValue(QStringLiteral("hello.verbose"), QJsonValue(true));
     }
-    application.context().toolbox().unmountContribution(QStringLiteral("plotscope.helloworld"));
+    (*static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
+         application.context().registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension)))
+        .unmountContribution(QStringLiteral("plotscope.helloworld"));
     activation.unbind(QStringLiteral("plotscope.helloworld"), &commands);
     CHECK(!commands.contains(QStringLiteral("hello.say")));
     // core.settings 的内置命令不随扩展卸载（owner 是工作台自带）。
@@ -545,8 +540,7 @@ int main(int argc, char *argv[])
         CHECK(editorSvc->editorViewTypeFor(html).isEmpty());
         // 声明没了，再注册 web 必拒（owner 不匹配 → 无声明者）。
         CHECK(viewsReg && viewsReg->registerEditorProvider(QStringLiteral("web"), &g_webProvider,
-                                                           QStringLiteral("plotscope.helloworld")) ==
-                                      nullptr);
+                                                           QStringLiteral("plotscope.helloworld")) == nullptr);
     }
     // host 再 execute 该 op 无 handler 认领。
     auto afterUnmount = application.host().execute(intent);

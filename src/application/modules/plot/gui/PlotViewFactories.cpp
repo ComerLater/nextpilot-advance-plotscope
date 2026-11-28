@@ -10,6 +10,7 @@
 #include "ViewRegistry.h"
 
 #include "AppContext.h"
+#include "IWorkspace.h"
 
 #include <QHash>
 #include <QPointer>
@@ -154,7 +155,8 @@ bool installPlotViewFactories(instantiation::InstantiationService *services, con
     // ---- 呈现侧三件（A2c）：缩略图 QIcon 注册进 IconRegistry ----
     // 对位 VSCode "扩展激活时注册图标"；壳只 iconRegistry.icon(id)，不持有绘制器。
     // 幂等（IconRegistry 先到者为准），装配重入安全。
-    nextpilot::plotscope::gui::PlotThumbnails::registerIcons();
+    nextpilot::plotscope::gui::PlotThumbnails::registerIcons(
+        appCtx->hasWorkspace() ? appCtx->workspace().sourceDriverMetas() : QVector<QPair<QString, QString>>{});
 
     // ---- 声明半（owner "plot"）：views + customEditors，先于 provider 登记 ----
     // registerEditorProvider 要求 viewType 已声明且 owner 一致（2a 防冒名线），

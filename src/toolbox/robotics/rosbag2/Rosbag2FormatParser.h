@@ -8,7 +8,7 @@ class Rosbag2FormatParser final : public nextpilot::plotscope::parser::IMessageP
 public:
     QString id() const override;
     QString displayName() const override;
-    nextpilot::plotscope::registry::Domain domain() const override;
+    nextpilot::plotscope::parser::Domain domain() const override;
     QStringList suffixes() const override;
     bool acceptsFormat(const QString &format) const override;
 

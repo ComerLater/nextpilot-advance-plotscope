@@ -33,9 +33,12 @@ public:
     virtual int count() const = 0;
 
     // §1.3.1 数据变更事件（VSCode Event 模式）。
-    virtual nextpilot::plotscope::workbench::Subscription onDidAddSource(std::function<void(const QString &id)> l) = 0;
-    virtual nextpilot::plotscope::workbench::Subscription
+    virtual nextpilot::plotscope::foundation::Subscription onDidAddSource(std::function<void(const QString &id)> l) = 0;
+    virtual nextpilot::plotscope::foundation::Subscription
     onDidChangeSource(std::function<void(const QString &id)> l) = 0;
+    // 源移除：同一事件面（vscode.workspace 的 onDidRemove*）。
+    virtual nextpilot::plotscope::foundation::Subscription
+    onDidRemoveSource(std::function<void(const QString &id)> l) = 0;
 };
 
 } // namespace nextpilot::plotscope::dataset

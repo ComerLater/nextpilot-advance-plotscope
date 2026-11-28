@@ -11,17 +11,49 @@
 //   - registry 不认识命令库：when / group 只存字符串，求值与排序归命令层与外壳。
 //   - 全文唯一名 ContributesDoc（不再出现 ContributionDoc）。
 
+#include "Contribution.h"
+#include "IActionProvider.h"
+
 #include <QJsonObject>
 #include <QList>
 #include <QString>
 
-namespace nextpilot::plotscope::registry
+namespace nextpilot::plotscope::registry {
+
+// Ribbon 页签声明。对位 VSCode menusExtensionPoint.ts 的 place（menubar/<pageId>）
+// 与 actions.ts 的 MenuId；pageId 是本仓 Ribbon 布局常量，壳不解析业务语义。
+struct RibbonPageDecl
 {
+    QString id;
+    QString label;
+    int order = 0;
+    QString provider; // 归属（mount 时 stamp；卸载按 provider 整批撤，沿用 UiAction/ActivitySpec 同名）
+    QString when;     // 页级可见条件（VSCode contributes 原生键名；空 = 恒真，求值归命令层）
+};
+
+// Ribbon 分组声明。对位 actions.ts 的 IMenuItem.group（组 id）；pageId 指回 RibbonPageDecl.id。
+struct RibbonGroupDecl
+{
+    QString id;
+    QString label;
+    QString pageId;
+    int order = 0;
+    QString provider; // 归属（mount 时 stamp；卸载按 provider 整批撤）
+};
+
+// 动态动作提供器声明：slotId -> provider 对象指针（借用）。变化经
+// IActionProvider::onDidChangeActions 通知，装配层订阅后只重建该 slot。
+struct ActionProviderDecl
+{
+    QString owner;
+    QString slotId;
+    IActionProvider *provider = nullptr; // 借用，生命周期归扩展
+};
 
 // contributes.commands[] —— 键名照 VSCode（command/title/category/icon），order 为本仓排序扩展。
 struct ContributedCommand
 {
-    QString command;   // 全局唯一 id
+    QString command; // 全局唯一 id
     QString title;
     QString category; // 命令面板分组标题
     QString icon;     // iconId；未注册用占位图标（M3 的 icons 键落地后校验）
@@ -56,24 +88,31 @@ struct ContributedMenuItem
 // 本仓 ribbon 页签也经此声明（area="ribbon"），因为它是容器不是内容。
 struct ContributedViewContainer
 {
-    QString id;    // 全局唯一
+    QString id; // 全局唯一
     QString title;
-    QString area;  // sidebar | bottom | auxiliary | ribbon
+    QString area; // sidebar | bottom | auxiliary | activitybar | ribbon
     QString icon;
     int order = 0;
     QString owner; // 声明者归属（parse 不填；ViewRegistry.declare 时写）
+
+    // Activity Bar 入口（area=activitybar）对位 ActivitySpec 的专属字段；普通
+    // sidebar/bottom/auxiliary/ribbon 容器留空。字段名沿用 ActivitySpec 原名，不另起。
+    QStringList panelTypes; // 属于本 activity 的面板类型 id
+    QString centralEditor;  // 点击后打开的中央编辑器 viewType（空=不动中央）
+    ResourceRef centralRef; // 中央编辑器资源引用（owner 构造，壳只消费不解析）
+    QString ribbonPage;     // 点击后切到的 ribbon 页 id
 };
 
 // contributes.views[] —— 视图（面板），container 指向 viewsContainers[].id。
 struct ContributedView
 {
-    QString id;        // 全局唯一
+    QString id; // 全局唯一
     QString name;
     QString container; // 所属 viewsContainers[].id
     QString icon;      // 对位 ViewDescriptor.iconPath；纯名字，不带 `:/`、不带扩展名
     QString when;
     int order = 0;
-    QString owner;     // 声明者归属（parse 不填；ViewRegistry.declare 时写）
+    QString owner; // 声明者归属（parse 不填；ViewRegistry.declare 时写）
 };
 
 // contributes.colors[] —— 语义色 token（原 IUiContext 主题 token 声明迁此）。
@@ -87,8 +126,8 @@ struct ContributedColor
 // contributes.statusbar[] —— 状态栏项声明（原状态栏声明迁此）。
 struct ContributedStatus
 {
-    QString id;       // 全局唯一
-    QString side;     // left | right
+    QString id;   // 全局唯一
+    QString side; // left | right
     int priority = 0;
     QString when;
     QString icon;
@@ -98,7 +137,7 @@ struct ContributedStatus
 };
 
 // contributes.customEditors[] —— VSCode 自定义编辑器声明。
-// viewType 全局唯一（先 parser 内去重、跨 owner 由 ToolboxHub mount 诊断）；
+// viewType 全局唯一（先 parser 内去重、跨 owner 由 ExtensionRegistry mount 诊断）；
 // selector 按 mime 或 filenamePattern 匹配资源，壳据此选编辑器，不解释业务。
 struct ContributedEditorSelector
 {
@@ -108,11 +147,11 @@ struct ContributedEditorSelector
 
 struct ContributedCustomEditor
 {
-    QString viewType;      // 全局唯一，registerEditorProvider 的对位键
+    QString viewType; // 全局唯一，registerEditorProvider 的对位键
     QString displayName;
     QList<ContributedEditorSelector> selector;
-    int priority = 0;      // 多个编辑器都能打开时，大者优先
-    QString owner;         // 声明者归属（parse 不填；ViewRegistry.declare 时写）
+    int priority = 0; // 多个编辑器都能打开时，大者优先
+    QString owner;    // 声明者归属（parse 不填；ViewRegistry.declare 时写）
 };
 
 // contributes.configuration[] —— 设置属性声明（设置 UI 归工作台 Settings editor）。
@@ -121,7 +160,7 @@ struct ContributedCustomEditor
 struct ConfigurationProperty
 {
     QString key;  // settings 存储键原文（点号键或 app/ 前缀键皆可；parser 内去重，
-                  // 跨 owner 由 ToolboxHub mount 诊断）
+                  // 跨 owner 由 ExtensionRegistry mount 诊断）
     QString type; // boolean | number | string | object | array（enum 用 enumValues 表达）
     QJsonValue defaultValue;
     QStringList enumValues;
@@ -161,7 +200,6 @@ struct ContributesDoc
     QList<ContributedView> views;
     QList<ContributedMenuItem> menuItems;
     QList<ContributedColor> colors;
-    QList<ContributedStatus> statuses;
 
     // M3-a 新增（M2 恒为空，向后兼容）。
     QList<ContributedCustomEditor> customEditors;
@@ -169,11 +207,24 @@ struct ContributesDoc
     // M3-b 新增（M3-a 恒为空，向后兼容）。
     QList<ConfigurationSpec> configurations;
 
+    // 内置扩展（原模块）代码侧 UI 声明：ribbon 页/组/动作/活动/主题令牌/状态栏条目/动态提供器。
+    // 对位 menusExtensionPoint.ts（menus 的 place/group）与 actions.ts（MenuId/MenuItem.group）。
+    // manifest 解析的 contributes.statusbar 条目也在解析后转成 StatusSpec 收进 statuses，
+    // 运行时只认这一份状态栏 spec（StatusHub 注册与卸载都走它）。
+    QList<RibbonPageDecl> ribbonPages;
+    QList<RibbonGroupDecl> ribbonGroups;
+    QList<UiAction> actions;
+    QList<ActivitySpec> activities;
+    QList<ThemeTokenSpec> themeTokens;
+    QList<StatusSpec> statuses;
+    QList<ActionProviderDecl> actionProviders;
+
     bool isEmpty() const
     {
         return commands.isEmpty() && commandPalette.isEmpty() && viewContainers.isEmpty() && views.isEmpty() &&
-               menuItems.isEmpty() && colors.isEmpty() && statuses.isEmpty() && customEditors.isEmpty() &&
-               configurations.isEmpty();
+               menuItems.isEmpty() && colors.isEmpty() && customEditors.isEmpty() && configurations.isEmpty() &&
+               ribbonPages.isEmpty() && ribbonGroups.isEmpty() && actions.isEmpty() && activities.isEmpty() &&
+               themeTokens.isEmpty() && statuses.isEmpty() && actionProviders.isEmpty();
     }
 };
 

@@ -12,7 +12,7 @@
 //
 // 刻意**不造 IIconService**：壳与模块之间已经有 IViewsService / IEditorService 等
 // 服务面，图标是纯呈现数据、无生命周期语义（注册即进程存续），平行入口只会
-// 复制一份 service 样板（A2c 打回线 5）。PlotThumbnails 等绘制器在装配时把
+// 复制一份 service 样板（A2c 打回线 5）。图型缩略图等绘制器在装配时把
 // "plot/<kind>" 的 QIcon 注册进来；壳只 `IconRegistry::instance().icon(id)`。
 namespace nextpilot::plotscope::gui {
 

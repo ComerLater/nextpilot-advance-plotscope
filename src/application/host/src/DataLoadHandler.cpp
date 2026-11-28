@@ -1,9 +1,10 @@
 #include "DataLoadHandler.h"
+#include "Intent.h"
 #include "ErrorCodes.h"
 
 #include "AppContext.h"
 #include "DataCommandsHandler.h"
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 #include "IngestOrchestrator.h"
 #include "IngestPipeline.h"
 #include "SettingsStore.h"

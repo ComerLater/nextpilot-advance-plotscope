@@ -11,7 +11,7 @@
 
 namespace nextpilot::plotscope::dataset
 {
-class DatasetHub;
+class DatasetRegistry;
 }
 
 namespace nextpilot::plotscope::script
@@ -46,8 +46,8 @@ class PythonHandler final : public QObject, public nextpilot::plotscope::intent:
 {
     Q_OBJECT
 public:
-    PythonHandler(nextpilot::plotscope::intent::IIntentExecutor &executor,
-                  dataset::DatasetHub *data, QObject *parent = nullptr);
+    PythonHandler(nextpilot::plotscope::intent::IIntentExecutor &executor, dataset::DatasetRegistry *data,
+                  QObject *parent = nullptr);
 
     bool canHandle(const Intent &intent) const override
     {
@@ -71,7 +71,7 @@ private:
     static Result<QVector<double>> readDoubles(const QString &path);
 
     nextpilot::plotscope::intent::IIntentExecutor &m_executor;
-    dataset::DatasetHub *m_data = nullptr;
+    dataset::DatasetRegistry *m_data = nullptr;
     PythonBridge m_bridge;
     QVariantMap m_lastNew;    // 末次 exec 的写回列元数据 {列名:{path,rows}}
     dataset::DatasetId m_lastDataset = -1; // 写回列的母数据集（writeback 缺省用它）

@@ -1,14 +1,15 @@
 #include "BatchRunner.h"
+#include "Intent.h"
 
 #include "ParserCatalog.h"
 
 #include "Dataset.h"
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 #include "ErrorCodes.h"
 #include "InteractionHub.h"
 #include "LuaEngine.h"
 #include "ScriptFacade.h"
-#include "SourceHub.h"
+#include "SourceRegistry.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -63,9 +64,8 @@ QStringList splitPatterns(const QString &raw)
 }
 } // namespace
 
-BatchHandler::BatchHandler(IIntentExecutor &executor, InteractionHub *inter,
-                           dataset::DatasetHub *data, dataset::SourceHub *sources,
-                           ViewDispatcher viewDispatcher, QObject *parent)
+BatchHandler::BatchHandler(IIntentExecutor &executor, InteractionHub *inter, dataset::DatasetRegistry *data,
+                           dataset::SourceRegistry *sources, ViewDispatcher viewDispatcher, QObject *parent)
     : QObject(parent), m_executor(executor), m_inter(inter), m_data(data), m_sources(sources),
       m_viewDispatcher(std::move(viewDispatcher))
 {

@@ -1,22 +1,20 @@
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 #include "ErrorCodes.h"
 
 #include <algorithm>
 
-namespace nextpilot::plotscope::dataset
-{
-using nextpilot::plotscope::foundation::Result;
+namespace nextpilot::plotscope::dataset {
 using nextpilot::plotscope::foundation::fail;
+using nextpilot::plotscope::foundation::Result;
 namespace err = nextpilot::plotscope::foundation::err;
 
-DatasetHub::DatasetHub(RegistryTree &tree, QObject *parent)
-    : TypedRegistry<Dataset, DatasetId>(
-          tree, nextpilot::plotscope::registry::RegistryKind::Dataset,
-          QStringLiteral("数据集"), parent)
+DatasetRegistry::DatasetRegistry(RegistryTree &tree, QObject *parent)
+    : TypedRegistry<Dataset, DatasetId>(tree, nextpilot::plotscope::registry::RegistryKind::Dataset,
+                                        QStringLiteral("数据集"), parent)
 {
 }
 
-DatasetId DatasetHub::add(Dataset dataset)
+DatasetId DatasetRegistry::add(Dataset dataset)
 {
     // id 分配与基类信号（objectAdded）由 TypedRegistry 上收；这里只补领域信号。
     const DatasetId id = TypedRegistry::add(std::move(dataset));
@@ -24,7 +22,7 @@ DatasetId DatasetHub::add(Dataset dataset)
     return id;
 }
 
-Result<DatasetId> DatasetHub::addWithId(Dataset dataset, const QString &requestedName)
+Result<DatasetId> DatasetRegistry::addWithId(Dataset dataset, const QString &requestedName)
 {
     if (requestedName.isEmpty())
         return fail(err::Name, QStringLiteral("数据集名为空"));
@@ -33,7 +31,7 @@ Result<DatasetId> DatasetHub::addWithId(Dataset dataset, const QString &requeste
     return add(std::move(dataset));
 }
 
-Result<DatasetId> DatasetHub::addWithStableId(Dataset dataset, DatasetId id)
+Result<DatasetId> DatasetRegistry::addWithStableId(Dataset dataset, DatasetId id)
 {
     // 重复 id 的错误文案在领域层保持旧口径（TypedRegistry 通用版只兜底）。
     if (TypedRegistry::get(id) != nullptr)
@@ -41,7 +39,7 @@ Result<DatasetId> DatasetHub::addWithStableId(Dataset dataset, DatasetId id)
     return TypedRegistry::addWithStableId(std::move(dataset), id);
 }
 
-bool DatasetHub::remove(DatasetId id)
+bool DatasetRegistry::remove(DatasetId id)
 {
     if (!TypedRegistry::remove(id))
         return false;
@@ -49,24 +47,18 @@ bool DatasetHub::remove(DatasetId id)
     return true;
 }
 
-const Dataset *DatasetHub::get(DatasetId id) const
-{
-    return TypedRegistry::get(id);
-}
+const Dataset *DatasetRegistry::get(DatasetId id) const { return TypedRegistry::get(id); }
 
-Dataset *DatasetHub::getMutable(DatasetId id)
-{
-    return TypedRegistry::get(id);
-}
+Dataset *DatasetRegistry::getMutable(DatasetId id) { return TypedRegistry::get(id); }
 
-QVector<DatasetId> DatasetHub::ids() const
+QVector<DatasetId> DatasetRegistry::ids() const
 {
     QVector<DatasetId> result = TypedRegistry::ids();
     std::sort(result.begin(), result.end());
     return result;
 }
 
-void DatasetHub::clear()
+void DatasetRegistry::clear()
 {
     const QVector<DatasetId> all = TypedRegistry::ids(); // 插入序（旧口径）
     TypedRegistry::clear();

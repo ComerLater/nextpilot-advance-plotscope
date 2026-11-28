@@ -1,7 +1,7 @@
 #include "DataModule.h"
+#include "Intent.h"
 
-#include "BuiltinModuleHub.h"
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 #include "IngestPipeline.h"
 #include "ErrorCodes.h"
 #include "Events.h"
@@ -34,23 +34,20 @@ namespace parser = nextpilot::plotscope::parser; // 限定名 parser:: 需要别
 using namespace nextpilot::plotscope::context;
 using namespace nextpilot::plotscope::host;
 
-ModuleInfo DataModule::moduleInfo()
+ExtensionDescription DataModule::extensionDescription()
 {
-    return ModuleInfo{
-        QStringLiteral("mod.data"),
-        QStringLiteral("数据模块"),
-        QStringLiteral("1.0"),
-        {QStringLiteral("data.session")},
-        {}
-    };
+    ExtensionDescription d;
+    d.identifier = QStringLiteral("mod.data");
+    d.name = QStringLiteral("数据模块");
+    d.version = QStringLiteral("1.0");
+    d.isBuiltin = true;
+    d.activationEvents = {QStringLiteral("*")};
+    return d;
 }
 
 IWorkbenchContribution *DataModule::create() { return new DataModule(); }
 
-ModuleInfo DataModule::info() const
-{
-    return moduleInfo();
-}
+ExtensionDescription DataModule::description() const { return extensionDescription(); }
 
 void DataModule::initialize(InstantiationService &services)
 {
@@ -63,7 +60,7 @@ void DataModule::initialize(InstantiationService &services)
     // onAttach 的"来源"画廊需要格式驱动元数据；initialize 阶段按名取用并缓存，
     // 避免 onAttach 回头拿宿主（m_host 在 A1b 已不再赋值）。
     m_driverMetas = ws->sourceDriverMetas();
-    // 只订阅仓库事件；不碰 UI、不认识格式。§1.5：DatasetHub 信号 → IDatasetAccess Event。
+    // 只订阅仓库事件；不碰 UI、不认识格式。§1.5：DatasetRegistry 信号 → IDatasetAccess Event。
     // PLOTSCOPE_QUIET_STDOUT：MCP stdio 桥等协议场景下 stdout 是协议通道。
     const bool quiet = !qEnvironmentVariableIsEmpty("PLOTSCOPE_QUIET_STDOUT");
     ws->dataset().onDidAddDocument([quiet](const QString &id) {
@@ -108,22 +105,22 @@ void DataModule::initialize(InstantiationService &services)
     // 导致 GUI 层 DataManagerPanel / 测试按 dispatchViewAction 取不到（998 回归）。
     // 模块只经 caps 注册，不碰 AppContext/interactionHub。
     m_caps = caps;
-    caps->registerViewAction(
-        QStringLiteral("data.table.open"), [this, caps](const QVariantMap &params) -> Result<QVariant> {
-            if (!m_ui)
-                return fail(err::Unsupported, QStringLiteral("数据表格需要 GUI 环境"));
-            nextpilot::plotscope::registry::ResourceRef ref;
-            const int dsId = params.value(QStringLiteral("datasetId")).toInt();
-            const QString table = params.value(QStringLiteral("table")).toString();
-            ref.uri = QStringLiteral("dataset://%1/%2").arg(dsId).arg(table);
-            ref.mime = QStringLiteral("application/x-dataset-table");
-            ref.title = QStringLiteral("#%1/%2").arg(dsId).arg(table);
-            if (!m_ui->openEditor(QStringLiteral("data.table"), ref))
-                return fail(err::Unsupported, QStringLiteral("数据表格编辑器不可用"));
-            Result<QVariant> out{QVariant()};
-            caps->dispatchViewAction(QStringLiteral("data.table.show"), params, out);
-            return out;
-        });
+    caps->registerViewAction(QStringLiteral("data.table.open"),
+                             [this, caps](const QVariantMap &params) -> Result<QVariant> {
+                                 if (!m_ui)
+                                     return fail(err::Unsupported, QStringLiteral("数据表格需要 GUI 环境"));
+                                 nextpilot::plotscope::registry::ResourceRef ref;
+                                 const int dsId = params.value(QStringLiteral("datasetId")).toInt();
+                                 const QString table = params.value(QStringLiteral("table")).toString();
+                                 ref.uri = QStringLiteral("dataset://%1/%2").arg(dsId).arg(table);
+                                 ref.mime = QStringLiteral("application/x-dataset-table");
+                                 ref.title = QStringLiteral("#%1/%2").arg(dsId).arg(table);
+                                 if (!m_ui->openEditor(QStringLiteral("data.table"), ref))
+                                     return fail(err::Unsupported, QStringLiteral("数据表格编辑器不可用"));
+                                 Result<QVariant> out{QVariant()};
+                                 caps->dispatchViewAction(QStringLiteral("data.table.show"), params, out);
+                                 return out;
+                             });
 }
 
 void DataModule::onDetach()
@@ -186,10 +183,9 @@ QList<UiAction> DataModule::sourceGalleryActions(const QVector<QPair<QString, QS
     return buildSourceGalleryActions(metas);
 }
 
-ModuleContributions DataModule::contributes() const
+ContributesDoc DataModule::contributes() const
 {
-    ModuleContributions c;
-    c.owner = QStringLiteral("data");
+    ContributesDoc c;
 
     {
         ThemeTokenSpec t;
@@ -229,14 +225,13 @@ ModuleContributions DataModule::contributes() const
         c.statuses.append(play);
     }
 
-    c.ribbonPages.append(RibbonPageDecl{QStringLiteral("ribbon.page.data"),
-                                        QStringLiteral("数据"), 2});
-    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.data.common"),
-                                          QStringLiteral("常用"), QStringLiteral("ribbon.page.data"), 0});
-    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.data.record"),
-                                          QStringLiteral("录制"), QStringLiteral("ribbon.page.data"), 1});
-    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.data.sources"),
-                                          QStringLiteral("来源"), QStringLiteral("ribbon.page.data"), 2});
+    c.ribbonPages.append(RibbonPageDecl{QStringLiteral("ribbon.page.data"), QStringLiteral("数据"), 2});
+    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.data.common"), QStringLiteral("常用"),
+                                          QStringLiteral("ribbon.page.data"), 0});
+    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.data.record"), QStringLiteral("录制"),
+                                          QStringLiteral("ribbon.page.data"), 1});
+    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.data.sources"), QStringLiteral("来源"),
+                                          QStringLiteral("ribbon.page.data"), 2});
 
     // 来源画廊：条目由 initialize 缓存的格式驱动元数据派生，壳不保留格式常量表。
     for (const UiAction &a : sourceGalleryActions(m_driverMetas))
@@ -255,8 +250,8 @@ ModuleContributions DataModule::contributes() const
     c.activities.append(dataActivity);
 
     // 开始页"常用"组：打开 / 最近。
-    auto addHome = [&c](const QString &id, const QString &label, const QString &op,
-                        const QString &icon, const QString &shortcut, int order) {
+    auto addHome = [&c](const QString &id, const QString &label, const QString &op, const QString &icon,
+                        const QString &shortcut, int order) {
         UiAction a;
         a.id = id;
         a.label = label;
@@ -267,14 +262,13 @@ ModuleContributions DataModule::contributes() const
         a.order = order;
         c.actions.append(a);
     };
-    addHome(QStringLiteral("app.action.openData"), QStringLiteral("打开数据"),
-            QStringLiteral("data.load"), QStringLiteral("file_open"), QStringLiteral("Ctrl+O"), 0);
-    addHome(QStringLiteral("home.action.recent"), QStringLiteral("最近打开"),
-            QStringLiteral("data.recent"), QStringLiteral("history"), QString(), 1);
+    addHome(QStringLiteral("app.action.openData"), QStringLiteral("打开数据"), QStringLiteral("data.load"),
+            QStringLiteral("file_open"), QStringLiteral("Ctrl+O"), 0);
+    addHome(QStringLiteral("home.action.recent"), QStringLiteral("最近打开"), QStringLiteral("data.recent"),
+            QStringLiteral("history"), QString(), 1);
 
     // 数据功能 ribbon 的"常用"动作（每个绑定真实存在的意图处理器）。
-    auto add = [&c](const QString &id, const QString &label,
-                    const QString &op, const QString &icon, int order) {
+    auto add = [&c](const QString &id, const QString &label, const QString &op, const QString &icon, int order) {
         UiAction a;
         a.id = id;
         a.label = label;
@@ -284,20 +278,19 @@ ModuleContributions DataModule::contributes() const
         a.order = order;
         c.actions.append(a);
     };
-    add(QStringLiteral("data.action.quickOpen"), QStringLiteral("快速打开"),
-        QStringLiteral("data.load"), QStringLiteral("open"), 0);
-    add(QStringLiteral("data.action.recent"), QStringLiteral("最近"),
-        QStringLiteral("data.recent"), QStringLiteral("history"), 1);
-    add(QStringLiteral("data.action.reload"), QStringLiteral("重载"),
-        QStringLiteral("data.reload"), QStringLiteral("reset"), 10);
-    add(QStringLiteral("data.action.export"), QStringLiteral("导出 CSV"),
-        QStringLiteral("data.export"), QStringLiteral("export_data"), 11);
-    add(QStringLiteral("data.action.clearCache"), QStringLiteral("清解析缓存"),
-        QStringLiteral("data.clearCache"), QStringLiteral("trash"), 12);
+    add(QStringLiteral("data.action.quickOpen"), QStringLiteral("快速打开"), QStringLiteral("data.load"),
+        QStringLiteral("open"), 0);
+    add(QStringLiteral("data.action.recent"), QStringLiteral("最近"), QStringLiteral("data.recent"),
+        QStringLiteral("history"), 1);
+    add(QStringLiteral("data.action.reload"), QStringLiteral("重载"), QStringLiteral("data.reload"),
+        QStringLiteral("reset"), 10);
+    add(QStringLiteral("data.action.export"), QStringLiteral("导出 CSV"), QStringLiteral("data.export"),
+        QStringLiteral("export_data"), 11);
+    add(QStringLiteral("data.action.clearCache"), QStringLiteral("清解析缓存"), QStringLiteral("data.clearCache"),
+        QStringLiteral("trash"), 12);
 
     // 录制组：两态按钮。
-    auto addRec = [&c](const QString &id, const QString &label, const QString &op,
-                       const QString &icon, int order) {
+    auto addRec = [&c](const QString &id, const QString &label, const QString &op, const QString &icon, int order) {
         UiAction a;
         a.id = id;
         a.label = label;
@@ -307,10 +300,10 @@ ModuleContributions DataModule::contributes() const
         a.order = order;
         c.actions.append(a);
     };
-    addRec(QStringLiteral("data.action.recordStart"), QStringLiteral("开始录制"),
-           QStringLiteral("data.record.start"), QStringLiteral("record"), 20);
-    addRec(QStringLiteral("data.action.recordStop"), QStringLiteral("停止录制"),
-           QStringLiteral("data.record.stop"), QStringLiteral("pause"), 21);
+    addRec(QStringLiteral("data.action.recordStart"), QStringLiteral("开始录制"), QStringLiteral("data.record.start"),
+           QStringLiteral("record"), 20);
+    addRec(QStringLiteral("data.action.recordStop"), QStringLiteral("停止录制"), QStringLiteral("data.record.stop"),
+           QStringLiteral("pause"), 21);
     return c;
 }
 
@@ -319,43 +312,29 @@ void DataModule::onAttach(IUiContext &ui)
     // A8b-M2：声明已迁至 contributes()，宿主统一灌回；onAttach 只保留运行时服务。
     m_ui = &ui;
 
-    // 数据源数量：订阅 DatasetHub 增删信号，推模式更新（不轮询）。
+    // 数据源数量：订阅 DatasetRegistry 增删信号，推模式更新（不轮询）。
     if (m_host)
     {
-        DatasetHub &hub = m_host->app().data();
+        IDatasetAccess &hub = m_host->app().workspace().dataset();
         const auto refreshCount = [this, &hub]() {
             if (m_ui)
                 m_ui->updateStatus(QStringLiteral("data.source.count"),
                                    QStringLiteral("数据源: %1").arg(hub.ids().size()));
         };
-        QObject::connect(&hub, &DatasetHub::datasetAdded, this,
-                         [refreshCount](DatasetId) { refreshCount(); });
-        QObject::connect(&hub, &DatasetHub::datasetRemoved, this,
-                         [refreshCount](DatasetId) { refreshCount(); });
+        m_datasetCountSub = hub.onDidAddDocument([refreshCount](const QString &) { refreshCount(); });
+        m_datasetCountSub2 = hub.onDidRemoveDocument([refreshCount](const QString &) { refreshCount(); });
         refreshCount();
 
         AppContext &appCtx = m_host->app();
         QObject::connect(&appCtx, &AppContext::dataLoadStarted, this, [this]() {
             if (m_ui)
-                m_ui->updateStatus(QStringLiteral("data.loading.progress"),
-                                   QStringLiteral("加载中…"));
+                m_ui->updateStatus(QStringLiteral("data.loading.progress"), QStringLiteral("加载中…"));
         });
         QObject::connect(&appCtx, &AppContext::dataLoadFinished, this, [this](bool ok) {
             if (m_ui)
                 m_ui->updateStatus(QStringLiteral("data.loading.progress"),
                                    ok ? QStringLiteral("空闲") : QStringLiteral("加载失败"));
         });
-
-        IngestPipeline &ingest = appCtx.ingest();
-        QObject::connect(&ingest, &IngestPipeline::progressChanged, this,
-                         [this](int, uint64_t done, uint64_t total) {
-                             if (!m_ui)
-                                 return;
-                             const QString text = total > 0
-                                 ? QStringLiteral("加载 %1%").arg(done * 100 / total)
-                                 : QStringLiteral("加载 %1 字节").arg(done);
-                             m_ui->updateStatus(QStringLiteral("data.loading.progress"), text);
-                         });
     }
 
     // 数据集树视图（运行时服务）：A2b 笔2b 第③步——声明与 provider 都归本模块
@@ -367,4 +346,4 @@ void DataModule::onAttach(IUiContext &ui)
 #include "DataModule.moc"
 
 // 编译期自注册：宿主启动时遍历全局表装载，新增模块无需改 App / 宿主。
-PS_REGISTER_MODULE(DataModule)
+PS_REGISTER_EXTENSION(DataModule)

@@ -1,4 +1,5 @@
 #include "PreferencesIntentHandler.h"
+#include "Intent.h"
 
 #include "RuntimeHost.h"
 

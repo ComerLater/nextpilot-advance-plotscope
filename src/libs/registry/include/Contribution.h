@@ -4,11 +4,11 @@
 //
 // 机制只有一种：Registry<T>（见 Registry.h）。本文件没有任何虚函数、没有任何
 // 容器逻辑——只有六个数据 struct 和包的自我声明。身份（id / provider / domain）
-// 是字段，不是虚函数；provider / domain 由 ToolboxHub::mount() 在挂载时
+// 是字段，不是虚函数；provider / domain 由 ExtensionRegistry::mount() 在挂载时
 // 自动写入，包作者永远不用填。
 //
 // 包作者要做的事只有两件：
-//   1. 填一份 Pack 清单（见 ToolboxHub.h，纯数据：六个列表 + 解析器）；
+//   1. 填一份 Pack 清单（见 ExtensionRegistry.h，纯数据：六个列表 + 解析器）；
 //   2. toolbox.mount(std::move(pack)) 挂进去；卸载 unmount(packId) 原子撤销。
 //
 // 查询方只做一件事：按类型读表——registry.uiActions / panels / docs / ...
@@ -23,6 +23,7 @@
 
 namespace nextpilot::plotscope::registry
 {
+using nextpilot::plotscope::parser::Domain;
 
 // === 六类贡献数据：提前定义好，仅此六种 + 解析器（行为式，见 libs/parser）===
 
@@ -164,7 +165,7 @@ struct DataAsset
     QString id;          // 稳定标识
     QString label;       // 显示名
     QString location;    // 资源路径（相对扩展包根目录 / qrc / 绝对，由实现约定）
-    QString format;      // 建议的格式 kind（如 "csv"/"ulog"），供加载器参考，可空
+    QString format;      // 建议的格式 kind（由 owner 声明），供加载器参考，可空
     QString description; // 内容说明（可选）
 
     QString provider; // mount() 自动写入
@@ -225,7 +226,7 @@ struct ReportTemplate
 // 包的自我声明（挂进 packs 表的那条数据）。
 struct PackInfo
 {
-    QString id;      // 全局唯一，如 "pack.autopilot"
+    QString id;      // 全局唯一，如 "pack.<owner>"
     QString name;    // 显示名，如 "飞控工具箱"
     Domain domain = Domain::General;
 };

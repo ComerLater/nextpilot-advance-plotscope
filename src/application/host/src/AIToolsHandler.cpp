@@ -1,4 +1,5 @@
 #include "AIToolsHandler.h"
+#include "IWorkspace.h"
 
 #include "AppContext.h"
 #include "Intent.h"
@@ -175,8 +176,8 @@ Result<IntentResult> AIToolsHandler::getStatus()
 {
     IntentResult r;
     r.payload = QVariantMap{
-        {QStringLiteral("datasets"), m_app.data().count()},
-        {QStringLiteral("sources"), m_app.sources().count()},
+        {QStringLiteral("datasets"), m_app.workspace().dataset().count()},
+        {QStringLiteral("sources"), m_app.workspace().sources().count()},
         {QStringLiteral("activeSource"), m_app.activeSourceId()},
         {QStringLiteral("toolCount"), toolCatalog().size()},
     };

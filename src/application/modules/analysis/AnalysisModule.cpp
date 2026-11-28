@@ -1,7 +1,6 @@
 #include "AnalysisModule.h"
 
 #include "AppContext.h"
-#include "BuiltinModuleHub.h"
 #include "DataSource.h"
 #include "Dataset.h"
 #include "Contribution.h"
@@ -30,8 +29,7 @@ using namespace nextpilot::plotscope::parser;
 using namespace nextpilot::plotscope::context;
 using namespace nextpilot::plotscope::host;
 
-namespace
-{
+namespace {
 
 // 动态组条目挂在独立 provider 下：提供器按 id 归属，卸载/诊断只清这一组。
 const QString kDynamicProvider = QStringLiteral("module:analysis-dynamic");
@@ -96,8 +94,7 @@ void writeWsJson(nextpilot::plotscope::workbench::IWorkspace &ws, const QString 
 // 最近使用在 run 成功后自动记录（MRU，最多 5 条）；最近/收藏两组条目由
 // **动作提供器**在 ribbon 装配时实时从 settings 取数（契约 §3.3 / D10），
 // 内容变化后调 refreshActions() 触发外壳重建，不再走"清空再全量重注册"的动态通道。
-class AnalysisModule::Handler final : public QObject, public IIntentHandler,
-                                      public IActionProvider
+class AnalysisModule::Handler final : public QObject, public IIntentHandler, public IActionProvider
 {
     Q_OBJECT
 public:
@@ -125,32 +122,24 @@ public:
         return out;
     }
 
-    QMetaObject::Connection
-    onDidChangeActions(std::function<void(const QString &slotId)> listener) override
+    QMetaObject::Connection onDidChangeActions(std::function<void(const QString &slotId)> listener) override
     {
         if (!listener)
             return {};
         return QObject::connect(this, &Handler::actionsChanged, this,
-                                [listener = std::move(listener)](const QString &slotId) {
-                                    listener(slotId);
-                                });
+                                [listener = std::move(listener)](const QString &slotId) { listener(slotId); });
     }
 
     // 通知变化：收藏/最近条目变更后发信号，外壳只重建对应 slot（不再全局 refreshActions）。
-    void notifyActionsChanged()
-    {
-        Q_EMIT actionsChanged(QStringLiteral("ribbon.group.analysis.apps"));
-    }
+    void notifyActionsChanged() { Q_EMIT actionsChanged(QStringLiteral("ribbon.group.analysis.apps")); }
 
 signals:
     void actionsChanged(const QString &slotId);
 
 public:
-
     bool canHandle(const Intent &intent) const override
     {
-        return intent.op == QStringLiteral("analysis.run")
-               || intent.op == QStringLiteral("analysis.favorite");
+        return intent.op == QStringLiteral("analysis.run") || intent.op == QStringLiteral("analysis.favorite");
     }
 
     Result<IntentResult> execute(const Intent &intent) override
@@ -177,8 +166,7 @@ private:
 
         // 领域应用（飞控复盘等）由 extensions 贡献；此处没有对应实现就诚实返回失败，
         // 而不是弹一个空壳面板。
-        return fail(err::NoImpl,
-                    QStringLiteral("分析应用「%1」由领域扩展提供，当前未注册").arg(app));
+        return fail(err::NoImpl, QStringLiteral("分析应用「%1」由领域扩展提供，当前未注册").arg(app));
     }
 
     // 收藏切换：已在收藏则移除，不在则加入（仅允许收藏目录里的应用）。
@@ -188,8 +176,7 @@ private:
         if (app.isEmpty())
             return fail(err::Param, QStringLiteral("缺少 application 参数"));
         if (!m_catalog.contains(app))
-            return fail(err::NoImpl,
-                        QStringLiteral("分析应用「%1」未注册，不能收藏").arg(app));
+            return fail(err::NoImpl, QStringLiteral("分析应用「%1」未注册，不能收藏").arg(app));
 
         QStringList favs = favorites();
         const bool wasFavorite = favs.contains(app);
@@ -230,9 +217,7 @@ private:
     {
         UiAction a;
         a.id = QStringLiteral("analysis.app.%1.%2")
-                   .arg(group == QStringLiteral("最近使用") ? QStringLiteral("recent")
-                                                           : QStringLiteral("fav"),
-                        app);
+                   .arg(group == QStringLiteral("最近使用") ? QStringLiteral("recent") : QStringLiteral("fav"), app);
         a.label = displayLabel(app);
         a.slotId = QStringLiteral("ribbon.group.analysis.apps");
         a.intentOp = QStringLiteral("analysis.run");
@@ -297,23 +282,20 @@ private:
     nextpilot::plotscope::workbench::IWindow &m_window;
 };
 
-ModuleInfo AnalysisModule::moduleInfo()
+ExtensionDescription AnalysisModule::extensionDescription()
 {
-    return ModuleInfo{
-        QStringLiteral("mod.analysis"),
-        QStringLiteral("分析模块"),
-        QStringLiteral("1.0"),
-        {QStringLiteral("analysis.runner")},
-        {}
-    };
+    ExtensionDescription d;
+    d.identifier = QStringLiteral("mod.analysis");
+    d.name = QStringLiteral("分析模块");
+    d.version = QStringLiteral("1.0");
+    d.isBuiltin = true;
+    d.activationEvents = {QStringLiteral("*")};
+    return d;
 }
 
 IWorkbenchContribution *AnalysisModule::create() { return new AnalysisModule(); }
 
-ModuleInfo AnalysisModule::info() const
-{
-    return moduleInfo();
-}
+ExtensionDescription AnalysisModule::description() const { return extensionDescription(); }
 
 void AnalysisModule::initialize(InstantiationService &services)
 {
@@ -325,9 +307,8 @@ void AnalysisModule::initialize(InstantiationService &services)
     m_handler = new Handler(*ws, *window, this);
     m_cmds = cmds;
     // 应用目录（收藏合法性校验来源）：从 initialize 起即就绪，不依赖 UI（A8b-M2）。
-    m_handler->setCatalog({QStringLiteral("default"),
-                           QStringLiteral("autopilot.review.report"),
-                           QStringLiteral("autopilot.review.app")});
+    m_handler->setCatalog(
+        {QStringLiteral("default"), QStringLiteral("autopilot.review.report"), QStringLiteral("autopilot.review.app")});
     auto reg = [this, cmds](const QString &id, nextpilot::plotscope::intent::IIntentHandler *h) {
         m_commandIds.append(id);
         cmds->registerCommand(id, nextpilot::plotscope::workbench::asCommandHandler(h, id));
@@ -336,14 +317,11 @@ void AnalysisModule::initialize(InstantiationService &services)
     reg(QStringLiteral("analysis.favorite"), m_handler);
 }
 
-ModuleContributions AnalysisModule::contributes() const
+ContributesDoc AnalysisModule::contributes() const
 {
-    ModuleContributions c;
-    c.owner = QStringLiteral("analysis");
-    c.ribbonPages.append(RibbonPageDecl{QStringLiteral("ribbon.page.analysis"),
-                                        QStringLiteral("分析"), 6});
-    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.analysis.apps"),
-                                          QStringLiteral("应用库"),
+    ContributesDoc c;
+    c.ribbonPages.append(RibbonPageDecl{QStringLiteral("ribbon.page.analysis"), QStringLiteral("分析"), 6});
+    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.analysis.apps"), QStringLiteral("应用库"),
                                           QStringLiteral("ribbon.page.analysis"), 0});
     ActivitySpec analysisActivity;
     analysisActivity.id = QStringLiteral("analysis");
@@ -355,8 +333,8 @@ ModuleContributions AnalysisModule::contributes() const
 
     // 分析页"应用库"gallery："全部/最近/收藏"三组。
     const QString slotId = QStringLiteral("ribbon.group.analysis.apps");
-    auto entry = [&c, &slotId](const QString &id, const QString &label,
-                               const QString &app, const QString &group, int order) {
+    auto entry = [&c, &slotId](const QString &id, const QString &label, const QString &app, const QString &group,
+                               int order) {
         UiAction a;
         a.id = id;
         a.label = label;
@@ -370,18 +348,17 @@ ModuleContributions AnalysisModule::contributes() const
         c.actions.append(a);
     };
     // "全部应用"组（真实默认 + 两个诚实占位）。
-    entry(QStringLiteral("analysis.app.default"), QStringLiteral("默认曲线"),
-          QStringLiteral("default"), QStringLiteral("全部应用"), 0);
-    entry(QStringLiteral("analysis.app.report"), QStringLiteral("分析报告"),
-          QStringLiteral("autopilot.review.report"), QStringLiteral("全部应用"), 1);
-    entry(QStringLiteral("analysis.app.review"), QStringLiteral("飞控复盘"),
-          QStringLiteral("autopilot.review.app"), QStringLiteral("全部应用"), 2);
+    entry(QStringLiteral("analysis.app.default"), QStringLiteral("默认曲线"), QStringLiteral("default"),
+          QStringLiteral("全部应用"), 0);
+    entry(QStringLiteral("analysis.app.report"), QStringLiteral("分析报告"), QStringLiteral("autopilot.review.report"),
+          QStringLiteral("全部应用"), 1);
+    entry(QStringLiteral("analysis.app.review"), QStringLiteral("飞控复盘"), QStringLiteral("autopilot.review.app"),
+          QStringLiteral("全部应用"), 2);
 
     // 动态"最近/收藏"：裁定 §2 换成 provider 对象（handler 即 IActionProvider），
     // lambda 不进壳；变化经 onDidChangeActions 通知，外壳只重建该 slot。
     if (m_handler)
-        c.actionProviders.append(ActionProviderDecl{QStringLiteral("analysis"),
-                                                    slotId, m_handler});
+        c.actionProviders.append(ActionProviderDecl{QStringLiteral("analysis"), slotId, m_handler});
     return c;
 }
 
@@ -401,4 +378,4 @@ void AnalysisModule::onDetach()
 
 #include "AnalysisModule.moc"
 
-PS_REGISTER_MODULE(AnalysisModule)
+PS_REGISTER_EXTENSION(AnalysisModule)

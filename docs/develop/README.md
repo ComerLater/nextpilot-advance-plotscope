@@ -4,23 +4,25 @@
 
 用户使用说明见 [`../manual/`](../manual/README.md)；长期路线见 [`../roadmap/README.md`](../roadmap/README.md)，具体任务在 gitee issue 跟踪，不在仓库写 plan 文件。
 
-| 文档                                        | 内容                                                                |
-| ------------------------------------------- | ------------------------------------------------------------------- |
-| [架构概览](architecture.md)                 | 分层结构、核心抽象、数据流、扩展装配（精简版）                      |
-| [编译与构建](building.md)                   | 依赖、Qt/Lua 固定、CMake 配置、构建、运行                           |
-| [构建加速](build-acceleration.md)           | 依赖镜像（nphelper/gitee）、ccache、测试目标裁剪、排查              |
-| [推送前门禁](push-gate.md)                  | 三档本地检查、与 CI job 的对应、重排/绕过禁令、合并前口径           |
-| [测试](testing.md)                          | 单元测试、GUI 冒烟、契约测试                                        |
-| [协议规范](../../src/libs/protocol/SPEC.md) | psproto v3 语义权威（速览见同目录 README）                          |
-| [uischema 语法](uischema-syntax.md)         | 属性/表单 schema 的字段语法与渲染约定                               |
-| [持久化与会话恢复](persistence.md)          | 三分法判据、状态 hub 契约、三份文件格式、恢复档位、与意图层分工     |
-| [绘图后端对比](plot-backends-benchmark.md)  | 自绘 vs QCustomPlot/Qwt 等后端的性能与功能结论（fastplot 选型依据） |
+| 文档                                            | 内容                                                                                                             |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| [架构概览](architecture.md)                     | 分层结构、核心抽象、数据流、扩展装配（精简版）                                                                   |
+| [扩展注册与贡献机制](extension-registration.md) | 模块 = 内置扩展：ExtensionDescription、单一注册表、ExtensionService 激活、contributes 灌面、diag.registries 口径 |
+| [编译与构建](building.md)                       | 依赖、Qt/Lua 固定、CMake 配置、构建、运行                                                                        |
+| [构建加速](build-acceleration.md)               | 依赖镜像（nphelper/gitee）、ccache、测试目标裁剪、排查                                                           |
+| [推送前门禁](push-gate.md)                      | 三档本地检查、与 CI job 的对应、重排/绕过禁令、合并前口径                                                        |
+| [测试](testing.md)                              | 单元测试、GUI 冒烟、契约测试                                                                                     |
+| [协议规范](../../src/libs/protocol/SPEC.md)     | psproto v3 语义权威（速览见同目录 README）                                                                       |
+| [uischema 语法](uischema-syntax.md)             | 属性/表单 schema 的字段语法与渲染约定                                                                            |
+| [持久化与会话恢复](persistence.md)              | 三分法判据、状态 hub 契约、三份文件格式、恢复档位、与意图层分工                                                  |
+| [绘图后端对比](plot-backends-benchmark.md)      | 自绘 vs QCustomPlot/Qwt 等后端的性能与功能结论（fastplot 选型依据）                                              |
 
 ## 先看哪篇
 
-- 第一次接手代码：根目录 `AGENTS.md` → [架构概览](architecture.md) → [编译与构建](building.md) → [测试](testing.md)。
+- 第一次接手代码：根目录 `AGENTS.md` → [架构概览](architecture.md) → [扩展注册与贡献机制](extension-registration.md) → [编译与构建](building.md) → [测试](testing.md)。
 - 改分层/新增目录：`src/LAYERS.md`（目录定位唯一权威，新增代码先在这里判归属）。
 - 新增数据格式：[架构概览](architecture.md) 解析器一节 → `src/LAYERS.md` → [测试](testing.md)。
+- 新增内置功能 / 扩展：先读 [扩展注册与贡献机制](extension-registration.md) 的 §3–§7（描述、注册表、激活、contributes 灌面、旧概念退场表）。
 
 ## 任务跟踪
 

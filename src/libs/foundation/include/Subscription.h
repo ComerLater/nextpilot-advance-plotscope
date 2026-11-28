@@ -8,8 +8,8 @@
 
 #include <QMetaObject> // QMetaObject::Connection
 
-namespace nextpilot::plotscope::workbench {
+namespace nextpilot::plotscope::foundation {
 
 using Subscription = QMetaObject::Connection;
 
-} // namespace nextpilot::plotscope::workbench
+} // namespace nextpilot::plotscope::foundation

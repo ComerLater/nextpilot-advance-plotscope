@@ -20,22 +20,20 @@
 
 #include <functional>
 
-namespace nextpilot::plotscope::workbench
-{
+namespace nextpilot::plotscope::workbench {
 
 class ISlotsService
 {
 public:
     virtual ~ISlotsService() = default;
 
-    // --- 灌回（装配层 installModuleContributions / 壳骨架声明）---
+    // --- 灌回（装配层 ExtensionService 经 ContributionsInstaller 写入 / 壳骨架声明）---
     virtual void declareSlot(const QString &area, const QString &label, const QString &owner,
                              registry::SlotKind kind = registry::SlotKind::RibbonGroup,
                              const QString &parentSlotId = QString(), int order = 0,
                              const QString &when = QString()) = 0;
     virtual void registerActivity(registry::ActivitySpec activity) = 0;
-    virtual void bindLocal(const QString &area, const registry::UiAction &action,
-                           const QString &provider) = 0;
+    virtual void bindLocal(const QString &area, const registry::UiAction &action, const QString &provider) = 0;
     virtual void bindActionProvider(const QString &area, const QString &provider,
                                     std::function<QList<registry::UiAction>()> fn) = 0;
     virtual void registerModuleThemeToken(const registry::ThemeTokenSpec &token) = 0;

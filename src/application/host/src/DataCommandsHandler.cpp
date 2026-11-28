@@ -1,9 +1,10 @@
 #include "DataCommandsHandler.h"
+#include "IWorkspace.h"
 
 #include "AppContext.h"
 #include "DataSource.h"
 #include "IngestOrchestrator.h"
-#include "SourceHub.h"
+#include "SourceRegistry.h"
 #include "Dataset.h"
 #include "IIntentExecutor.h"
 #include "Result.h"
@@ -194,12 +195,12 @@ void DataCommandsHandler::buildDispatch()
 Result<int> DataCommandsHandler::resolveDataset(const Intent &intent) const
 {
     const int datasetId = intent.params.value(QStringLiteral("dataset"), -1).toInt();
-    if (datasetId < 0 && m_app.data().count() == 1)
-        return m_app.data().ids().first();
+    if (datasetId < 0 && m_app.workspace().dataset().count() == 1)
+        return m_app.workspace().dataset().ids().first();
     if (datasetId < 0)
         return fail(err::Dataset,
                     QStringLiteral("请指定 dataset 参数（当前有多个数据集）"));
-    if (!m_app.data().get(datasetId))
+    if (!m_app.workspace().dataset().get(datasetId))
         return fail(err::NoEnt, QStringLiteral("数据集不存在: %1").arg(datasetId));
     return datasetId;
 }
@@ -220,7 +221,7 @@ Result<IntentResult> DataCommandsHandler::reload(const Intent &intent)
     int sourceId = intent.params.value(QStringLiteral("id"), -1).toInt();
     if (sourceId < 0)
         sourceId = m_app.activeSourceId();
-    const DataSourceInfo *info = m_app.sources().get(sourceId);
+    const DataSourceInfo *info = m_app.workspace().sources().get(sourceId);
     if (!info || info->origin.isEmpty())
         return fail(err::NoSource, QStringLiteral("没有可重载的数据源"));
 
@@ -230,13 +231,13 @@ Result<IntentResult> DataCommandsHandler::reload(const Intent &intent)
     const QVector<int> oldDatasets = info->datasetIds;
 
     QVector<int> removed;
-    m_app.sources().remove(sourceId, &removed);
+    m_app.workspace().sources().remove(sourceId, &removed);
     for (int ds : removed)
     {
         // 派生序列是数据集的附属（原始数据不写回，但派生结果引用它）——
         // 数据集移除时同步清理对应派生序列，防止悬空引用。
         m_app.derivedHub().removeAllForDataset(ds);
-        m_app.data().remove(ds);
+        m_app.workspace().dataset().remove(ds);
     }
 
     // 复用 data.load 这一条路径——重载与首次加载行为完全一致。
@@ -261,7 +262,7 @@ Result<IntentResult> DataCommandsHandler::exportCsv(const Intent &intent)
     Result<int> dsId = resolveDataset(intent);
     if (!dsId)
         return dsId.error();
-    const Dataset *ds = m_app.data().get(dsId.value());
+    const Dataset *ds = m_app.workspace().dataset().get(dsId.value());
 
     Result<QString> targetTableRes = resolveTable(*ds, table);
     if (!targetTableRes)
@@ -288,7 +289,7 @@ Result<IntentResult> DataCommandsHandler::exportCsv(const Intent &intent)
 
     // 对齐参与导出：画布是在 push 副本上叠加源偏移渲染的，
     // 导出必须同一口径，否则"画布看到的 X"与"导出的 time 列"差一个 offset。
-    const int alignSrc = m_app.sources().sourceOfDataset(dsId.value());
+    const int alignSrc = m_app.workspace().sources().sourceOfDataset(dsId.value());
     const double alignOffsetSec = alignSrc >= 0 ? m_app.sourceTimeOffset(alignSrc) : 0.0;
 
     QTextStream out(&file);
@@ -419,7 +420,7 @@ Result<IntentResult> DataCommandsHandler::exportSnapshot(const Intent &intent)
 
     for (int dsId : datasetIds)
     {
-        const Dataset *ds = m_app.data().get(dsId);
+        const Dataset *ds = m_app.workspace().dataset().get(dsId);
         if (!ds)
             return fail(err::NoEnt,
                         QStringLiteral("数据集不存在: %1").arg(dsId));
@@ -441,7 +442,7 @@ Result<IntentResult> DataCommandsHandler::exportSnapshot(const Intent &intent)
             out.totalRows = t->rows;
 
             // 取数：与 data.export 同一口径（time 列叠加源 offset，抽稀钉住末点）。
-            const int alignSrc = m_app.sources().sourceOfDataset(dsId);
+            const int alignSrc = m_app.workspace().sources().sourceOfDataset(dsId);
             const double offsetSec = alignSrc >= 0 ? m_app.sourceTimeOffset(alignSrc) : 0.0;
             const int fetchCap = qMin(qMax(1, t->rows), int(kStateMaxPoints));
             QVector<ChannelView> views;
@@ -574,7 +575,7 @@ Result<IntentResult> DataCommandsHandler::params(const Intent &intent)
     Result<int> dsId = resolveDataset(intent);
     if (!dsId)
         return dsId.error();
-    const Dataset *ds = m_app.data().get(dsId.value());
+    const Dataset *ds = m_app.workspace().dataset().get(dsId.value());
     if (!ds)
         return fail(err::NoEnt, QStringLiteral("数据集不存在"));
 
@@ -653,9 +654,9 @@ Result<IntentResult> DataCommandsHandler::recent(const Intent &intent)
 Result<IntentResult> DataCommandsHandler::clearCache()
 {
     int removed = 0;
-    for (int id : m_app.sources().ids())
+    for (int id : m_app.workspace().sources().ids())
     {
-        const DataSourceInfo *info = m_app.sources().get(id);
+        const DataSourceInfo *info = m_app.workspace().sources().get(id);
         if (!info || info->origin.isEmpty())
             continue;
         // 源文件级缓存（parserId 为空的那种）+ 每个解析器的缓存。
@@ -685,9 +686,9 @@ Result<IntentResult> DataCommandsHandler::cacheStats()
 {
     QVariantList items;
     qint64 totalBytes = 0;
-    for (int id : m_app.sources().ids())
+    for (int id : m_app.workspace().sources().ids())
     {
-        const DataSourceInfo *info = m_app.sources().get(id);
+        const DataSourceInfo *info = m_app.workspace().sources().get(id);
         if (!info || info->origin.isEmpty())
             continue;
         QStringList parsers;
@@ -733,17 +734,17 @@ Result<IntentResult> DataCommandsHandler::removeSource(const Intent &intent)
     int sourceId = intent.params.value(QStringLiteral("id"), -1).toInt();
     if (sourceId < 0)
         sourceId = m_app.activeSourceId();
-    const DataSourceInfo *info = m_app.sources().get(sourceId);
+    const DataSourceInfo *info = m_app.workspace().sources().get(sourceId);
     if (!info)
         return fail(err::NoSource, QStringLiteral("没有可移除的数据源"));
 
     QVector<int> removedDatasets;
-    m_app.sources().remove(sourceId, &removedDatasets);
+    m_app.workspace().sources().remove(sourceId, &removedDatasets);
     for (int ds : removedDatasets)
     {
         // 派生序列随数据集移除清理（引用悬空防护）。
         m_app.derivedHub().removeAllForDataset(ds);
-        m_app.data().remove(ds);
+        m_app.workspace().dataset().remove(ds);
     }
 
     // 若移除的是活动源，清空活动源，避免后续操作指向已消失的 id。
@@ -795,7 +796,7 @@ Result<IntentResult> DataCommandsHandler::deriveMimoQuat(const Intent &intent)
     if (!dsIdRes)
         return dsIdRes.error();
     const DatasetId dsId = dsIdRes.value();
-    const Dataset *ds = m_app.data().get(dsId);
+    const Dataset *ds = m_app.workspace().dataset().get(dsId);
 
     const QVariantList inputs = intent.params.value(QStringLiteral("inputs")).toList();
     if (inputs.size() != 4)
@@ -892,7 +893,7 @@ Result<IntentResult> DataCommandsHandler::deriveMimoQuat(const Intent &intent)
         // === 增量分支：只读 [waterUs, now] 新样本窗口，只算新段 ===
         // 实时 appendFrame 不刷 C++ schema 投影（O(列数)，不能每批调）——
         // 增量刷新是低频操作，先刷一次拿到最新 lastTimeNs。
-        Dataset *dsMut = m_app.data().getMutable(dsId);
+        Dataset *dsMut = m_app.workspace().dataset().getMutable(dsId);
         if (!dsMut)
             return fail(err::NoEnt, QStringLiteral("数据集不存在: %1").arg(dsId));
         dsMut->refreshSchema();
@@ -1244,13 +1245,13 @@ Result<IntentResult> DataCommandsHandler::refreshDerives(const Intent &intent)
 // 不丢数据；"停快照"由 UI 侧按 generation 冻结在读水位线实现，恢复后曲线连续。
 // 边界：仅 SourceKind::Live 源可操作——文件/回放源没有"实时"语义，明确拒绝；
 // 幂等：已处于目标状态时直接成功（重复点击/脚本重试不报错）。
-// 状态变化经 SourceHub::setState 触发 sourceChanged 信号，面板与视图自行刷新。
+// 状态变化经 SourceRegistry::setState 触发 sourceChanged 信号，面板与视图自行刷新。
 Result<IntentResult> DataCommandsHandler::setSourcePaused(const Intent &intent, bool paused)
 {
     int sourceId = intent.params.value(QStringLiteral("id"), -1).toInt();
     if (sourceId < 0)
         sourceId = m_app.activeSourceId();
-    const DataSourceInfo *info = m_app.sources().get(sourceId);
+    const DataSourceInfo *info = m_app.workspace().sources().get(sourceId);
     if (!info)
         return fail(err::NoSource, QStringLiteral("没有可操作的数据源"));
     if (info->kind != SourceKind::Live)
@@ -1264,7 +1265,7 @@ Result<IntentResult> DataCommandsHandler::setSourcePaused(const Intent &intent, 
     const SourceState target = paused ? SourceState::Paused : SourceState::Streaming;
     if (info->state != target)
     {
-        if (!m_app.sources().setState(sourceId, target))
+        if (!m_app.workspace().sources().setState(sourceId, target))
             return fail(err::State,
                         QStringLiteral("数据源状态切换失败（当前状态 %1）").arg(int(info->state)));
     }
@@ -1332,24 +1333,24 @@ Result<IntentResult> DataCommandsHandler::connectLive(const Intent &intent)
     binding.options = parserOptions;
     info.parsers << binding;
 
-    const int sourceId = m_app.sources().add(info);
+    const int sourceId = m_app.workspace().sources().add(info);
     if (sourceId < 0)
         return fail(err::Io, QStringLiteral("数据源登记失败"));
 
-    const auto bound = m_app.ingest().bindParser(sourceId, binding, kInvalidDataset);
+    const auto bound = m_ingest.bindParser(sourceId, binding, kInvalidDataset);
     if (!bound)
     {
-        m_app.sources().remove(sourceId);
+        m_app.workspace().sources().remove(sourceId);
         return bound.error();
     }
-    m_app.sources().addDataset(sourceId, bound.value());
+    m_app.workspace().sources().addDataset(sourceId, bound.value());
     configureLiveRing(bound.value());
 
     auto sock = std::make_unique<QUdpSocket>();
     const QString host = qurl.host().isEmpty() ? QStringLiteral("0.0.0.0") : qurl.host();
     if (!sock->bind(QHostAddress(host), quint16(port)))
     {
-        m_app.sources().remove(sourceId);
+        m_app.workspace().sources().remove(sourceId);
         return fail(err::Io, QStringLiteral("绑定 %1:%2 失败: %3")
                                   .arg(host).arg(port).arg(sock->errorString()));
     }
@@ -1424,16 +1425,16 @@ Result<IntentResult> DataCommandsHandler::connectTcp(const Intent &intent)
     binding.options = parserOptions;
     info.parsers << binding;
 
-    const int sourceId = m_app.sources().add(info);
+    const int sourceId = m_app.workspace().sources().add(info);
     if (sourceId < 0)
         return fail(err::Io, QStringLiteral("数据源登记失败"));
-    const auto bound = m_app.ingest().bindParser(sourceId, binding, kInvalidDataset);
+    const auto bound = m_ingest.bindParser(sourceId, binding, kInvalidDataset);
     if (!bound)
     {
-        m_app.sources().remove(sourceId);
+        m_app.workspace().sources().remove(sourceId);
         return bound.error();
     }
-    m_app.sources().addDataset(sourceId, bound.value());
+    m_app.workspace().sources().addDataset(sourceId, bound.value());
     configureLiveRing(bound.value());
 
     LiveSession session;
@@ -1466,7 +1467,7 @@ Result<IntentResult> DataCommandsHandler::connectTcp(const Intent &intent)
         auto server = std::make_unique<QTcpServer>();
         if (!server->listen(QHostAddress::Any, quint16(port)))
         {
-            m_app.sources().remove(sourceId);
+            m_app.workspace().sources().remove(sourceId);
             return fail(err::Io, QStringLiteral("TCP 监听 %1 失败: %2").arg(port).arg(server->errorString()));
         }
         QTcpServer *rawServer = server.get();
@@ -1585,20 +1586,20 @@ Result<IntentResult> DataCommandsHandler::connectSerial(const Intent &intent)
         ::tcsetattr(fd, TCSANOW, &tio);
     }
 
-    const int sourceId = m_app.sources().add(info);
+    const int sourceId = m_app.workspace().sources().add(info);
     if (sourceId < 0)
     {
         ::close(fd);
         return fail(err::Io, QStringLiteral("数据源登记失败"));
     }
-    const auto bound = m_app.ingest().bindParser(sourceId, binding, kInvalidDataset);
+    const auto bound = m_ingest.bindParser(sourceId, binding, kInvalidDataset);
     if (!bound)
     {
         ::close(fd);
-        m_app.sources().remove(sourceId);
+        m_app.workspace().sources().remove(sourceId);
         return bound.error();
     }
-    m_app.sources().addDataset(sourceId, bound.value());
+    m_app.workspace().sources().addDataset(sourceId, bound.value());
     configureLiveRing(bound.value());
 
     LiveSession session;
@@ -1623,8 +1624,7 @@ Result<IntentResult> DataCommandsHandler::connectSerial(const Intent &intent)
             it->second.bytes += n;
             it->second.packets += 1; // 口径：一次可读触发算一"批"（与 UDP 的 datagram 区分，见 stats 注释）
             // S3：暂停只冻结 UI 视图，串口数据照常进 kernel，不丢。
-            m_app.ingest().feed(sourceId, reinterpret_cast<const uint8_t *>(buf),
-                                qint64(n));
+            m_ingest.feed(sourceId, reinterpret_cast<const uint8_t *>(buf), qint64(n));
         }
     });
     session.notifier = std::move(notifier);
@@ -1654,9 +1654,7 @@ Result<IntentResult> DataCommandsHandler::disconnectLive(const Intent &intent)
     // 先把环里剩下的字节喂完（泵是异步的，断开时可能还有积压），再 flush 尾半帧。
     if (!it->second.buf.isEmpty())
     {
-        m_app.ingest().feed(sourceId,
-                            reinterpret_cast<const uint8_t *>(it->second.buf.constData()),
-                            it->second.buf.size());
+        m_ingest.feed(sourceId, reinterpret_cast<const uint8_t *>(it->second.buf.constData()), it->second.buf.size());
         it->second.fedBytes += it->second.buf.size();
         it->second.buf.clear();
     }
@@ -1673,7 +1671,7 @@ Result<IntentResult> DataCommandsHandler::disconnectLive(const Intent &intent)
         rit = m_records.erase(rit);
     }
     // 先 flush 尾半帧，再断 socket，最后落状态——顺序反了会丢最后一个包。
-    m_app.ingest().finish(sourceId);
+    m_ingest.finish(sourceId);
     if (it->second.socket)
         it->second.socket->close();
     if (it->second.tcp)
@@ -1687,7 +1685,7 @@ Result<IntentResult> DataCommandsHandler::disconnectLive(const Intent &intent)
     const qint64 packets = it->second.packets;
     const qint64 bytes = it->second.bytes;
     m_live.erase(it);
-    m_app.sources().setState(sourceId, SourceState::Closed);
+    m_app.workspace().sources().setState(sourceId, SourceState::Closed);
 
     IntentResult r;
     r.payload = QVariantMap{
@@ -1715,9 +1713,7 @@ Result<IntentResult> DataCommandsHandler::reconnectLive(const Intent &intent)
     // 重连前把旧连接积压的字节喂完再丢，避免串到新连接里。
     if (!it->second.buf.isEmpty())
     {
-        m_app.ingest().feed(sourceId,
-                            reinterpret_cast<const uint8_t *>(it->second.buf.constData()),
-                            it->second.buf.size());
+        m_ingest.feed(sourceId, reinterpret_cast<const uint8_t *>(it->second.buf.constData()), it->second.buf.size());
         it->second.fedBytes += it->second.buf.size();
         it->second.buf.clear();
     }
@@ -1798,7 +1794,7 @@ Result<IntentResult> DataCommandsHandler::reconnectLive(const Intent &intent)
     it->second.url = url;
     it->second.parserId = parserId;
     it->second.parserOptions = options;
-    m_app.sources().setState(sourceId, SourceState::Streaming);
+    m_app.workspace().sources().setState(sourceId, SourceState::Streaming);
 
     IntentResult r;
     r.payload = QVariantMap{
@@ -1813,9 +1809,9 @@ Result<IntentResult> DataCommandsHandler::sourceList(const Intent &intent)
 {
     Q_UNUSED(intent);
     QVariantList rows;
-    for (int id : m_app.sources().ids())
+    for (int id : m_app.workspace().sources().ids())
     {
-        const DataSourceInfo *info = m_app.sources().get(id);
+        const DataSourceInfo *info = m_app.workspace().sources().get(id);
         if (!info)
             continue;
         QVariantMap m{
@@ -1848,7 +1844,7 @@ void DataCommandsHandler::configureLiveRing(int datasetId)
     // S3：live 源长跑时若不限内存会无限增长。给数据集设一个 ring 字节预算上限，
     // kernel 在每次 append 后自动裁掉最旧的行，seq 仍单调不归零。
     // 设默认预算（table 为空）作用于现有+新建表；失败只记录，不影响建源流程。
-    Dataset *ds = m_app.data().getMutable(datasetId);
+    Dataset *ds = m_app.workspace().dataset().getMutable(datasetId);
     if (!ds)
         return;
     QString err;
@@ -1888,8 +1884,7 @@ void DataCommandsHandler::pumpLive()
         // 录制与解析吃同一块字节（顺序：先录后解析，录的是"进来的原样"）。
         writeRecordBytes(kv.first, QByteArray(s.buf.constData(), take),
                          quint64(s.since.nsecsElapsed()));
-        m_app.ingest().feed(kv.first, reinterpret_cast<const uint8_t *>(s.buf.constData()),
-                            take);
+        m_ingest.feed(kv.first, reinterpret_cast<const uint8_t *>(s.buf.constData()), take);
         s.buf.remove(0, take);
         s.fedBytes += take;
     }
@@ -1923,7 +1918,7 @@ Result<IntentResult> DataCommandsHandler::recordStart(const Intent &intent)
     int sourceId = intent.params.value(QStringLiteral("source"), -1).toInt();
     if (sourceId < 0)
         sourceId = m_app.activeSourceId();
-    const DataSourceInfo *info = m_app.sources().get(sourceId);
+    const DataSourceInfo *info = m_app.workspace().sources().get(sourceId);
     if (!info)
         return fail(err::NoSource, QStringLiteral("数据源不存在: %1").arg(sourceId));
 
@@ -1987,7 +1982,7 @@ Result<IntentResult> DataCommandsHandler::recordStart(const Intent &intent)
     target.backendId = backendId;
     target.endpoint = endpoint;
     copy.recordings.push_back(target);
-    m_app.sources().update(sourceId, copy);
+    m_app.workspace().sources().update(sourceId, copy);
 
     IntentResult r;
     r.payload = QVariantMap{
@@ -2031,11 +2026,11 @@ Result<IntentResult> DataCommandsHandler::recordStop(const Intent &intent)
         return fail(err::NoEnt, QStringLiteral("该源没有正在进行的录制"));
 
     // 清掉源上的录制配置（关了就不要再显示"录制中"）。
-    if (const DataSourceInfo *info = m_app.sources().get(sourceId))
+    if (const DataSourceInfo *info = m_app.workspace().sources().get(sourceId))
     {
         DataSourceInfo copy = *info;
         copy.recordings.clear();
-        m_app.sources().update(sourceId, copy);
+        m_app.workspace().sources().update(sourceId, copy);
     }
 
     IntentResult r;
@@ -2162,13 +2157,13 @@ Result<IntentResult> DataCommandsHandler::liveStats(const Intent &intent)
             {QStringLiteral("pump_hz"), m_pumpHz},
             {QStringLiteral("parse_errors"), [this, id = kv.first] {
                  int n = 0;
-                 for (const auto &ch : m_app.ingest().channels(id))
+                 for (const auto &ch : m_ingest.channels(id))
                      if (!ch.error.isEmpty())
                          ++n;
                  return n;
              }()},
         };
-        if (const DataSourceInfo *info = m_app.sources().get(kv.first))
+        if (const DataSourceInfo *info = m_app.workspace().sources().get(kv.first))
         {
             m.insert(QStringLiteral("name"), info->name);
             m.insert(QStringLiteral("state"), int(info->state));
@@ -2200,20 +2195,20 @@ Result<IntentResult> DataCommandsHandler::alignTime(const Intent &intent)
     int srcId = intent.params.value(QStringLiteral("source"), -1).toInt();
     if (srcId < 0)
         srcId = m_app.activeSourceId();
-    const DataSourceInfo *srcInfo = m_app.sources().get(srcId);
+    const DataSourceInfo *srcInfo = m_app.workspace().sources().get(srcId);
     if (!srcInfo || srcInfo->datasetIds.isEmpty())
         return fail(err::NoSource, QStringLiteral("该数据源没有可对齐的数据集"));
 
     // 源范围必须是"原始"范围：offset 是相对量，拿叠加后的范围去算会自我累积。
     auto rangeOf = [this](int sourceId) -> std::optional<std::pair<TimeNs, TimeNs>> {
-        const DataSourceInfo *info = m_app.sources().get(sourceId);
+        const DataSourceInfo *info = m_app.workspace().sources().get(sourceId);
         if (!info)
             return std::nullopt;
         std::optional<TimeNs> min;
         std::optional<TimeNs> max;
         for (int dsId : info->datasetIds)
         {
-            Dataset *ds = m_app.data().getMutable(dsId);
+            Dataset *ds = m_app.workspace().dataset().getMutable(dsId);
             if (!ds)
                 continue;
             const auto r = ds->rawTimeRangeNs();
@@ -2298,7 +2293,7 @@ Result<IntentResult> DataCommandsHandler::derive(const Intent &intent)
                     QStringLiteral("data.derive 需要 dataset/table/column/filter 参数"));
 
     // const 取数：派生只读，不碰仓库里的 Dataset——原数据零改动。
-    const Dataset *ds = m_app.data().get(dsId);
+    const Dataset *ds = m_app.workspace().dataset().get(dsId);
     if (!ds)
         return fail(err::NoEnt, QStringLiteral("数据集不存在: %1").arg(dsId));
     const QString input = table + QLatin1Char('.') + column;
@@ -2462,7 +2457,7 @@ Result<IntentResult> DataCommandsHandler::filterSeries(const Intent &intent)
     if (!m_app.interactions().hasFilterOps())
         return fail(err::NoFilterOps, QStringLiteral("过滤器能力未注册（script 模块未装载）"));
 
-    const Dataset *ds = m_app.data().get(dsId);
+    const Dataset *ds = m_app.workspace().dataset().get(dsId);
     if (!ds)
         return fail(err::NoEnt, QStringLiteral("数据集不存在: %1").arg(dsId));
     const QString input = table + QLatin1Char('.') + column;
@@ -2541,7 +2536,7 @@ Result<IntentResult> DataCommandsHandler::runMarker(const Intent &intent)
     if (!m_app.interactions().hasMarkerOps())
         return fail(err::NoMarkerOps, QStringLiteral("Marker 规则能力未注册（script 模块未装载）"));
 
-    const Dataset *ds = m_app.data().get(dsId);
+    const Dataset *ds = m_app.workspace().dataset().get(dsId);
     if (!ds)
         return fail(err::NoEnt, QStringLiteral("数据集不存在: %1").arg(dsId));
     const QString input = table + QLatin1Char('.') + column;
@@ -2604,7 +2599,7 @@ Result<IntentResult> DataCommandsHandler::series(const Intent &intent)
     if (!dsIdRes)
         return dsIdRes.error();
     const int datasetId = dsIdRes.value();
-    const Dataset *ds = m_app.data().get(datasetId);
+    const Dataset *ds = m_app.workspace().dataset().get(datasetId);
 
     const QString column = intent.params.value(QStringLiteral("column")).toString();
     if (column.isEmpty())
@@ -2678,10 +2673,10 @@ Result<IntentResult> DataCommandsHandler::series(const Intent &intent)
     }
     else
     {
-        const int srcId = m_app.sources().sourceOfDataset(datasetId);
+        const int srcId = m_app.workspace().sources().sourceOfDataset(datasetId);
         if (srcId >= 0)
         {
-            if (const DataSourceInfo *info = m_app.sources().get(srcId))
+            if (const DataSourceInfo *info = m_app.workspace().sources().get(srcId))
             {
                 const ChannelTransformConfig cfg =
                     ChannelTransformConfig::load(m_app.settings());
@@ -2742,7 +2737,7 @@ Result<IntentResult> DataCommandsHandler::stateSeries(const Intent &intent)
         return fail(err::Args,
                     QStringLiteral("data.state 需要 dataset/table/column 参数"));
 
-    const Dataset *ds = m_app.data().get(dsId);
+    const Dataset *ds = m_app.workspace().dataset().get(dsId);
     if (!ds)
         return fail(err::NoEnt, QStringLiteral("数据集不存在: %1").arg(dsId));
     const QString input = table + QLatin1Char('.') + column;
@@ -2954,10 +2949,10 @@ Result<IntentResult> DataCommandsHandler::workspaceRestore(bool includeLive)
         ++loadedSources;
 
         // 反查刚载入的源 → 主数据集 id，供派生配方定位。
-        const int sourceId = m_app.sources().sourceByOrigin(s.origin);
+        const int sourceId = m_app.workspace().sources().sourceByOrigin(s.origin);
         if (sourceId < 0)
             continue;
-        const DataSourceInfo *info = m_app.sources().get(sourceId);
+        const DataSourceInfo *info = m_app.workspace().sources().get(sourceId);
         if (!info || info->datasetIds.isEmpty())
             continue;
         const int datasetId = info->datasetIds.first();
@@ -3011,16 +3006,16 @@ Result<IntentResult> DataCommandsHandler::setChannelTransform(const Intent &inte
     // origin：显式给优先（恢复重放场景），否则 dataset id 反查源。
     QString origin = intent.params.value(QStringLiteral("origin")).toString();
     int datasetId = intent.params.value(QStringLiteral("dataset"), -1).toInt();
-    if (datasetId < 0 && origin.isEmpty() && m_app.data().count() == 1)
-        datasetId = m_app.data().ids().first();
+    if (datasetId < 0 && origin.isEmpty() && m_app.workspace().dataset().count() == 1)
+        datasetId = m_app.workspace().dataset().ids().first();
     if (origin.isEmpty())
     {
         const int srcId = datasetId >= 0
             ? datasetId
             : m_app.activeSourceId();
-        const int realSrc = m_app.sources().sourceOfDataset(datasetId);
+        const int realSrc = m_app.workspace().sources().sourceOfDataset(datasetId);
         const int lookupId = realSrc >= 0 ? realSrc : srcId;
-        const DataSourceInfo *info = m_app.sources().get(lookupId);
+        const DataSourceInfo *info = m_app.workspace().sources().get(lookupId);
         if (!info)
             return fail(err::NoSource,
                         QStringLiteral("无法定位数据源（给 origin 或有效 dataset）"));
@@ -3029,10 +3024,10 @@ Result<IntentResult> DataCommandsHandler::setChannelTransform(const Intent &inte
     // datasetId 缺省时用 origin 找回当前 id（payload 回给调用方）。
     if (datasetId < 0)
     {
-        const int srcId = m_app.sources().sourceByOrigin(origin);
+        const int srcId = m_app.workspace().sources().sourceByOrigin(origin);
         if (srcId >= 0)
         {
-            if (const DataSourceInfo *srcInfo = m_app.sources().get(srcId);
+            if (const DataSourceInfo *srcInfo = m_app.workspace().sources().get(srcId);
                 srcInfo && !srcInfo->datasetIds.isEmpty())
                 datasetId = srcInfo->datasetIds.first();
         }
@@ -3092,12 +3087,12 @@ Result<IntentResult> DataCommandsHandler::clearChannelTransform(const Intent &in
 
     QString origin = intent.params.value(QStringLiteral("origin")).toString();
     int datasetId = intent.params.value(QStringLiteral("dataset"), -1).toInt();
-    if (datasetId < 0 && origin.isEmpty() && m_app.data().count() == 1)
-        datasetId = m_app.data().ids().first();
+    if (datasetId < 0 && origin.isEmpty() && m_app.workspace().dataset().count() == 1)
+        datasetId = m_app.workspace().dataset().ids().first();
     if (origin.isEmpty())
     {
-        const int realSrc = m_app.sources().sourceOfDataset(datasetId);
-        const DataSourceInfo *info = m_app.sources().get(realSrc >= 0 ? realSrc : m_app.activeSourceId());
+        const int realSrc = m_app.workspace().sources().sourceOfDataset(datasetId);
+        const DataSourceInfo *info = m_app.workspace().sources().get(realSrc >= 0 ? realSrc : m_app.activeSourceId());
         if (!info)
             return fail(err::NoSource,
                         QStringLiteral("无法定位数据源（给 origin 或有效 dataset）"));

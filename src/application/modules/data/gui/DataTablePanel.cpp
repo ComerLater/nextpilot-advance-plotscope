@@ -1,8 +1,9 @@
 #include "DataTablePanel.h"
+#include "IWorkspace.h"
 
 #include "AppContext.h"
 #include "Dataset.h"
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 #include "ErrorCodes.h"
 #include "InteractionHub.h"
 #include "Result.h"
@@ -94,7 +95,7 @@ QString DataTablePanel::statsText() const
 
 bool DataTablePanel::openDataset(int datasetId, const QString &table)
 {
-    const Dataset *ds = m_app.data().get(datasetId);
+    const Dataset *ds = m_app.workspace().dataset().get(datasetId);
     if (!ds)
         return false;
     if (!ds->table(table))
@@ -123,7 +124,7 @@ void DataTablePanel::attachViewActions()
         const QString table = params.value(QStringLiteral("table")).toString();
         if (!guard->openDataset(dsId, table))
         {
-            const Dataset *ds = guard->m_app.data().get(dsId);
+            const Dataset *ds = guard->m_app.workspace().dataset().get(dsId);
             if (!ds)
                 return fail(err::NoEnt, QStringLiteral("数据集不存在: #%1").arg(dsId));
             return fail(err::NoEnt,
@@ -135,7 +136,7 @@ void DataTablePanel::attachViewActions()
 
 void DataTablePanel::showColumnStats(int columnIndex)
 {
-    const Dataset *ds = m_app.data().get(m_datasetId);
+    const Dataset *ds = m_app.workspace().dataset().get(m_datasetId);
     const auto *table = ds ? ds->table(m_tableName) : nullptr;
     if (!ds || !table || columnIndex < 0 || columnIndex >= table->columns.size())
         return;
@@ -164,7 +165,7 @@ void DataTablePanel::showColumnStats(int columnIndex)
 
 void DataTablePanel::addColumnAsCurve(int columnIndex)
 {
-    const Dataset *ds = m_app.data().get(m_datasetId);
+    const Dataset *ds = m_app.workspace().dataset().get(m_datasetId);
     const auto *table = ds ? ds->table(m_tableName) : nullptr;
     if (!ds || !table || columnIndex < 0 || columnIndex >= table->columns.size())
         return;

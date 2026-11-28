@@ -1,24 +1,29 @@
 #pragma once
 
-#include "DatasetHub.h"
-#include "SourceHub.h"
+#include "Dataset.h"
 #include "IByteSource.h"
-#include "IngestPipeline.h"
-#include "ParserHub.h"
 #include "Result.h"
 
 #include <QByteArray>
 #include <QString>
 #include <QStringList>
 
+namespace nextpilot::plotscope::dataset {
+class DatasetRegistry;
+class SourceRegistry;
+} // namespace nextpilot::plotscope::dataset
+
 namespace nextpilot::plotscope::context
 {
 
+class IngestPipeline;
+
+using nextpilot::plotscope::dataset::DatasetId;
+using nextpilot::plotscope::dataset::DatasetRegistry;
+using nextpilot::plotscope::dataset::kInvalidDataset;
+using nextpilot::plotscope::dataset::SourceRegistry;
 using nextpilot::plotscope::foundation::Result;
-using nextpilot::plotscope::dataset::DatasetHub;
-using nextpilot::plotscope::dataset::SourceHub;
 using nextpilot::plotscope::parser::IByteSource;
-using nextpilot::plotscope::parser::ParserHub;
 
 
 // 摄取编排器：**读字节 -> 扇出给解析器 -> 落库**。
@@ -93,8 +98,7 @@ class IngestOrchestrator
 public:
     using Options = IngestOptions;
 
-    IngestOrchestrator(DatasetHub &repo, SourceHub &sources,
-                       IngestPipeline &pipeline);
+    IngestOrchestrator(DatasetRegistry &repo, SourceRegistry &sources, IngestPipeline &pipeline);
 
     // 打开一个文件源，按 parserIds 绑定解析器，读完全部字节。
     //
@@ -125,8 +129,8 @@ private:
                        const QString &topicFilter, const QString &origin,
                        const Options &options);
 
-    DatasetHub &m_repo;
-    SourceHub &m_sources;
+    DatasetRegistry &m_repo;
+    SourceRegistry &m_sources;
     IngestPipeline &m_pipeline;
     int m_sourceId = -1;
     QVector<int> m_datasetIds;

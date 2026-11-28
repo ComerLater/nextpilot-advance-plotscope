@@ -1,17 +1,24 @@
 #pragma once
 
-#include "ISlotsService.h"
 #include "IViewsService.h"
-#include "UiSlotTypes.h"
+#include "IRibbonService.h"
 #include "ProductSpec.h"
 
+#include "parts/ActivitybarPart.h"
+#include "parts/EditorPart.h"
+#include "parts/PanelPart.h"
+#include "parts/RibbonPart.h"
+#include "parts/SidebarPart.h"
+#include "parts/StatusbarPart.h"
+#include "parts/ViewPane.h"
+
 #include <QHash>
-#include <QSet>
 #include <QStringList>
 #include <QJsonObject>
 #include <QString>
 
 #include <functional>
+#include <memory>
 
 class QAction;
 class QIcon;
@@ -32,22 +39,25 @@ namespace nextpilot::plotscope::workbench {
 class IEditorService;
 }
 
+namespace nextpilot::plotscope::registry {
+class MenuRegistry;
+}
+
+namespace nextpilot::plotscope::command {
+class CommandRegistry;
+}
+
 namespace nextpilot::plotscope::gui {
 
 class ActivityBar;
+class Layout;
 
 // GUI 外壳绑定器：**唯一知道 SARibbon / ADS 的地方**。
 //
-// 架构定位（见 ARCHITECTURE.md §7.1）：
-//   外壳层不设 "DockManager" / "RibbonManager" 这类中转类——
-//   ADS 已提供 ads::CDockManager，SARibbon 已提供 SARibbonBar，
-//   再包一层同名类只是零价值转发。本类把
-//       槽位表的纯数据贡献（经 ISlotsService 通道）
-//   一次性绑定成
-//       SARibbonBar + ads::CDockManager
-//   绑定规则集中于此，一处可换、可测、可整体替换第三方库。
-//
-// Ribbon 绑定与 dock 绑定集中在一个类，不再分设 Manager。
+// 架构定位（ARCHITECTURE.md §7.1）：不设 "DockManager" / "RibbonManager" 中转类——
+// ADS 已提供 ads::CDockManager，SARibbon 已提供 SARibbonBar；本类把 Ribbon/views
+// 读回贡献一次性绑定成这两者，一处可换、可测、可整体替换第三方库。
+// 各区域的状态与口径归 Part（Ribbon/Activitybar/Sidebar/Panel/Editor/Statusbar）。
 //
 // 职责：
 //   · 插槽 → 第三方组件对象的映射（页签/分组/按钮、停靠面板、中央内容）
@@ -59,7 +69,9 @@ class ActivityBar;
 class ShellBinder
 {
 public:
-    ShellBinder(QMainWindow *window, nextpilot::plotscope::workbench::ISlotsService *slotSvc);
+    ShellBinder(QMainWindow *window, nextpilot::plotscope::workbench::IRibbonService *ribbonService,
+                nextpilot::plotscope::workbench::IViewsService *viewsService,
+                nextpilot::plotscope::registry::MenuRegistry *menuRegistry = nullptr);
     ~ShellBinder();
 
     // 配置 ribbon 条（无边框窗体由 SARibbonMainWindow 提供 ribbon 条本体）。
@@ -89,11 +101,13 @@ public:
     // 当前可见的 ribbon 页标签（诊断/测试用，口径与 rebuildRibbon 一致）。
     QStringList visibleRibbonPageLabels() const;
 
-    // 视图标题栏动作：模块/包声明（ViewTitleActionSpec），外壳把描述变成 QAction。
-    // 提供者是外壳注入的 lambda（binder 不认识命令库与工具箱），返回已接好线的动作。
-    void setViewTitleActionProvider(std::function<QList<QAction *>(QWidget *parent, const QString &viewId)> provider);
+    // 命令注册表借用：视图标题栏动作的标题/图标/执行路径归命令层。
+    void setCommandRegistry(nextpilot::plotscope::command::CommandRegistry *commands);
     // 某视图已挂上的标题栏动作数（诊断/测试口径）。
     int viewTitleActionCount(const QString &viewId) const;
+
+    // 按 id 查 Activity 声明（诊断/命令面板标题回传）；未命中返回 id 为空的默认值。
+    registry::ActivitySpec activitySpec(const QString &id) const;
 
     // 单个 dock 页面的显隐：按 pageKey（面板类型 id）定位该页签。
     // 点击一次出现、再点一次消失，只影响自己，不动同区其它页签。
@@ -125,16 +139,25 @@ public:
     void setActivityBadge(const QString &activityId, int count);
     int activityBadge(const QString &activityId) const;
     bool setActiveActivity(const QString &activityId);
-    QString activeActivity() const { return m_activeActivity; }
+    QString activeActivity() const;
     QStringList activityIds() const;
     // 把视图拖/命令挂到 Activity Bar：activityId 为空则新建图标。
     // 视图回到 Primary Side Bar，之后点击 Activity 仍能定位它。
     bool pinViewToActivity(const QString &pageKey, const QString &activityId = QString());
     void setActivityOrder(const QStringList &order);
-    QStringList activityOrder() const { return m_activityOrder; }
+    QStringList activityOrder() const;
     void setActivityBarVisible(bool visible);
     bool activityBarVisible() const;
     QWidget *activityBarWidget() const;
+
+    // M4：布局骨架（区域尺寸记录 + Part 登记表）。壳内尺寸口径统一走它。
+    Layout *layout() const { return m_layout.get(); }
+
+    // M4：Ribbon 部件（页签状态与可见页集合的唯一归属）。
+    RibbonPart *ribbonPart() const { return m_parts.ribbon.get(); }
+
+    // M4：状态栏部件（`IStatusbarService` 的壳内实现：提示/条目都走它）。
+    StatusbarPart *statusbar() const { return m_parts.statusbar.get(); }
 
     // 左栏整栏显隐（Ctrl+B），section 不单独浮动。
     void setSideBarVisible(bool visible);
@@ -153,7 +176,7 @@ public:
     // Activity 点击后的中央面板请求（外壳拿到 ActivitySpec 后按类型请求）。
     // 绑定器不认识具体面板类型，只把声明交回外壳。
     using ActivityActivatedHandler = std::function<void(const nextpilot::plotscope::registry::ActivitySpec &)>;
-    void setActivityActivatedHandler(ActivityActivatedHandler handler) { m_activityHandler = std::move(handler); }
+    void setActivityActivatedHandler(ActivityActivatedHandler handler);
     using SettingsHandler = std::function<void()>;
     void setSettingsHandler(SettingsHandler handler) { m_settingsHandler = std::move(handler); }
 
@@ -180,7 +203,7 @@ public:
     QWidget *dockHost();
 
     // 中央内容（画布区）——不在 dock 体系里，故单独暴露。
-    QWidget *centralContent() const { return m_centralContent; }
+    QWidget *centralContent() const;
     // 中央区**全部**页签内容（画布 + 按需创建的脚本编辑器等）。
     QList<QWidget *> centralWidgets() const;
     // 与 centralWidgets() 一一对应的页签标题（报告导出的节标题来源）。
@@ -197,12 +220,15 @@ public:
     // 诊断：停靠区**内容栈**的页序（与 panelTitles 的"添加顺序"对比，
     // 二者不一致就是"点页签切错/不切"的结构性原因）。
     QStringList contentsOrder(nextpilot::plotscope::registry::Region area) const;
-    int panelCount() const { return m_panels.size(); }
+    int panelCount() const;
 
     // 动作 id → 按钮下拉菜单（由外壳之外提供内容，绑定器只负责挂到按钮上）。
     // 用于「网格」这类"一个大按钮 + 下拉选项"的入口；每次重建都会重新挂。
     using ActionMenuProvider = std::function<QMenu *(const QString &actionId)>;
-    void setActionMenuProvider(ActionMenuProvider provider) { m_actionMenuProvider = std::move(provider); }
+    void setActionMenuProvider(ActionMenuProvider provider)
+    {
+        m_parts.ribbon->setActionMenuProvider(std::move(provider));
+    }
 
     // 动作 id → 就地改图标/文字（布局组大按钮在选出 m×n 后回写"实际分格"）。
     void updateActionStyle(const QString &actionId, const QIcon &icon, const QString &text);
@@ -248,7 +274,7 @@ public:
     // 就位，setCurrentIndex 会落空（页签停在第一页），而快照却被写成目标页，
     // 形成"每次启动都记着上一页、却永远回不去"的自锁。
     // 所以 applyState 只登记待恢复页，由外壳在首次 showEvent 里调本方法。
-    int pendingRibbonPage() const { return m_pendingRibbonPage; }
+    int pendingRibbonPage() const;
     bool applyPendingRibbonPage();
 
     // 应用 ribbon + 停靠区主题（深浅）。主题状态归 ThemeManager，绑定器只负责
@@ -267,7 +293,8 @@ public:
     void setIntentDispatcher(IntentDispatcher dispatcher) { m_dispatch = std::move(dispatcher); }
 
 private:
-    bool m_proportionsApplied = false;
+    // Activity 声明读回：containersIn("activitybar") 映射成 ActivitySpec（字段沿用原名）。
+    QList<registry::ActivitySpec> activities() const;
 
     // 确保 ADS 停靠体系已建立（幂等）。
     void ensureDockManager();
@@ -281,76 +308,33 @@ private:
     void pinDockToActivity(ads::CDockWidget *dock, const QString &activityId);
     QString pageKeyForDock(ads::CDockWidget *dock) const;
 
-    // 装中央画布区。**必须早于任何侧边 dock**——ADS 的 addDockArea() 只在
-    // "区域内 dock 数量 <= 1"时按插入参数重设根分割器方向，
-    // 于是谁先注册谁决定最终方向：
-    //   先中央区(Vertical) → 再侧边区(Horizontal) → 根分割器保持水平，
-    //                          得到「左侧树 | 中央画布」；
-    //   反过来则根分割器被翻成垂直，树在上、画布在下。
-    // installCentral() 在 CDockManager 构造后立刻装中央区。
-    void installCentral();
-
     QMainWindow *m_window = nullptr;
-    // 槽位表服务（裁定 52442006 Step 4）：壳读写唯一通道，不再持扩展槽位表类型。
-    // 未装配（bare 壳）为 nullptr，全部读点判空退化为空清单。
-    nextpilot::plotscope::workbench::ISlotsService *m_slots = nullptr;
-    // 面板引用校验的另外两源（外壳注入；空 = 退化为只查 Activity panelTypes）。
-    QList<nextpilot::plotscope::registry::ProductPanelPlacement> m_placements;
-    // views 命中面（A2b 笔2b 第②步）：非空时校验器把 views 声明也当命中来源。
-    nextpilot::plotscope::workbench::IViewsService *m_viewsRefService = nullptr;
+    nextpilot::plotscope::registry::MenuRegistry *m_menus = nullptr;
+    // Ribbon 页/组读回服务（借用；未装配裸壳为 nullptr）。
+    nextpilot::plotscope::workbench::IRibbonService *m_ribbonService = nullptr;
+    // views 读回服务：Activity 声明来源 + 面板引用校验命中面（借用指针，生命周期归装配层）。
+    nextpilot::plotscope::workbench::IViewsService *m_viewsService = nullptr;
     // 第三命中面（第③步顺延必修）：customEditors 声明 viewType（借用指针，生命周期归装配层）。
     nextpilot::plotscope::workbench::IEditorService *m_editorRefService = nullptr;
-    std::function<bool(const QString &)> m_whenEval;
-    std::function<QList<QAction *>(QWidget *, const QString &)> m_viewTitleProvider;
-    QHash<QString, QList<QAction *>> m_viewTitleActions;
-    QStringList m_lastVisiblePages;
 
-    // SARibbon
-    SARibbonBar *m_ribbon = nullptr;
-    int m_currentPage = 0;        // 当前页签下标（状态快照用）
-    int m_pendingRibbonPage = -1; // applyState 登记的待恢复页，-1 表示无
+    // SARibbon + ADS 的持有者与区域登记表都在 Layout（M4 第 1 笔归属）。
 
-    // ADS
-    ads::CDockManager *m_dock = nullptr;
-    // ADS 构造时装上的内建样式表（linux 浅色 palette 规则）。换肤时以它为底，
-    // 叠 dockQss，避免把 ADS 自己必须的选择器（关闭按钮图标等）一并冲掉。
-    QString m_adsBaseQss;
-    // ThemeManager 产出的停靠区页签样式。缓存是必需的：换肤信号可能在
-    // CDockManager 创建之前就到（MainWindow 构造早期），否则这次换肤被跳过、
-    // 页签退回 ADS 的 active 渐变。
-    QString m_dockQss;
-    ads::CDockWidget *m_centralDock = nullptr; // 中央画布区的 dock
-    QWidget *m_centralContent = nullptr;       // 装进中央区的面板
-    bool m_centralInstalled = false;
+    // 六个 Part + 视图面板：状态各归其 Part，绑定器只按角色转发。
+    struct Parts
+    {
+        std::unique_ptr<RibbonPart> ribbon;
+        std::unique_ptr<ActivitybarPart> activitybar;
+        std::unique_ptr<SidebarPart> sidebar;
+        std::unique_ptr<PanelPart> panel;
+        std::unique_ptr<EditorPart> editor;
+        std::unique_ptr<StatusbarPart> statusbar;
+        std::unique_ptr<ViewPane> viewPane;
+    };
 
     // Activity Bar + 视图 dock：每个视图一个 CDockWidget，可跨左/右/底停靠。
-    QWidget *m_shellFrame = nullptr;
-    ActivityBar *m_activityBar = nullptr;
-    QStringList m_leftPageKeys;             // 初始停靠在左槽的视图 pageKey
-    QSet<QString> m_collapsedViews;         // 用户收起的视图 pageKey
-    QHash<QString, QString> m_viewActivity; // pageKey -> 用户拖到 Activity Bar 后的归属
-    QString m_activeActivity;
-    QStringList m_activityOrder;
-    int m_sideBarWidth = 256;
-    bool m_sideBarVisible = true;
-    bool m_activityBarVisible = true;
-    ActivityActivatedHandler m_activityHandler;
+    std::unique_ptr<Layout> m_layout;
+    Parts m_parts;
     SettingsHandler m_settingsHandler;
-    QHash<nextpilot::plotscope::registry::Region, ads::CDockAreaWidget *> m_lastArea; // region -> 该侧最后一个 DockArea
-    QHash<nextpilot::plotscope::registry::Region, ads::CDockWidget *> m_panels;       // region -> 该侧主 dock
-    QHash<nextpilot::plotscope::registry::Region, QList<ads::CDockWidget *>>
-        m_docksByArea; // region -> 全部页签（按放置顺序）
-    // pageKey（面板类型 id）-> dock 页签：视图页逐页开关按钮的定位表。
-    QHash<QString, ads::CDockWidget *> m_dockByKey;
-    // 面板内容 widget -> 持有它的 dock 页签（raisePanel 置前用；
-    // ADS 自带的 dockWidgetsMap 按 objectName 索引，撞名会互相覆盖不可靠）。
-    QHash<QWidget *, ads::CDockWidget *> m_dockByWidget;
-    int m_dockSeq = 0; // dock objectName 消歧序号
-
-    // 动作
-    QHash<QString, int> m_actionTriggers;    // actionId -> 触发次数
-    QHash<QString, QAction *> m_actionById;  // actionId -> 已建动作（图标/文字就地更新用）
-    ActionMenuProvider m_actionMenuProvider; // 下拉菜单来源（可为空）
 
     IntentDispatcher m_dispatch;
 };

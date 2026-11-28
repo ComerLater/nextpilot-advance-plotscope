@@ -8,7 +8,7 @@
 
 #include "InstantiationService.h"
 #include "WorkbenchAdapters.h"
-#include "ExtensionActivationService.h" // ContributionsInstaller（裁定 52442006 Step 3）
+#include "ExtensionService.h" // ContributionsInstaller（裁定 52442006 Step 3）
 #include "IDisposable.h"
 #include "Intent.h"
 #include "NullWindow.h"
@@ -63,6 +63,9 @@ public:
     // host.activate 收集 contributes 后调它——壳不再灌回。
     wb::IContributionsInstaller *contributionsInstaller() { return &m_contribInstaller; }
 
+    // VSCode MenuRegistry 的读取入口（RibbonPart 等按 MenuId 取条目）。
+    registry::MenuRegistry &menuRegistry() { return m_menuRegistry; }
+
 private:
     inst::InstantiationService m_services;
 
@@ -75,12 +78,14 @@ private:
     CommandsAdapter m_commands;
     ScriptCapabilitiesAdapter m_scriptCaps;
     // 壳读回三服务（A8b-M2 裁定 52441633 §三）：壳经 workbench 接口读回，
-    // src/application/gui 不再出现 ToolboxHub / toolbox()。
+    // src/application/gui 不再出现 ExtensionRegistry / toolbox()。
     PanelsServiceAdapter m_panelsService;
     FormatHintsAdapter m_formatHints;
     ThemeServiceAdapter m_themeService;
     // 槽位表服务（裁定 52442006 Step 1/2）：壳读写唯一通道；灌回经 m_contribInstaller。
     SlotsServiceAdapter m_slotsService;
+    // Ribbon 页/组贡献读回：只读 ExtensionRegistry contributes 表，壳经 IRibbonService 读。
+    RibbonServiceAdapter m_ribbonService;
     // 视图注册表（Step 5）：模块 contributes.views 与扩展包 manifest 汇同一张表，
     // 壳经 IViewsService 读回/打开。
     registry::ViewRegistry m_viewRegistry;
@@ -98,6 +103,8 @@ private:
     // 壳内置 text 最小编辑器（零扩展也能打开/编辑/保存）。
     BuiltinTextEditorProvider m_textEditor;
     std::unique_ptr<registry::IDisposable> m_textEditorDisposable; // 与成员同生命周期，析构先于 registry
+    // VSCode MenuRegistry：装配期静态登记菜单项，壳经 getMenuItems 读。
+    registry::MenuRegistry m_menuRegistry;
     ContributionsInstaller m_contribInstaller;
     wb::NullWindow m_window;
 };

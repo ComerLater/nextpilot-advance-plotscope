@@ -1,8 +1,8 @@
 #pragma once
 
-#include "ToolboxHub.h"
+#include "ExtensionRegistry.h"
 
-// 内置扩展包的自注册入口（扩展装配层，宿主能力——与 BuiltinModuleHub 同居 host）。
+// 内置扩展包的自注册入口（宿主能力，居 host 层）。
 //
 // app 启动期只调用 registerBuiltinPacks(registry)，完全不认识 CSV/ULog 或任何
 // 具体贡献类型——新增一个领域的扩展包、或往某包加一类贡献，只在这里装配，
@@ -10,14 +10,13 @@
 //
 // 外部插件走另一条路径：由 PluginScanner 扫描动态库、校验 ABI 后，把插件提供的
 // 整个 Pack mount 进同一个 registry。
-namespace nextpilot::plotscope::ext
-{
+namespace nextpilot::plotscope::ext {
 
 // 装配全部内置扩展包（通用 / 飞控 / 汽车 / 机器人 / 卫导），一次注册到工具箱。
-void registerBuiltinPacks(nextpilot::plotscope::registry::ToolboxHub &registry);
+void registerBuiltinPacks(nextpilot::plotscope::registry::ExtensionRegistry &registry);
 
 // 向后兼容：历史上只登记格式驱动的入口，现等价于 registerBuiltinPacks。
-inline void registerBuiltinFormats(nextpilot::plotscope::registry::ToolboxHub &registry)
+inline void registerBuiltinFormats(nextpilot::plotscope::registry::ExtensionRegistry &registry)
 {
     registerBuiltinPacks(registry);
 }

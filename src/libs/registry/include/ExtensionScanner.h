@@ -26,7 +26,7 @@ struct ExtensionScanReport
 };
 
 // 扫描 root 下每个含 manifest.json 的子目录。返回全部解析结果，不 mount、
-// 不做 owner 去重（去重/冲突由 ToolboxHub::mountContribution 负责，职责单一）。
+// 不做 owner 去重（去重/冲突由 ExtensionRegistry::mountContribution 负责，职责单一）。
 // 单个扩展失败（缺 manifest / JSON 坏 / contributes 非法）只记 issue、不影响其余。
 ExtensionScanReport scanExtensions(const QString &root);
 

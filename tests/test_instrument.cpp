@@ -4,12 +4,13 @@
 // 按 kind 切到对应 fastplot 仪表并出图。与 ps_test_gui 一样在 offscreen 下跑。
 
 #include "App.h"
+#include "test_registry_access.h"
 #include "MainWindow.h"
 #include "InstrumentView.h"
 #include "PlotViewFactories.h"
 #include "IEditorService.h"
 
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 #include "Dataset.h"
 #include "IngestPipeline.h"
 #include "Intent.h"
@@ -48,7 +49,7 @@ using namespace nextpilot::plotscope::host;
 
 #define OK(msg) fprintf(stdout, "[ok] %s\n", msg)
 
-static int buildInstrumentDataset(DatasetHub &repo)
+static int buildInstrumentDataset(DatasetRegistry &repo)
 {
     Dataset ds = Dataset::create(QStringLiteral("instrument-test"), QStringLiteral("mem"));
     const int n = 600;
@@ -129,7 +130,7 @@ int main(int argc, char *argv[])
     window.build(application.host());
     window.resize(1280, 800);
 
-    const int dsId = buildInstrumentDataset(application.data());
+    const int dsId = buildInstrumentDataset(plotscope_test::datasetHub(application.context()));
     CHECK(dsId >= 0);
 
     InstrumentView view(application.host());
@@ -383,7 +384,7 @@ int main(int argc, char *argv[])
             path = QStringLiteral(PS_FIXTURE_DIR "/demo_flight.ulg");
         if (QFile::exists(path))
         {
-            IngestPipeline pipe(application.data());
+            IngestPipeline pipe(plotscope_test::datasetHub(application.context()));
             const Result<int> bound = pipe.bindParser(1, ParserBinding{QStringLiteral("ulog"), {}, true});
             CHECK(bound);
             QFile file(path);

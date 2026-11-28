@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ToolboxHub.h"
+#include "ExtensionRegistry.h"
 
 #include <QString>
 

@@ -23,7 +23,14 @@ target_link_libraries(ps_test_dataset_standalone PRIVATE ps_dataset Qt6::Core)
 set_target_properties(ps_test_dataset_standalone PROPERTIES AUTOMOC ON CXX_STANDARD 17)
 add_test(NAME ps_dataset_standalone COMMAND ps_test_dataset_standalone)
 
-# === PersistentStateHub 验收（M4-R2）：往返 / 分段 / 登记序 / bestEffort ===
+# === M4 第 2 笔验收：MenuId / MenuRegistry / ActionBar ===
+add_executable(ps_test_actions test_actions.cpp
+    ${CMAKE_SOURCE_DIR}/src/application/gui/actions/ActionBar.cpp)
+target_include_directories(ps_test_actions PRIVATE ${CMAKE_SOURCE_DIR}/src/application/gui)
+target_link_libraries(ps_test_actions PRIVATE ps_registry Qt6::Widgets Qt6::Gui Qt6::Core)
+set_target_properties(ps_test_actions PROPERTIES AUTOMOC ON CXX_STANDARD 17)
+add_test(NAME ps_actions COMMAND ps_test_actions)
+
 add_executable(ps_test_parser_catalog test_parser_catalog.cpp)
 # 需要真实解析器自注册进注册表：link OBJECT 库带进 CsvParser 等内置解析器 TU。
 target_link_libraries(ps_test_parser_catalog PRIVATE ps_context ps_toolbox_common Qt6::Core)
@@ -265,6 +272,18 @@ target_link_libraries(ps_ui_driver PRIVATE
     ps_app ps_host ps_context ps_recording Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Test)
 set_target_properties(ps_ui_driver PROPERTIES AUTOMOC ON CXX_STANDARD 17)
 
+# === 壳基线契约（Step 1）：不链任何业务模块/工具箱 ===
+# 装配清单里一个业务目标都不出现；壳若偷偷依赖业务，本目标编译即失败。
+add_executable(ps_test_gui_shell test_gui_shell.cpp)
+target_include_directories(ps_test_gui_shell PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/application/app/core
+    ${CMAKE_SOURCE_DIR}/src/application/assembly/include)
+target_link_libraries(ps_test_gui_shell PRIVATE
+    ps_gui ps_gui_theme ps_widgets
+    ps_app ps_assembly ps_host ps_context ps_command ps_registry Qt6::Widgets Qt6::Gui Qt6::Core)
+set_target_properties(ps_test_gui_shell PROPERTIES AUTOMOC ON CXX_STANDARD 17)
+add_test(NAME ps_gui_shell COMMAND ps_test_gui_shell)
+set_tests_properties(ps_gui_shell PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 add_executable(ps_test_gui test_gui.cpp)
 target_include_directories(ps_test_gui PRIVATE ${CMAKE_SOURCE_DIR}/src/application/app/core)
 # 领域面板的呈现层：领域面板的 QWidget 实现按设计只在 GUI 侧链接。

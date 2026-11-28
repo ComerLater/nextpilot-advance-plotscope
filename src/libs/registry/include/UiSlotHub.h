@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Contribution.h"
-#include "ToolboxHub.h"
+#include "ExtensionRegistry.h"
 #include "RegistryNode.h"
 #include "RegistryTree.h"
 #include "UiSlotTypes.h" // SlotKind / UiSlot / BoundUiAction（A8b-M2 抽出，契约头共用）
@@ -43,7 +43,7 @@ public:
 
     // 从工具箱 uiActions 表重新扫描，按 area 绑定到已声明插槽。
     // 每次扩展包装卸后调用一次即可（O(贡献数)，与数据量无关）。
-    void refreshFrom(const ToolboxHub &registry);
+    void refreshFrom(const ExtensionRegistry &registry);
 
     // 模块直接登记的入口（不来自工具箱）。key 用于幂等覆盖。
     void bindLocal(const QString &area, const UiAction &action, const QString &provider);

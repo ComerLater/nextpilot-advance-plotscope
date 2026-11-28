@@ -14,23 +14,19 @@
 
 using namespace nextpilot::plotscope::registry;
 
-namespace
-{
+namespace {
 int g_failed = 0;
-#define CHECK(cond)                                                            \
-    do                                                                         \
-    {                                                                          \
-        if (!(cond))                                                           \
-        {                                                                      \
-            std::printf("FAIL line %d: %s\n", __LINE__, #cond);                \
-            ++g_failed;                                                        \
-        }                                                                      \
+#define CHECK(cond)                                                                                                    \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        if (!(cond))                                                                                                   \
+        {                                                                                                              \
+            std::printf("FAIL line %d: %s\n", __LINE__, #cond);                                                        \
+            ++g_failed;                                                                                                \
+        }                                                                                                              \
     } while (0)
 
-QJsonObject fromJson(const char *s)
-{
-    return QJsonDocument::fromJson(QByteArray(s)).object();
-}
+QJsonObject fromJson(const char *s) { return QJsonDocument::fromJson(QByteArray(s)).object(); }
 
 bool hasIssueContaining(const ParseResult &r, const QString &needle)
 {
@@ -58,7 +54,8 @@ int main(int argc, char **argv)
                     {"command":"hello.bye"}
                 ]
             }
-        })"), QStringLiteral("plotscope.hello"));
+        })"),
+                                         QStringLiteral("plotscope.hello"));
         CHECK(r.ok);
         CHECK(r.issues.isEmpty());
         CHECK(r.doc.commands.size() == 2);
@@ -76,7 +73,8 @@ int main(int argc, char **argv)
             "views": [
                 {"id":"plot.props","name":"属性","container":"plot.side","when":"editor == canvas","order":5}
             ]
-        })"), QStringLiteral("plot"));
+        })"),
+                                         QStringLiteral("plot"));
         CHECK(r.ok);
         CHECK(r.doc.viewContainers.size() == 2);
         CHECK(r.doc.viewContainers.at(0).id == QLatin1String("plot.side"));
@@ -96,7 +94,8 @@ int main(int argc, char **argv)
                 "menubar/plot": [{"command":"plot.new","label":"新建","icon":"plus","order":10}],
                 "editor/context": [{"command":"plot.copy"}]
             }
-        })"), QStringLiteral("plot"));
+        })"),
+                                         QStringLiteral("plot"));
         CHECK(r.ok);
         CHECK(r.doc.menuItems.size() == 4);
         // QJsonObject 按 key 字母序遍历，不依赖插入序——按 place 查找断言。
@@ -119,12 +118,13 @@ int main(int argc, char **argv)
         ParseResult r = parseContributes(fromJson(R"({
             "colors": {"plot.cursor":{"dark":"#f2b134","light":"#1A73E8"}},
             "statusbar": [{"id":"plot.cursor.time","side":"right","priority":20,"text":"游标: --"}]
-        })"), QStringLiteral("plot"));
+        })"),
+                                         QStringLiteral("plot"));
         CHECK(r.ok);
         CHECK(r.doc.colors.size() == 1);
         CHECK(r.doc.colors.at(0).dark == QLatin1String("#f2b134"));
         CHECK(r.doc.statuses.size() == 1);
-        CHECK(r.doc.statuses.at(0).side == QLatin1String("right"));
+        CHECK(r.doc.statuses.at(0).side == nextpilot::plotscope::registry::StatusSide::Right);
         CHECK(r.doc.statuses.at(0).priority == 20);
     }
 
@@ -135,7 +135,8 @@ int main(int argc, char **argv)
                 {"viewType":"canvas","displayName":"画布","priority":10,
                  "selector":[{"mime":"application/x-pschema"},{"filenamePattern":"*.pschema"}]}
             ]
-        })"), QStringLiteral("plot"));
+        })"),
+                                         QStringLiteral("plot"));
         CHECK(r.ok);
         CHECK(r.doc.customEditors.size() == 1);
         const auto &e = r.doc.customEditors.at(0);
@@ -158,7 +159,8 @@ int main(int argc, char **argv)
                 {"viewType":"bad.sel","selector":[{"mime":""}]},
                 {"viewType":"bad.arr","selector":"oops"}
             ]
-        })"), QStringLiteral("dup.owner"));
+        })"),
+                                         QStringLiteral("dup.owner"));
         CHECK(!r.ok);
         // web 第一条被整条拒且未占坑：不得出现第二条「重复 id」诊断。
         CHECK(!hasIssueContaining(r, QStringLiteral("重复")));
@@ -382,7 +384,8 @@ int main(int argc, char **argv)
     {
         ParseResult r = parseContributes(fromJson(R"({
             "commands": [{"command":"dup","title":"第一"},{"command":"dup","title":"第二"}]
-        })"), QStringLiteral("dup.owner"));
+        })"),
+                                         QStringLiteral("dup.owner"));
         CHECK(!r.ok);
         CHECK(hasIssueContaining(r, QStringLiteral("重复")));
         CHECK(r.doc.commands.size() == 1);
@@ -391,8 +394,7 @@ int main(int argc, char **argv)
 
     // ===== 坏输入 2a：commands 非数组 → 整条拒收 =====
     {
-        ParseResult r = parseContributes(fromJson(R"({"commands": {"command":"oops"}})"),
-                                          QStringLiteral("bad.owner"));
+        ParseResult r = parseContributes(fromJson(R"({"commands": {"command":"oops"}})"), QStringLiteral("bad.owner"));
         CHECK(!r.ok);
         CHECK(hasIssueContaining(r, QStringLiteral("必须是数组")));
         CHECK(r.doc.commands.isEmpty());
@@ -416,7 +418,8 @@ int main(int argc, char **argv)
                 "bogusPlace": [{"command":"later"}],
                 "commandPalette": [{"command":"ok.cmd","bogus":9}]
             }
-        })"), QStringLiteral("mixed.owner"));
+        })"),
+                                         QStringLiteral("mixed.owner"));
         CHECK(!r.ok);
         CHECK(hasIssueContaining(r, QStringLiteral("未知 contributes 键")));
         CHECK(hasIssueContaining(r, QStringLiteral("命令条目未知字段")));
@@ -428,8 +431,7 @@ int main(int argc, char **argv)
 
     // ===== 缺 id → 跳过该条 + issue =====
     {
-        ParseResult r = parseContributes(fromJson(R"({"commands":[{"title":"无 id"}]})"),
-                                          QStringLiteral("noid.owner"));
+        ParseResult r = parseContributes(fromJson(R"({"commands":[{"title":"无 id"}]})"), QStringLiteral("noid.owner"));
         CHECK(!r.ok);
         CHECK(hasIssueContaining(r, QStringLiteral("缺 command")));
         CHECK(r.doc.commands.isEmpty());
@@ -437,8 +439,8 @@ int main(int argc, char **argv)
 
     // ===== §3.0.14 畸形用例 1：place 非法 =====
     {
-        ParseResult r = parseContributes(fromJson(R"({"menus":{"mystery":[{"command":"x"}]}})"),
-                                          QStringLiteral("bad.place"));
+        ParseResult r =
+            parseContributes(fromJson(R"({"menus":{"mystery":[{"command":"x"}]}})"), QStringLiteral("bad.place"));
         CHECK(!r.ok);
         CHECK(hasIssueContaining(r, QStringLiteral("未支持的菜单 place")));
         CHECK(r.doc.menuItems.isEmpty());
@@ -446,8 +448,7 @@ int main(int argc, char **argv)
 
     // ===== §3.0.14 畸形用例 2：views 非数组 / 空 id =====
     {
-        ParseResult r = parseContributes(fromJson(R"({"views":[{"name":"无 id"}]})"),
-                                          QStringLiteral("bad.view"));
+        ParseResult r = parseContributes(fromJson(R"({"views":[{"name":"无 id"}]})"), QStringLiteral("bad.view"));
         CHECK(!r.ok);
         CHECK(hasIssueContaining(r, QStringLiteral("缺 id")));
         CHECK(r.doc.views.isEmpty());
@@ -458,7 +459,8 @@ int main(int argc, char **argv)
         ParseResult r = parseContributes(fromJson(R"({
             "viewsContainers":[{"id":"dup.id","title":"容器"}],
             "views":[{"id":"dup.id","name":"视图"}]
-        })"), QStringLiteral("cross.dup"));
+        })"),
+                                         QStringLiteral("cross.dup"));
         CHECK(!r.ok);
         CHECK(hasIssueContaining(r, QStringLiteral("重复 id")));
         // 全局 id 唯一：二者合计恰好保留 1 条（哪个先到取决于 QJsonObject key 序）。

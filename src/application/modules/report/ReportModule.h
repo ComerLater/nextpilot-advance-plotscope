@@ -22,14 +22,14 @@ class ReportModule final : public nextpilot::plotscope::host::IWorkbenchContribu
 {
     Q_OBJECT
 public:
-    static nextpilot::plotscope::host::ModuleInfo moduleInfo();
+    static nextpilot::plotscope::registry::ExtensionDescription extensionDescription();
     static nextpilot::plotscope::host::IWorkbenchContribution *create();
 
-    nextpilot::plotscope::host::ModuleInfo info() const override;
+    nextpilot::plotscope::registry::ExtensionDescription description() const override;
     void initialize(nextpilot::plotscope::instantiation::InstantiationService &services) override;
     // 卸载时摘除 report.export；重激活由 initialize 重新安装。
     void onDetach() override;
-    nextpilot::plotscope::registry::ModuleContributions contributes() const override;
+    nextpilot::plotscope::registry::ContributesDoc contributes() const override;
 
 private:
     nextpilot::plotscope::report::IReportExportHost *m_host = nullptr;

@@ -16,6 +16,7 @@
 
 #include "Contribution.h"
 #include "ContributionParser.h"
+#include "ExtensionDescription.h"
 #include "IMessageParser.h"
 #include "Registry.h"
 #include "RegistryNode.h"
@@ -30,8 +31,12 @@
 #include <memory>
 #include <vector>
 
-namespace nextpilot::plotscope::registry
-{
+namespace nextpilot::plotscope::host {
+class IWorkbenchContribution;
+}
+
+namespace nextpilot::plotscope::registry {
+using nextpilot::plotscope::parser::Domain;
 
 using nextpilot::plotscope::parser::IMessageParser;
 using nextpilot::plotscope::parser::ParseOutput;
@@ -40,8 +45,8 @@ using nextpilot::plotscope::parser::ParseOutput;
 // 包作者填这份清单，mount() 把各列表分插进对应类型的表并自动写 provider/domain。
 struct Pack
 {
-    QString id;      // 全局唯一，如 "pack.autopilot"
-    QString name;    // 显示名，如 "飞控工具箱"
+    QString id;   // 全局唯一，如 "pack.<owner>"
+    QString name; // 显示名，如 "飞控工具箱"
     Domain domain = Domain::General;
 
     QList<UiAction> uiActions;
@@ -62,17 +67,25 @@ struct Pack
 // M2.8 R3：继承 RegistryNode 上树（kind=Extension，name=扩展包）——
 // diag.registries 可枚举（count/keys 取 packs 表）。七张贡献表结构与
 // mount/unmount 按包原子性不变；包挂载/卸载同步发射基类 objectAdded/objectRemoved。
-class ToolboxHub : public RegistryNode
+class ExtensionRegistry : public RegistryNode
 {
 public:
     // 组合根/单测统一用：构造即上树（不存在不上树形态，M2.8 遗留2 收口拍板）。
-    explicit ToolboxHub(RegistryTree &tree);
+    explicit ExtensionRegistry(RegistryTree &tree);
 
     // === 内置包静态自注册通道 ===
     using PackFactory = std::function<std::unique_ptr<Pack>()>;
     static bool registerBuiltinPack(const QString &id, PackFactory factory);
-    QStringList installBuiltinPacks();        // 装进本实例，返回成功的包 id
-    static void resetBuiltinPacks();          // 清空静态表（仅测试用）
+    QStringList installBuiltinPacks(); // 装进本实例，返回成功的包 id
+    static void resetBuiltinPacks();   // 清空静态表（仅测试用）
+
+    // === 内置扩展静态自注册通道（对位 VSCode builtinExtensionsScannerService.ts）===
+    // 内置扩展的静态描述 + 工厂；激活归装配层 ExtensionService。机制复用同一套静态表。
+    using ExtensionFactory = std::function<host::IWorkbenchContribution *()>;
+    static bool registerBuiltinExtension(const ExtensionDescription &description, ExtensionFactory factory);
+    static QList<QPair<ExtensionDescription, ExtensionFactory>> builtinExtensions();
+    static QStringList builtinExtensionIds();
+    static void resetBuiltinExtensions();
 
     // === 挂载/卸载：唯一的动作对，按包原子 ===
     // 校验：包 id 与全部条目 id 全局唯一；挂载时给每个条目自动写 provider/domain。
@@ -95,10 +108,7 @@ public:
     QStringList contributionOwners() const { return m_contribOwnerOrder; }
 
     const ContributedCommand *findCommand(const QString &commandId) const;
-    QString ownerOfCommand(const QString &commandId) const
-    {
-        return m_contribCommandOwner.value(commandId);
-    }
+    QString ownerOfCommand(const QString &commandId) const { return m_contribCommandOwner.value(commandId); }
     QList<ContributedCommand> contributedCommands() const { return m_contribCommands.values(); }
     QStringList commandIdsOf(const QString &owner) const;
 
@@ -111,12 +121,36 @@ public:
 
     // === M2：视图/菜单/颜色/状态声明（同一 contributes 文档的其余键）===
     // 每条带 owner 归属，unmount(owner) 整批撤。纯数据，装配层读它摆 UI。
-    struct OwnedViewContainer { ContributedViewContainer item; QString owner; };
-    struct OwnedView { ContributedView item; QString owner; };
-    struct OwnedMenuItem { ContributedMenuItem item; QString owner; };
-    struct OwnedColor { ContributedColor item; QString owner; };
-    struct OwnedStatus { ContributedStatus item; QString owner; };
-    struct OwnedCustomEditor { ContributedCustomEditor item; QString owner; };
+    struct OwnedViewContainer
+    {
+        ContributedViewContainer item;
+        QString owner;
+    };
+    struct OwnedView
+    {
+        ContributedView item;
+        QString owner;
+    };
+    struct OwnedMenuItem
+    {
+        ContributedMenuItem item;
+        QString owner;
+    };
+    struct OwnedColor
+    {
+        ContributedColor item;
+        QString owner;
+    };
+    struct OwnedStatus
+    {
+        ContributedStatus item;
+        QString owner;
+    };
+    struct OwnedCustomEditor
+    {
+        ContributedCustomEditor item;
+        QString owner;
+    };
     struct OwnedConfiguration
     {
         ConfigurationSpec item;
@@ -130,6 +164,9 @@ public:
     QList<OwnedStatus> contributedStatuses() const { return m_contribStatuses; }
     QList<OwnedCustomEditor> contributedCustomEditors() const { return m_contribCustomEditors; }
     QList<OwnedConfiguration> contributedConfigurations() const { return m_contribConfigurations; }
+    // Ribbon 页/组贡献（纯数据；条目自带 provider，mount 打标、unmount 按 provider 撤）。
+    QList<RibbonPageDecl> ribbonPages() const { return m_ribbonPages; }
+    QList<RibbonGroupDecl> ribbonGroupsOf(const QString &pageId) const;
     // 按 place 取菜单项（place 原串，如 "view/title" / "menubar/plot"）。
     QList<OwnedMenuItem> menuItemsIn(const QString &place) const;
 
@@ -147,7 +184,7 @@ public:
     }
 
     // === 数据表（机制唯一：Registry<T>；内容全是数据，直接读）===
-    Registry<PackInfo> packs;        // 包自我声明
+    Registry<PackInfo> packs; // 包自我声明
     Registry<UiAction> uiActions;
     Registry<ScriptSpec> scripts;
     Registry<DataAsset> dataAssets;
@@ -191,15 +228,18 @@ public:
     QList<IMessageParser *> messageParsersByDomain(Domain domain) const { return parsersByDomain(domain); }
     IMessageParser *messageParser(const QString &id) const { return parser(id); }
     IMessageParser *messageParserForProtocol(const QString &protocolId) const { return parserForProtocol(protocolId); }
-    QList<IMessageParser *> messageParsersByTransport(const QString &transport) const { return parsersByTransport(transport); }
+    QList<IMessageParser *> messageParsersByTransport(const QString &transport) const
+    {
+        return parsersByTransport(transport);
+    }
 
 private:
     void recordContributionIssue(const QString &owner, const QString &keyPath, const QString &message);
 
     // contributes 贡献面：command id → 条目（保序，先到者为准）
     Registry<ContributedCommand> m_contribCommands;
-    QHash<QString, QString> m_contribCommandOwner;        // command id → owner（归属索引）
-    QHash<QString, QStringList> m_contribByOwner;          // owner → 该 owner 的 command id
+    QHash<QString, QString> m_contribCommandOwner; // command id → owner（归属索引）
+    QHash<QString, QStringList> m_contribByOwner;  // owner → 该 owner 的 command id
     QList<QString> m_contribOwnerOrder;
     QList<PaletteEntry> m_contribPalette;
     QList<OwnedViewContainer> m_contribViewContainers;
@@ -210,6 +250,8 @@ private:
     QList<OwnedCustomEditor> m_contribCustomEditors;
     QHash<QString, QString> m_contribEditorViewTypes; // viewType -> owner（跨 owner 唯一）
     QList<OwnedConfiguration> m_contribConfigurations;
+    QList<RibbonPageDecl> m_ribbonPages;
+    QList<RibbonGroupDecl> m_ribbonGroups;
     QHash<QString, QString> m_contribConfigKeys; // 属性点号键 -> owner（跨 owner 唯一）
     QHash<QString, QString> m_contribConfigIds;  // 分组 id -> owner（跨 owner 唯一，focusSection 精确匹配）
     QList<ContributionDiagnostic> m_contribDiagnostics;
@@ -222,15 +264,30 @@ private:
 // 注册宏：在包 TU 文件末尾使用，把本包工厂登记进静态自注册表。
 //
 // 用法：
-//   PS_REGISTER_PACK(nextpilot::plotscope::ext::AutopilotPack)
+//   PS_REGISTER_PACK(nextpilot::plotscope::ext::ExamplePack)
 //
-// 其中 AutopilotPack 需提供：
+// 其中 ExamplePack 需提供：
 //   static QString packId();
 //   static std::unique_ptr<nextpilot::plotscope::registry::Pack> build();
 //
 // 宏必须带完整命名空间：它在调用处的命名空间作用域展开。
 #define PS_REGISTER_PACK(FQN)                                                                                          \
     namespace {                                                                                                        \
-    const bool g_ps_pack_reg_ = ::nextpilot::plotscope::registry::ToolboxHub::registerBuiltinPack(                     \
+    const bool g_ps_pack_reg_ = ::nextpilot::plotscope::registry::ExtensionRegistry::registerBuiltinPack(              \
         FQN::packId(), []() -> std::unique_ptr<::nextpilot::plotscope::registry::Pack> { return FQN::build(); });      \
+    }
+
+// 注册宏：在扩展 TU 文件末尾使用，把本扩展登记进内置扩展静态表。
+//
+// 用法：
+//   PS_REGISTER_EXTENSION(DataModule)
+//
+// 其中 DataModule 需提供静态接口（无需实例化即可拿到描述与工厂）：
+//   static ExtensionDescription extensionDescription();
+//   static IWorkbenchContribution *create();
+#define PS_REGISTER_EXTENSION(Cls)                                                                                     \
+    namespace {                                                                                                        \
+    const bool g_ps_extension_reg_ = ::nextpilot::plotscope::registry::ExtensionRegistry::registerBuiltinExtension(    \
+        Cls::extensionDescription(),                                                                                   \
+        []() -> ::nextpilot::plotscope::host::IWorkbenchContribution * { return Cls::create(); });                     \
     }

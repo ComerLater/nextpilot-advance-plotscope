@@ -4,7 +4,7 @@
 // `vs/platform/configuration/common/configuration.ts` 的 IConfigurationService。
 //
 // 职责边界：
-//   - 声明面（contributes.configuration，第 1 笔进 ToolboxHub）与持久化
+//   - 声明面（contributes.configuration，第 1 笔进 ExtensionRegistry）与持久化
 //     （SettingsStore，app 唯一出口）之间的唯一合并 / 复位 / 诊断出口。
 //   - 分层合并按既有 SettingsScope 三层：user(App) ← workspace ← document，
 //     即 document 覆盖 workspace 覆盖 user 覆盖声明默认值。

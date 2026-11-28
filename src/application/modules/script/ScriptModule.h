@@ -10,8 +10,7 @@
 
 #include <QStringList>
 
-namespace nextpilot::plotscope::script
-{
+namespace nextpilot::plotscope::script {
 class BatchHandler;
 class PythonHandler;
 } // namespace nextpilot::plotscope::script
@@ -32,26 +31,27 @@ class ScriptModule final : public nextpilot::plotscope::host::IWorkbenchContribu
 {
     Q_OBJECT
 public:
-    // 静态元数据：供编译期自注册（PS_REGISTER_MODULE）使用，无需实例化。
-    static nextpilot::plotscope::host::ModuleInfo moduleInfo();
+    // 静态描述：供编译期自注册（PS_REGISTER_EXTENSION）使用，无需实例化。
+    static nextpilot::plotscope::registry::ExtensionDescription extensionDescription();
     static nextpilot::plotscope::host::IWorkbenchContribution *create();
 
-    nextpilot::plotscope::host::ModuleInfo info() const override;
+    nextpilot::plotscope::registry::ExtensionDescription description() const override;
     void initialize(nextpilot::plotscope::instantiation::InstantiationService &services) override;
     void onAttach(nextpilot::plotscope::host::IUiContext &ui) override;
     // 卸载：注销统一变换求值器。
     void onDetach() override;
-    nextpilot::plotscope::registry::ModuleContributions contributes() const override;
+    nextpilot::plotscope::registry::ContributesDoc contributes() const override;
     ~ScriptModule() override;
 
 private:
     class Handler;
-    Handler *m_handler = nullptr; // parent=this，随模块析构自动回收
+    Handler *m_handler = nullptr;                                  // parent=this，随模块析构自动回收
     nextpilot::plotscope::script::BatchHandler *m_batch = nullptr; // data.batch.run（parent=this）
     nextpilot::plotscope::script::PythonHandler *m_py = nullptr;   // script.py.*（parent=this）
     // 脚本库有状态，模块实例持有；TransformHub 由 AppContext 注入（libs 不藏静态状态）。
     std::unique_ptr<nextpilot::plotscope::script::LuaScriptLibrary> m_scriptLib;
-    std::shared_ptr<nextpilot::plotscope::script::FilterCatalogue> m_filterCatalogue; // 内置过滤器目录（注入 FilterOps）
+    std::shared_ptr<nextpilot::plotscope::script::FilterCatalogue>
+        m_filterCatalogue; // 内置过滤器目录（注入 FilterOps）
 
     // 工作台执行通道（viewAction，GUI 面板经 dispatchViewAction 调用，
     // 引擎归模块持有——GUI 层不直接依赖 script 模块内部类，分层守卫才过得去）：

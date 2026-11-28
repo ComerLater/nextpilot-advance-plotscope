@@ -1,21 +1,20 @@
 #pragma once
 
 // 工作台贡献契约（居 libs/workbench）：IWorkbenchContribution / IUiContext。
-// 纯接口面——运行时（装载、生命周期）在 host/RuntimeHost。
-// A1b（IKXUTD）：由旧模块接口改名而来，initialize 只收服务容器
-// InstantiationService&；模块不再拿 RuntimeHost / AppContext，按 VSCode 名字取服务。
-// ModuleInfo 仍居原模块契约库（物理目录改名归 A3b，本项只改 include 路径与类名）。
+// 纯接口面——运行时（装载、生命周期）在 assembly::ExtensionService（对位
+// AbstractExtensionService.activateExtension）。A1b（IKXUTD）：initialize 只收
+// 服务容器 InstantiationService&；扩展不再拿 RuntimeHost / AppContext，按 VSCode
+// 名字取服务。
 
 #include "InstantiationService.h"
-#include "DatasetHub.h"
+
 #include "Domain.h"
 #include "IIntentExecutor.h"
 #include "Contribution.h"
 #include "Intent.h"
 #include "JobRecorder.h"
-#include "ModuleInfo.h"
+#include "ExtensionDescription.h"
 #include "UiSlotHub.h"
-#include "ModuleContributions.h"
 
 #include <QObject>
 
@@ -84,16 +83,17 @@ public:
     explicit IWorkbenchContribution(QObject *parent = nullptr) : QObject(parent) {}
     ~IWorkbenchContribution() override = default;
 
-    virtual nextpilot::plotscope::host::ModuleInfo info() const = 0;
+    // 扩展静态描述（identifier/版本/依赖/激活事件/contributes 声明）。
+    virtual nextpilot::plotscope::registry::ExtensionDescription description() const = 0;
 
     // 阶段一：声明能力、订阅事件、注册命令。不碰 UI。
-    // 只收服务容器：模块按 VSCode 名字从 services 取能力，不接触宿主/AppContext。
+    // 只收服务容器：扩展按 VSCode 名字从 services 取能力，不接触宿主/AppContext。
     virtual void initialize(nextpilot::plotscope::instantiation::InstantiationService &services) = 0;
 
     // A8b-M2 裁定 52441074：UI 声明改为声明式数据（单一通道）。
-    // 宿主在 initialize 后收集所有模块的 contributes()，统一灌回壳的 slot/status/theme；
-    // 模块不再过程式调 IUiContext::declare*/addAction。默认空，兼容不贡献 UI 的模块。
-    virtual nextpilot::plotscope::registry::ModuleContributions contributes() const { return {}; }
+    // ExtensionService 在 initialize 后收集 contributes()，统一灌回壳的 slot/status/theme；
+    // 扩展不再过程式调 IUiContext::declare*/addAction。默认空实现。
+    virtual nextpilot::plotscope::registry::ContributesDoc contributes() const { return {}; }
 
     // 阶段二：创建 UI 并 parent 给自己，然后请求宿主放置。
     // headless 时宿主不调用；默认空实现。

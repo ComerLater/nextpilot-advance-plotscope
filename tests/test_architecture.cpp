@@ -1,9 +1,10 @@
 #include "App.h"
+#include "test_registry_access.h"
 #include "Intent.h"
 #include "WorkspaceDataConfig.h"
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 #include "Dataset.h"
-#include "ToolboxHub.h"
+#include "ExtensionRegistry.h"
 #include "UiSlotHub.h"
 #include "PluginScanner.h"
 #include "Toolbox.h"
@@ -11,13 +12,10 @@
 #include "Registry.h"
 #include "NullContributionSink.h"
 #include "ServiceLocator.h"
-#include "BuiltinModuleHub.h"
-#include "ToolboxHub.h"
 #include "IWorkbenchContribution.h"
 #include "ICommands.h"
 #include "InstantiationService.h"
 #include "CommandAdapter.h"
-#include "Contribution.h"
 #include "DecodedFrame.h"
 #include "IMessageParser.h"
 #include "NmeaMessageParser.h"
@@ -103,17 +101,13 @@ using namespace nextpilot::plotscope::context;
 // 这条测试就会失败，提醒我们机制退化了。
 // ============================================================================
 
-namespace
-{
+namespace {
 
 // 探针模块的意图处理器。普通类即可（不需要 Q_OBJECT：它不发信号）。
 class ProbeHandler final : public IIntentHandler
 {
 public:
-    bool canHandle(const Intent &intent) const override
-    {
-        return intent.op == QStringLiteral("probe.ping");
-    }
+    bool canHandle(const Intent &intent) const override { return intent.op == QStringLiteral("probe.ping"); }
     Result<IntentResult> execute(const Intent &) override
     {
         IntentResult r;
@@ -127,17 +121,19 @@ class ProbeModule final : public nextpilot::plotscope::host::IWorkbenchContribut
 {
     Q_OBJECT
 public:
-    static nextpilot::plotscope::host::ModuleInfo moduleInfo()
+    static nextpilot::plotscope::registry::ExtensionDescription extensionDescription()
     {
-        return nextpilot::plotscope::host::ModuleInfo{QStringLiteral("mod.probe"),
-                                    QStringLiteral("探针模块"),
-                                    QStringLiteral("1.0"),
-                                    {QStringLiteral("probe.capability")},
-                                    {}};
+        nextpilot::plotscope::registry::ExtensionDescription d;
+        d.identifier = QStringLiteral("mod.probe");
+        d.name = QStringLiteral("探针模块");
+        d.version = QStringLiteral("1.0");
+        d.isBuiltin = true;
+        d.activationEvents = {QStringLiteral("*")};
+        return d;
     }
     static nextpilot::plotscope::host::IWorkbenchContribution *create() { return new ProbeModule(); }
 
-    nextpilot::plotscope::host::ModuleInfo info() const override { return moduleInfo(); }
+    nextpilot::plotscope::registry::ExtensionDescription description() const override { return extensionDescription(); }
 
     void initialize(nextpilot::plotscope::instantiation::InstantiationService &services) override
     {
@@ -167,7 +163,7 @@ struct ProbePack
 } // namespace
 
 // 静态自注册：与生产代码里的模块/包完全同一套机制。
-PS_REGISTER_MODULE(::ProbeModule)
+PS_REGISTER_EXTENSION(::ProbeModule)
 PS_REGISTER_PACK(::ProbePack)
 
 static QString writeCsv(const QTemporaryDir &dir)
@@ -195,11 +191,13 @@ static void put16(QByteArray &b, quint16 v)
 }
 static void put32(QByteArray &b, quint32 v)
 {
-    for (int i = 0; i < 4; ++i) b.append(static_cast<char>((v >> (8 * i)) & 0xff));
+    for (int i = 0; i < 4; ++i)
+        b.append(static_cast<char>((v >> (8 * i)) & 0xff));
 }
 static void put64(QByteArray &b, quint64 v)
 {
-    for (int i = 0; i < 8; ++i) b.append(static_cast<char>((v >> (8 * i)) & 0xff));
+    for (int i = 0; i < 8; ++i)
+        b.append(static_cast<char>((v >> (8 * i)) & 0xff));
 }
 static void putFloat(QByteArray &b, float v)
 {
@@ -227,14 +225,14 @@ static QString writeUlog(const QTemporaryDir &dir, int rows, qint64 *firstUs, qi
     out.append(static_cast<char>(0x12));
     out.append(static_cast<char>(0x35));
     out.append(static_cast<char>(0x01)); // version v1
-    put64(out, 0);                        // start timestamp
+    put64(out, 0);                       // start timestamp
 
     addUlogMessage(out, 'F', f);
     QByteArray a;
-    a.append(static_cast<char>(0));  // multiId
-    put16(a, 1);                     // msgId
+    a.append(static_cast<char>(0)); // multiId
+    put16(a, 1);                    // msgId
     a.append("sensor", 6);
-    a.append(static_cast<char>(0));  // cstring terminator
+    a.append(static_cast<char>(0)); // cstring terminator
     addUlogMessage(out, 'A', a);
 
     *firstUs = 1000000; // 起始 1.0s
@@ -242,10 +240,10 @@ static QString writeUlog(const QTemporaryDir &dir, int rows, qint64 *firstUs, qi
     {
         const quint64 ts = static_cast<quint64>(*firstUs) + static_cast<quint64>(i) * 1000ULL; // 每行 1ms
         QByteArray d;
-        put16(d, 1);          // msgId
-        put64(d, ts);         // timestamp U64 微秒
+        put16(d, 1);                               // msgId
+        put64(d, ts);                              // timestamp U64 微秒
         putFloat(d, static_cast<float>(i) * 0.5f); // x = i*0.5
-        put16(d, static_cast<quint16>(i % 1000));   // y
+        put16(d, static_cast<quint16>(i % 1000));  // y
         addUlogMessage(out, 'D', d);
         *lastUs = static_cast<qint64>(ts);
     }
@@ -361,7 +359,8 @@ int main(int argc, char **argv)
     }
     fprintf(stdout, "[ok] 协议模块意图接入宿主分发：protocol.validate 经 host.execute 可执行\n");
 
-    ToolboxHub &toolbox = application.host().toolbox();
+    ExtensionRegistry &toolbox = (*static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
+        application.context().registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension)));
     // 断言语义（关键格式已装入）而非硬编码总数——加一个格式驱动不该让契约测试变红。
     CHECK(toolbox.drivers().size() >= 3);
     CHECK(toolbox.contains(QStringLiteral("csv")));
@@ -383,8 +382,7 @@ int main(int argc, char **argv)
     CHECK(toolbox.driversByDomain(Domain::General).size() >= 2); // CSV + 自定义协议
     fprintf(stdout, "[arch] packs=%d drivers=%d parsers=%d domains=%lld auto=%lld ap=%lld gen=%lld\n",
             (int)toolbox.packs.count(), (int)toolbox.drivers().size(), (int)toolbox.parsers().size(),
-            (long long)toolbox.domains().size(),
-            (long long)toolbox.driversByDomain(Domain::Automotive).size(),
+            (long long)toolbox.domains().size(), (long long)toolbox.driversByDomain(Domain::Automotive).size(),
             (long long)toolbox.driversByDomain(Domain::Autopilot).size(),
             (long long)toolbox.driversByDomain(Domain::General).size());
     CHECK(toolbox.driversByDomain(Domain::Autopilot).size() == 2);
@@ -402,7 +400,8 @@ int main(int argc, char **argv)
 
     // 外部插件扫描（本轮预留入口）：空目录返回空报告，不报错、不影响内置格式。
     const int formatsBeforeScan = toolbox.drivers().size();
-    nextpilot::plotscope::ext::PluginScanReport scan = nextpilot::plotscope::ext::scanExternalPlugins(toolbox, dir.path());
+    nextpilot::plotscope::ext::PluginScanReport scan =
+        nextpilot::plotscope::ext::scanExternalPlugins(toolbox, dir.path());
     CHECK(scan.discovered.isEmpty());
     CHECK(toolbox.drivers().size() == formatsBeforeScan); // 扫描未改动工具箱
     fprintf(stdout, "[ok] 模块(3) 与工具箱(%d 格式驱动) 分离装载；自注册 + 后缀推断 + 插件扫描入口就绪\n",
@@ -516,10 +515,16 @@ int main(int argc, char **argv)
         // UI 插槽：壳级页/组在 host 层 ShellContributions 唯一声明；业务页/组由模块
         // onAttach 自声明，headless 不调 onAttach，因此这里只看到壳的文件/视图两页。
         const auto &slotReg = application.host().uiSlots();
-        // 壳级页面：开始（产品级聚合页，暂留壳）/ 文件 / 视图（业务页在 GUI 激活
-        // 模块后出现，见 test_gui）。
-        CHECK(slotReg.slotsOfKind(SlotKind::RibbonPage).size() == 3);
-        for (const char *p : {"ribbon.page.home", "ribbon.page.file", "ribbon.page.view"})
+        fprintf(stdout, "[debug] RibbonPage count=%d\n", slotReg.slotsOfKind(SlotKind::RibbonPage).size());
+        for (const auto &s : slotReg.slotsOfKind(SlotKind::RibbonPage))
+            fprintf(stdout, "[debug]   page=%s\n", qPrintable(s.slotId));
+        // 模块已统一按内部扩展处理（2026-11-28 裁决）：激活即应用 contributes，
+        // headless 下 9 个页全部在——壳级 3（开始/文件/视图）+ 业务 6（数据/绘图/
+        // 脚本/协议/分析/报告），精确集合断言，不用阈值。
+        CHECK(slotReg.slotsOfKind(SlotKind::RibbonPage).size() == 9);
+        for (const char *p :
+             {"ribbon.page.home", "ribbon.page.file", "ribbon.page.view", "ribbon.page.data", "ribbon.page.plot",
+              "ribbon.page.script", "ribbon.page.protocol", "ribbon.page.analysis", "ribbon.page.report"})
             CHECK(slotReg.slot(QString::fromLatin1(p)) != nullptr);
         // 探针动作挂到绘图页"曲线与轴"组（该组由 PlotModule 在 GUI 侧声明；
         // headless 下无此槽，探针动作计入 unbound——GUI 装配时再校验归属）。
@@ -532,8 +537,8 @@ int main(int argc, char **argv)
         customPack.docs.append(
             {QStringLiteral("custom.doc"), QStringLiteral("自定义能力"), QStringLiteral("docs/custom.md"), QString()});
         CHECK(toolbox.mount(std::move(customPack)));
-        CHECK(toolbox.docs.count() == 6); // 新包条目已进表
-        CHECK(toolbox.unmount(QStringLiteral("pack.custom")));    // 按包原子撤销
+        CHECK(toolbox.docs.count() == 6);                      // 新包条目已进表
+        CHECK(toolbox.unmount(QStringLiteral("pack.custom"))); // 按包原子撤销
         CHECK(toolbox.docs.count() == 5);
         fprintf(stdout, "[ok] 工具箱：机制唯一（Registry<T>）/ 内容全是数据 / mount-unmount 按包原子装卸\n");
     }
@@ -552,8 +557,8 @@ int main(int argc, char **argv)
         }
 
         // 旧方位名 / 菜单名不得再作为插槽存在（区域走 Region 枚举，不进注册表）。
-        for (const char *dead : {"dock.left", "dock.right", "dock.bottom", "dock.diagnostics",
-                                 "canvas.center", "canvas.tool", "menu.plot"})
+        for (const char *dead : {"dock.left", "dock.right", "dock.bottom", "dock.diagnostics", "canvas.center",
+                                 "canvas.tool", "menu.plot"})
             CHECK(slotReg.slot(QString::fromLatin1(dead)) == nullptr);
 
         // 注：headless 不调模块 onAttach，业务组槽未声明，工具箱动作在此计入未归属，
@@ -570,7 +575,7 @@ int main(int argc, char **argv)
     Result<IntentResult> loaded = application.host().execute(loadIntent(csv));
     assert(loaded);
     const DatasetId id = loaded.value().payload.toInt();
-    const Dataset *ds = application.data().get(id);
+    const Dataset *ds = plotscope_test::datasetHub(application.context()).get(id);
     assert(ds != nullptr);
 
     // 2a-0) 归并的**行为锁**：CSV 必须走统一摄取管道，
@@ -609,8 +614,7 @@ int main(int argc, char **argv)
     // 2c) Rust kernel 是数据地基：C++ 只持句柄，算子与缓存全部委托 Rust C ABI。
     assert(ds->nativeHandle() != nullptr); // 数据本体由 Rust PsDataset 持有
     // LOD 抽稀：把 3 点压到 2 个像素桶，Rust 返回 (x,min,max) 三元组。
-    const auto lod = ds->lodMinMax(QStringLiteral("demo"), QStringLiteral("roll"),
-                                   0, 2000000000, 2);
+    const auto lod = ds->lodMinMax(QStringLiteral("demo"), QStringLiteral("roll"), 0, 2000000000, 2);
     assert(!lod.isEmpty() && lod.size() <= 2);
     fprintf(stdout, "[ok] LOD 抽稀在 Rust 侧完成（%d 个三元组）\n", int(lod.size()));
     // 统计算子（ps_stats_series）：roll = 1.0/1.5/2.0，均值 1.5、最小 1、最大 2。
@@ -634,8 +638,7 @@ int main(int argc, char **argv)
         const bool cacheSaved = ds->saveCache(cachePath, fi.size(), fi.lastModified().toMSecsSinceEpoch());
         assert(cacheSaved);
         QString cacheErr;
-        auto restored = Dataset::loadCache(cachePath, fi.size(),
-                                           fi.lastModified().toMSecsSinceEpoch(), &cacheErr);
+        auto restored = Dataset::loadCache(cachePath, fi.size(), fi.lastModified().toMSecsSinceEpoch(), &cacheErr);
         assert(restored.has_value());
         assert(restored->nativeHandle() != nullptr);
         assert(restored->tableCount() == 1);
@@ -643,8 +646,7 @@ int main(int argc, char **argv)
         assert(rch.has_value() && rch->size() == 3);
         assert(std::fabs(rch->value.at(1) - 1.5) < 1e-9);
         // 指纹不匹配应过期（size+1）。
-        auto stale = Dataset::loadCache(cachePath, fi.size() + 1,
-                                        fi.lastModified().toMSecsSinceEpoch());
+        auto stale = Dataset::loadCache(cachePath, fi.size() + 1, fi.lastModified().toMSecsSinceEpoch());
         assert(!stale.has_value());
         fprintf(stdout, "[ok] ps-cache 指纹命中还原 + 指纹过期失效\n");
     }
@@ -661,12 +663,11 @@ int main(int argc, char **argv)
         ui.params[QStringLiteral("format")] = QStringLiteral("ulog");
         Result<IntentResult> uloaded = application.host().execute(ui);
         if (!uloaded)
-            fprintf(stderr, "[diag] ULog 加载失败: %s / %s\n",
-                    uloaded.error().code.toUtf8().constData(),
+            fprintf(stderr, "[diag] ULog 加载失败: %s / %s\n", uloaded.error().code.toUtf8().constData(),
                     uloaded.error().message.toUtf8().constData());
         assert(uloaded);
         const DatasetId uid = uloaded.value().payload.toInt();
-        const Dataset *uds = application.data().get(uid);
+        const Dataset *uds = plotscope_test::datasetHub(application.context()).get(uid);
         assert(uds != nullptr);
         assert(uds->format() == QStringLiteral("ulog"));
 
@@ -721,8 +722,8 @@ int main(int argc, char **argv)
             QString ce;
             // 缓存按 (源文件, 解析器) 粒度落盘：<source>.<parserId>.psc。
             // 同一份源喂多个解析器时各有各的缓存，不会互相覆盖。
-            auto restored = Dataset::loadCache(ulg + QStringLiteral(".ulog.psc"),
-                                               fi.size(), fi.lastModified().toMSecsSinceEpoch(), &ce);
+            auto restored = Dataset::loadCache(ulg + QStringLiteral(".ulog.psc"), fi.size(),
+                                               fi.lastModified().toMSecsSinceEpoch(), &ce);
             assert(restored.has_value());
             assert(restored->table(QStringLiteral("sensor")) != nullptr);
             assert(restored->table(QStringLiteral("sensor"))->rowCount() == rows);
@@ -768,9 +769,9 @@ int main(int argc, char **argv)
 
         // 3d) 回放：移除脚本数据集后重放 Job，得到相同 PlotSpec —— 闭环成立。
         //     稳定 id=100 让回放与会话状态无关，不影响主流程的 id=0 数据集。
-        application.data().remove(100);
-        assert(application.data().get(100) == nullptr);
-        assert(application.data().get(id) != nullptr); // 主数据集仍在
+        plotscope_test::datasetHub(application.context()).remove(100);
+        assert(plotscope_test::datasetHub(application.context()).get(100) == nullptr);
+        assert(plotscope_test::datasetHub(application.context()).get(id) != nullptr); // 主数据集仍在
         int replayedId = -1;
         QVariantMap replayedSpec;
         for (int i = 0; i < recorded.size(); ++i)
@@ -792,7 +793,11 @@ int main(int argc, char **argv)
     //     recent 自动记录 / export 导出活动通道 / clearCache / reload。
     //     全部走宿主系统级 handler，headless 下也能执行。
     {
-        auto mk = [](const QString &op) { Intent i; i.op = op; return i; };
+        auto mk = [](const QString &op) {
+            Intent i;
+            i.op = op;
+            return i;
+        };
         // data.load 成功后自动记入最近文件（settings 持久化）。
         Intent recent = mk(QStringLiteral("data.recent"));
         Result<IntentResult> rr = application.host().execute(recent);
@@ -808,24 +813,24 @@ int main(int argc, char **argv)
         exp.params[QStringLiteral("path")] = outCsv;
         Result<IntentResult> er = application.host().execute(exp);
         if (!er)
-            fprintf(stderr, "[diag] data.export 失败: %s / %s\n",
-                    er.error().code.toUtf8().constData(),
+            fprintf(stderr, "[diag] data.export 失败: %s / %s\n", er.error().code.toUtf8().constData(),
                     er.error().message.toUtf8().constData());
         CHECK(er);
         CHECK(QFile::exists(outCsv));
-        { QFile f(outCsv);
-          CHECK(f.open(QIODevice::ReadOnly | QIODevice::Text));
-          CHECK(QString::fromUtf8(f.readAll()).contains(QStringLiteral("time")));
-          f.close(); }
+        {
+            QFile f(outCsv);
+            CHECK(f.open(QIODevice::ReadOnly | QIODevice::Text));
+            CHECK(QString::fromUtf8(f.readAll()).contains(QStringLiteral("time")));
+            f.close();
+        }
         fprintf(stdout, "[ok] data.export：经 Dataset::channel 取数写出 CSV（有界抽稀）\n");
 
         // data.reload：重载活动源，重新走 data.load（有 sources 支撑）。
-        application.context().setActiveSourceId(application.context().sources().ids().first());
+        application.context().setActiveSourceId(plotscope_test::sourceHub(application.context()).ids().first());
         Intent rel = mk(QStringLiteral("data.reload"));
         Result<IntentResult> rer = application.host().execute(rel);
         if (!rer)
-            fprintf(stderr, "[diag] data.reload 失败: %s / %s\n",
-                    rer.error().code.toUtf8().constData(),
+            fprintf(stderr, "[diag] data.reload 失败: %s / %s\n", rer.error().code.toUtf8().constData(),
                     rer.error().message.toUtf8().constData());
         CHECK(rer);
         fprintf(stdout, "[ok] data.reload：活动源经 data.load 同一路径重载\n");
@@ -835,8 +840,7 @@ int main(int argc, char **argv)
         Result<IntentResult> cr = application.host().execute(cc);
         CHECK(cr);
         CHECK(cr.value().payload.toInt() >= 0);
-        fprintf(stdout, "[ok] data.clearCache：解析缓存清理成功（清掉 %d 个）\n",
-                cr.value().payload.toInt());
+        fprintf(stdout, "[ok] data.clearCache：解析缓存清理成功（清掉 %d 个）\n", cr.value().payload.toInt());
 
         // data.remove：无效 id 明确失败（不误删真实源）；有效路径在 GUI 垃圾桶处验证。
         {
@@ -849,14 +853,14 @@ int main(int argc, char **argv)
 
         // --- 工作区数据源配置：data.load 自动记录 + workspace 意图 ---
         {
-using namespace nextpilot::plotscope::foundation;
-using namespace nextpilot::plotscope::dataset;
-using namespace nextpilot::plotscope::intent;
-using namespace nextpilot::plotscope::uischema;
-using namespace nextpilot::plotscope::registry;
-using namespace nextpilot::plotscope::parser;
-namespace parser = nextpilot::plotscope::parser; // 限定名 parser:: 需别名
-using namespace nextpilot::plotscope::context;
+            using namespace nextpilot::plotscope::foundation;
+            using namespace nextpilot::plotscope::dataset;
+            using namespace nextpilot::plotscope::intent;
+            using namespace nextpilot::plotscope::uischema;
+            using namespace nextpilot::plotscope::registry;
+            using namespace nextpilot::plotscope::parser;
+            namespace parser = nextpilot::plotscope::parser; // 限定名 parser:: 需别名
+            using namespace nextpilot::plotscope::context;
             // data.load（上面已成功加载 csv）应已把来源记入 ws/data/sources。
             WorkspaceDataConfig cfg = WorkspaceDataConfig::load(application.context().settings());
             CHECK(!cfg.sources.isEmpty());
@@ -909,8 +913,7 @@ using namespace nextpilot::plotscope::context;
             const QVariantMap stat = wr.value().payload.toMap();
             CHECK(stat.value(QStringLiteral("sources")).toInt() >= 1);
             // 恢复不能把源重复记进配置（record=false 生效）。
-            const WorkspaceDataConfig afterRestore =
-                WorkspaceDataConfig::load(application.context().settings());
+            const WorkspaceDataConfig afterRestore = WorkspaceDataConfig::load(application.context().settings());
             CHECK(afterRestore.sources.size() == sourcesBefore);
             fprintf(stdout, "[ok] data.workspace.restore：重放 data.load，不重复记录源\n");
         }
@@ -921,7 +924,7 @@ using namespace nextpilot::plotscope::context;
     CHECK(!application.host().isActive(QStringLiteral("mod.plot")));
     Result<IntentResult> stillLoads = application.host().execute(loadIntent(csv));
     assert(stillLoads);
-    assert(application.data().get(id) != nullptr);
+    assert(plotscope_test::datasetHub(application.context()).get(id) != nullptr);
     fprintf(stdout, "[ok] 卸载 plot 模块后 CSV 仍可用，数据未丢失\n");
 
     // 5) 从工具箱撤销 CSV 驱动后，data.load format=csv 不再可执行（能力随注册表撤销）。
@@ -1025,8 +1028,8 @@ using namespace nextpilot::plotscope::context;
                 Dataset::kDefaultWindowPoints);
 
         // LOD：20 万行压到 800 个像素桶，三元组数恒定在 px 量级。
-        const auto blod = big.lodMinMax(QStringLiteral("trace"), QStringLiteral("sig"),
-                                        traceFirstNs, traceLastNs, /*px=*/800);
+        const auto blod =
+            big.lodMinMax(QStringLiteral("trace"), QStringLiteral("sig"), traceFirstNs, traceLastNs, /*px=*/800);
         assert(!blod.isEmpty() && blod.size() <= 800);
         fprintf(stdout, "[ok] 20 万行 LOD 抽稀到 %d 个三元组（px 有界）\n", int(blod.size()));
     }
@@ -1058,8 +1061,7 @@ using namespace nextpilot::plotscope::context;
         nextpilot::plotscope::ext::NmeaMessageParser p;
         CHECK(p.templateCount() >= 3);
         // 标准 GGA 句（校验和 47 与 payload 自洽）。
-        const QByteArray gga =
-            "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n";
+        const QByteArray gga = "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n";
         DecodedFrame f;
         CHECK(p.parse(gga, f));
         CHECK(f.protocol == QStringLiteral("nmea"));
@@ -1087,8 +1089,7 @@ using namespace nextpilot::plotscope::context;
         CHECK(p.parse(gga, f2));
         CHECK(f2.unknown);
         // parse RMC → 能用新模板解出 speed 字段。
-        const QByteArray rmc =
-            "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,,,*3D\r\n";
+        const QByteArray rmc = "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,,,*3D\r\n";
         DecodedFrame f3;
         CHECK(p.parse(rmc, f3));
         CHECK(!f3.unknown);
@@ -1101,12 +1102,11 @@ using namespace nextpilot::plotscope::context;
 
         // param() 点分嵌套 + 缺省回退：不存在的键返回 fallback，绝不取全局。
         QJsonObject nested;
-        nested.insert(QStringLiteral("time"),
-                      QJsonObject{{QStringLiteral("mode"), QStringLiteral("column")}});
+        nested.insert(QStringLiteral("time"), QJsonObject{{QStringLiteral("mode"), QStringLiteral("column")}});
         CHECK(p.configure(nested, nullptr));
         CHECK(p.param(QStringLiteral("time.mode")).toString() == QStringLiteral("column"));
-        CHECK(p.param(QStringLiteral("missing.key"), QStringLiteral("fallback")).toString()
-              == QStringLiteral("fallback"));
+        CHECK(p.param(QStringLiteral("missing.key"), QStringLiteral("fallback")).toString() ==
+              QStringLiteral("fallback"));
         fprintf(stdout, "[ok] 协议参数：param() 支持点分嵌套 + 缺省回退，参数只在实例内生效\n");
     }
 
@@ -1184,7 +1184,7 @@ using namespace nextpilot::plotscope::context;
         CHECK(!reg.insert(QStringLiteral("c"), 3));
         CHECK(!reg.remove(QStringLiteral("a")));
         reg.clear();
-        CHECK(reg.count() == 2);              // clear 被冻结拒绝
+        CHECK(reg.count() == 2); // clear 被冻结拒绝
         CHECK(reg.value(QStringLiteral("a"), 0) == 1);
         CHECK(reg.keys().size() == 2);
 
@@ -1195,9 +1195,11 @@ using namespace nextpilot::plotscope::context;
         ServiceLocator svc;
         int dummy = 42;
         CHECK(svc.registerService(QStringLiteral("domain.service.test.value"), &dummy, QStringLiteral("int")));
-        CHECK(!svc.registerService(QStringLiteral("domain.service.test.value"), &dummy, QStringLiteral("int"))); // 重复拒绝
+        CHECK(!svc.registerService(QStringLiteral("domain.service.test.value"), &dummy,
+                                   QStringLiteral("int"))); // 重复拒绝
         CHECK(svc.service<int>(QStringLiteral("domain.service.test.value"), QStringLiteral("int")) == &dummy);
-        CHECK(svc.service<int>(QStringLiteral("domain.service.test.value"), QStringLiteral("double")) == nullptr); // 类型不符
+        CHECK(svc.service<int>(QStringLiteral("domain.service.test.value"), QStringLiteral("double")) ==
+              nullptr); // 类型不符
         CHECK(svc.count() == 1);
 
         // D12 headless NullContributionSink：只校验不呈现。合法包零错误；坏包暴露问题。
@@ -1206,13 +1208,16 @@ using namespace nextpilot::plotscope::context;
         using nextpilot::plotscope::registry::UiAction;
         Pack good;
         good.id = QStringLiteral("pack.null-test");
-        UiAction ua; ua.id = QStringLiteral("a.test"); ua.label = QStringLiteral("测试");
+        UiAction ua;
+        ua.id = QStringLiteral("a.test");
+        ua.label = QStringLiteral("测试");
         good.uiActions << ua;
         QStringList errs;
         CHECK(NullContributionSink::accept(good, &errs));
         CHECK(errs.isEmpty());
-        Pack bad;                                    // 无 id + 空 id 贡献 → 应被拒
-        UiAction badUa; badUa.id.clear();
+        Pack bad; // 无 id + 空 id 贡献 → 应被拒
+        UiAction badUa;
+        badUa.id.clear();
         bad.uiActions << badUa;
         CHECK(!NullContributionSink::accept(bad, &errs));
         CHECK(errs.size() >= 2);
@@ -1228,7 +1233,8 @@ using namespace nextpilot::plotscope::context;
         // 对话框物理位置：必须在 modules/protocol/gui，不在 gui/shell。
         CHECK(
             QFile::exists(srcRoot + QStringLiteral("/src/application/modules/protocol/gui/ProtocolEditorDialog.cpp")));
-        CHECK(QFile::exists(srcRoot + QStringLiteral("/src/application/modules/protocol/gui/ProtocolInspectorDialog.cpp")));
+        CHECK(QFile::exists(srcRoot +
+                            QStringLiteral("/src/application/modules/protocol/gui/ProtocolInspectorDialog.cpp")));
         CHECK(!QFile::exists(srcRoot + QStringLiteral("/src/application/gui/shell/ProtocolEditorDialog.cpp")));
         CHECK(!QFile::exists(srcRoot + QStringLiteral("/src/application/gui/shell/ProtocolInspectorDialog.cpp")));
         // ps_gui 的源文件清单不再含任何协议对话框（外壳不编译业务 UI）。
@@ -1285,18 +1291,12 @@ using namespace nextpilot::plotscope::context;
         CHECK(isolated.host().deactivate(QStringLiteral("mod.plot")));
         for (const QString &id : plotCommands)
             CHECK(cmds->executeCommand(id, QVariantMap()).error().code == QStringLiteral("E_NO_COMMAND"));
-        int ownerCount = 0;
-        for (const auto &c : isolated.host().contributions())
-            if (c.owner == QStringLiteral("mod.plot"))
-                ++ownerCount;
-        CHECK(ownerCount == 0);
+        auto *registry = static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
+            isolated.context().registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension));
+        CHECK(!registry->isContributionMounted(QStringLiteral("mod.plot")));
 
         CHECK(isolated.host().activate().isEmpty());
-        ownerCount = 0;
-        for (const auto &c : isolated.host().contributions())
-            if (c.owner == QStringLiteral("mod.plot"))
-                ++ownerCount;
-        CHECK(ownerCount <= 1);
+        CHECK(registry->isContributionMounted(QStringLiteral("mod.plot")));
         for (const QString &id : plotCommands)
             CHECK(cmds->executeCommand(id, QVariantMap()).error().code != QStringLiteral("E_NO_COMMAND"));
         fprintf(stdout, "[ok] 卸载 plot 后 plot.* 命令注销，重激活后恢复\n");

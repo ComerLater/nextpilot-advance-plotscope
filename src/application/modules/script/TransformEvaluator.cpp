@@ -1,4 +1,5 @@
 #include "TransformEvaluator.h"
+#include "Intent.h"
 
 #include "LuaEngine.h"
 #include "Transform.h"

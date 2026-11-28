@@ -17,10 +17,10 @@ class WorkspaceModule final : public nextpilot::plotscope::host::IWorkbenchContr
 {
     Q_OBJECT
 public:
-    static nextpilot::plotscope::host::ModuleInfo moduleInfo();
+    static nextpilot::plotscope::registry::ExtensionDescription extensionDescription();
     static nextpilot::plotscope::host::IWorkbenchContribution *create();
 
-    nextpilot::plotscope::host::ModuleInfo info() const override;
+    nextpilot::plotscope::registry::ExtensionDescription description() const override;
     void initialize(nextpilot::plotscope::instantiation::InstantiationService &services) override;
 
 private:

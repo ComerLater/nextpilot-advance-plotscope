@@ -2,8 +2,7 @@
 
 #include <QString>
 
-namespace nextpilot::plotscope::registry
-{
+namespace nextpilot::plotscope::parser {
 
 // 工具箱的业务领域分类。
 //
@@ -14,16 +13,16 @@ namespace nextpilot::plotscope::registry
 // 新增业务方向只加一个枚举值，不动注册表与模块。
 enum class Domain
 {
-    General,     // 通用：CSV / JSON / binary
-    Autopilot,   // 飞控：ULog / apbin / tlog / mavlink / sim
-    Automotive,  // 汽车：ASC / BLF / MDF4 / CAN(DBC)
-    Robotics,    // 机器人：MCAP / ROSbag2
-    Gnss,        // 卫导：NMEA / UBX / OEM7
-    Video        // 视频：同步（非数据表格，预留）
+    General,    // 通用：CSV / JSON / binary
+    Autopilot,  // 飞控：ULog / apbin / tlog / mavlink / sim
+    Automotive, // 汽车：ASC / BLF / MDF4 / CAN(DBC)
+    Robotics,   // 机器人：MCAP / ROSbag2
+    Gnss,       // 卫导：NMEA / UBX / OEM7
+    Video       // 视频：同步（非数据表格，预留）
 };
 
 // 稳定标识（序列化/配置用）与展示名。
 const char *domainKey(Domain domain);
 QString domainName(Domain domain);
 
-} // namespace nextpilot::plotscope::registry
+} // namespace nextpilot::plotscope::parser

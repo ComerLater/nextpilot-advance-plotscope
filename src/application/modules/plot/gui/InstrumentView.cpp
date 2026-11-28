@@ -1,11 +1,12 @@
 #include "InstrumentView.h"
+#include "IWorkspace.h"
 
 #include "AppContext.h"
 #include "IIntentExecutor.h"
 #include "Intent.h"
 #include "Result.h"
 #include "ErrorCodes.h"
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 
 #include <QStackedLayout>
 #include <QVariantList>
@@ -152,7 +153,7 @@ bool InstrumentView::renderFromActive(const QString &kind)
     if (!m_appCtx)
         return false;
     const dataset::DatasetId dsId = m_appCtx->activeDatasetId();
-    const dataset::Dataset *ds = m_appCtx->data().get(dsId);
+    const dataset::Dataset *ds = m_appCtx->workspace().dataset().get(dsId);
     if (!ds)
         return false;
 

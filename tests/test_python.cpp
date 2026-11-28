@@ -4,9 +4,10 @@
 //   2.6.4 数据集↔numpy —— exec 注入 ds、写回落成 v2 数据集
 // 走真实执行路径：App 装配 + script.py.* 意图（与脚本/GUI 同一条执行器）。
 #include "App.h"
+#include "test_registry_access.h"
 #include "Intent.h"
 #include "Dataset.h"
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -157,7 +158,7 @@ int main(int argc, char **argv)
         ds.addTable(QStringLiteral("log"), t1m);
         ds.addF64Column(QStringLiteral("log"), QStringLiteral("val"), QString(), v1m);
         ds.refreshSchema();
-        const DatasetId id = application.data().add(ds);
+        const DatasetId id = plotscope_test::datasetHub(application.context()).add(ds);
         CHECK(id >= 0);
 
         // push：读列 + 写 shm + Python 注册
@@ -212,9 +213,9 @@ int main(int argc, char **argv)
         ds.addTable(QStringLiteral("log"), t);
         ds.addF64Column(QStringLiteral("log"), QStringLiteral("engine_rpm[rpm]"), QStringLiteral("rpm"), rpm);
         ds.refreshSchema();
-        const DatasetId id = application.data().add(ds);
+        const DatasetId id = plotscope_test::datasetHub(application.context()).add(ds);
         CHECK(id >= 0);
-        const int before = application.data().count();
+        const int before = plotscope_test::datasetHub(application.context()).count();
 
         // Python：读列 → rolling 均值（numpy 卷积）→ 写回
         const Result<IntentResult> r =
@@ -242,8 +243,8 @@ int main(int argc, char **argv)
         CHECK(wb);
         const int v2Id = wb.value().payload.toMap().value(QStringLiteral("dataset")).toInt();
         CHECK(v2Id >= 0 && v2Id != id);
-        CHECK(application.data().count() == before + 1);
-        const Dataset *v2 = application.data().get(v2Id);
+        CHECK(plotscope_test::datasetHub(application.context()).count() == before + 1);
+        const Dataset *v2 = plotscope_test::datasetHub(application.context()).get(v2Id);
         CHECK(v2 && v2->name().contains(QStringLiteral("py v2")));
         QVector<double> smooth;
         CHECK(v2->readColumnRows(QStringLiteral("log"), QStringLiteral("rpm_smooth"), 0, 60,
@@ -252,7 +253,7 @@ int main(int argc, char **argv)
         CHECK(qFuzzyCompare(smooth[10], (rpm[8] + rpm[9] + rpm[10] + rpm[11] + rpm[12]) / 5.0));
         CHECK(qFuzzyCompare(smooth[30], (rpm[28] + rpm[29] + rpm[30] + rpm[31] + rpm[32]) / 5.0));
         // 原数据集没有被塞进新列（不可变快照）
-        const Dataset *orig = application.data().get(id);
+        const Dataset *orig = plotscope_test::datasetHub(application.context()).get(id);
         CHECK(orig->table(0)->column(QStringLiteral("rpm_smooth")) == nullptr);
         (void)runOp(application, QStringLiteral("data.remove"),
                     QVariantMap{{QStringLiteral("id"), id}});

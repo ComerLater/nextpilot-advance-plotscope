@@ -13,10 +13,7 @@ QString BlfFormatParser::displayName() const
     return QStringLiteral("BLF 格式解析器");
 }
 
-nextpilot::plotscope::registry::Domain BlfFormatParser::domain() const
-{
-    return Domain::Automotive;
-}
+nextpilot::plotscope::parser::Domain BlfFormatParser::domain() const { return Domain::Automotive; }
 
 QStringList BlfFormatParser::suffixes() const
 {

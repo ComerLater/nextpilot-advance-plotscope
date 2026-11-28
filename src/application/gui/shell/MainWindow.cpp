@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "IWorkspace.h"
 
 #include <cstdio>
 
@@ -8,22 +9,24 @@
 #include "KeybindingDialog.h"
 #include "command/KeybindingRegistry.h"
 #include "PreferencesIntentHandler.h"
+#include "actions/ActionBar.h"
+
 #include "ShellBinder.h"
+#include "MenuId.h"
+#include "MenuRegistry.h"
 #include "theme/IconRegistry.h" // A2c：缩略图绘制器归位 modules/plot/gui，壳只查 IconRegistry
 #include "ThemeManager.h"
 
 #include "AppContext.h"
 #include "RuntimeHost.h"
 #include "InstantiationService.h"
-#include "IPanelsService.h"
 #include "IFormatHints.h"
 #include "IThemeService.h"
 #include "ShellContributions.h"
 #include "Intent.h"
 #include "Result.h"
 #include "ErrorCodes.h"
-#include "UiSlotTypes.h"
-#include "ISlotsService.h"
+#include "IRibbonService.h"
 #include "Contribution.h"
 
 #include "SARibbonMainWindow.h"
@@ -148,7 +151,6 @@ MainWindow::MainWindow(AppContext &appCtx, const registry::ProductSpec &spec, QW
     // 菜单槽（menuWidget）。QMainWindow 的 menuBar 与 menuWidget 是**同一个槽位**
     // —— 调 setMenuBar(nullptr) 会把 ribbon 一起清掉，所以这里不再另建 QMenuBar；
     // 真正的动作由模块/工具箱声明到 ribbon 分组里。
-    statusBar()->showMessage(QStringLiteral("就绪"));
 }
 
 MainWindow::~MainWindow()
@@ -162,102 +164,19 @@ MainWindow::~MainWindow()
     m_appCtx.setCommandHooks(nullptr, nullptr);
 }
 
-void MainWindow::declareStandardSlots()
-{
-    // app 骨架的壳级 Ribbon 页/组，声明清单在 host 层 ShellContributions（不写死在 core）。
-    // 这里只做 GUI 侧的**幂等确认**（宿主已声明过，重复声明不会产生副本），
-    // 保证即便脱离宿主单独使用 MainWindow，槽也齐备。
-    nextpilot::plotscope::workbench::ISlotsService *slotReg = m_context->slotsService();
-    if (!slotReg)
-        return; // bare 壳未装配槽位服务：骨架声明由 host 层直连通道完成，壳侧跳过
-    nextpilot::plotscope::host::declareShellContributions(*slotReg);
-
-    // 骨架自带的**标准动作**：往标准插槽里放内容。
-    //
-    // "打开数据"是 app 骨架级能力（data.load 本来就是系统级意图，
-    // 不归属任何可卸载模块），所以由骨架提供；模块与工具箱往别的
-    // 分组里放自己的入口，两者互不干扰。
-    // action 归位到 8 页对应分组：每个 action 只放一个页，不再全堆在"主页"。
-    // 骨架级能力（data.load/主题等系统级意图）由骨架声明；module 级入口由各 module 声明。
-    auto addSkeleton = [&slotReg](const QString &id, const QString &label,
-                                  const QString &area, const QString &op,
-                                  const QString &icon, const QString &shortcut = QString(),
-                                  int order = 0) {
-        UiAction a;
-        a.id = id;
-        a.label = label;
-        a.slotId = area;
-        a.intentOp = op;
-        a.icon = icon;
-        a.shortcut = shortcut;
-        a.order = order;
-        slotReg->bindLocal(area, a, QStringLiteral("app.skeleton"));
-    };
-
-    // 开始页 / 数据页 / 协议页 / 脚本页的业务入口已随各模块 onAttach 自声明
-    // （D13）；壳这里只保留文件页与视图页的壳级能力。
-    // 文件页也放一个"打开文件"（同一意图）。
-    addSkeleton(QStringLiteral("file.open"), QStringLiteral("打开文件"),
-                QStringLiteral("ribbon.group.file.document"), QStringLiteral("data.load"),
-                QStringLiteral("file_open"), QStringLiteral("Ctrl+O"), 0);
-
-    // "切换主题"：GUI 展示态，声明 intentOp=theme.toggle → 视图页"外观"组。
-    addSkeleton(QStringLiteral("app.action.toggleTheme"), QStringLiteral("切换主题"),
-                QStringLiteral("ribbon.group.view.appearance"), QStringLiteral("theme.toggle"),
-                QStringLiteral("theme_toggle"), QStringLiteral("Ctrl+T"), 0);
-
-    // --- 文件页：四个组 + 组内顺序 ---
-    // 文件组：打开(0) / 导入布局(1) / 设置(2)
-    addSkeleton(QStringLiteral("file.importLayout"), QStringLiteral("导入布局"),
-                QStringLiteral("ribbon.group.file.document"), QStringLiteral("layout.import"),
-                QStringLiteral("import"), QString(), 1);
-    addSkeleton(QStringLiteral("file.settings"), QStringLiteral("设置"),
-                QStringLiteral("ribbon.group.file.document"), QStringLiteral("preferences.open"),
-                QStringLiteral("settings"), QStringLiteral("Ctrl+,"), 2);
-    // 工作区预设：整份"源清单 + 画布布局"存成 .psw，或按名字整体打开。
-    // 需要选名字/输入名字的交互，外壳按 id 特判弹窗，仍然落到 workspace.preset.* 意图。
-    addSkeleton(QStringLiteral("workspace.open"), QStringLiteral("打开工作区"),
-                QStringLiteral("ribbon.group.file.document"), QString(),
-                QStringLiteral("file_open"), QString(), 3);
-    addSkeleton(QStringLiteral("workspace.save"), QStringLiteral("保存工作区"),
-                QStringLiteral("ribbon.group.file.document"), QString(),
-                QStringLiteral("export"), QString(), 4);
-    // 导出组：保存布局(0) / 导出设置(1) / 导出数据(2)
-    addSkeleton(QStringLiteral("file.saveLayout"), QStringLiteral("保存布局"),
-                QStringLiteral("ribbon.group.file.export"), QStringLiteral("layout.save"),
-                QStringLiteral("export"), QStringLiteral("Ctrl+S"), 0);
-    addSkeleton(QStringLiteral("file.exportSettings"), QStringLiteral("导出设置"),
-                QStringLiteral("ribbon.group.file.export"), QStringLiteral("settings.export"),
-                QStringLiteral("export_cfg"), QString(), 1);
-    addSkeleton(QStringLiteral("file.exportData"), QStringLiteral("导出数据"),
-                QStringLiteral("ribbon.group.file.export"), QStringLiteral("data.export"),
-                QStringLiteral("export"), QString(), 2);
-    // 截图组（老设计独立一组）：截图(0)
-    addSkeleton(QStringLiteral("file.screenshot"), QStringLiteral("截图"),
-                QStringLiteral("ribbon.group.file.screenshot"), QStringLiteral("file.screenshot"),
-                QStringLiteral("screenshot"), QString(), 0);
-    // 帮助组：关于(0)
-    addSkeleton(QStringLiteral("help.about"), QStringLiteral("关于"),
-                QStringLiteral("ribbon.group.file.help"), QStringLiteral("help.about"),
-                QStringLiteral("settings"), QString(), 0);
-
-    // 数据页常用组的快速打开/最近由 DataModule 贡献；协议检查器/编辑器归 ProtocolModule；
-    // 运行脚本归 ScriptModule。壳不再预置业务页动作。
-
-    // --- 视图页：面板开关（每个已声明的 dock 视图一个按钮）---
-    // 壳不再持有业务 viewId 字面量：动作在 `declareViewToggleSlots()`（activate 之后、
-    // rebuildRibbon 之前）按 IViewsService 的声明动态注册。这里只留一句说明。
-    // 来源画廊条目由 DataModule 按已装载的格式驱动元数据派生（sourceGalleryActions），
-    // 壳不遍历驱动、不保留格式常量表；这里只保留点击后的对话框分发入口。
-}
-
 // 视图页开关动作：按 IViewsService 的声明动态注册，壳内不出现任何业务 viewId 字面量。
 // 动作 id = "view.toggleDock." + viewId；标签/图标取声明（名称空则回退 viewId）。
 // 调用时机：host.activate(...) 之后、rebuildRibbon() 之前——声明此时才齐。
 void MainWindow::declareViewToggleSlots()
 {
-    if (!m_viewsService || !m_slotsService)
+    if (!m_viewsService || !m_menuRegistry || !m_ribbonService)
         return; // bare 壳 / 未装配：无视图声明可枚举，保持空
+
+    // 组 → 页映射取自 IRibbonService 读回的页/组声明；只给 MenuRegistry 定 MenuId。
+    QHash<QString, QString> groupPage;
+    for (const auto &page : m_ribbonService->ribbonPages())
+        for (const auto &group : m_ribbonService->ribbonGroupsOf(page.id))
+            groupPage.insert(group.id, page.id);
 
     int order = 0;
     for (const QString &area : {QStringLiteral("sidebar"), QStringLiteral("auxiliary"), QStringLiteral("bottom")})
@@ -272,7 +191,11 @@ void MainWindow::declareViewToggleSlots()
                 a.slotId = QStringLiteral("ribbon.group.view.panels");
                 a.icon = view.icon;
                 a.order = order++;
-                m_slotsService->bindLocal(a.slotId, a, QStringLiteral("core.workbench"));
+                const QString pageId = groupPage.value(a.slotId);
+                if (!pageId.isEmpty())
+                    m_menuRegistry->appendMenuItem(
+                        nextpilot::plotscope::registry::MenuId::menubar(pageId),
+                        nextpilot::plotscope::registry::IMenuItem{a, a.slotId, QStringLiteral("core.workbench")});
             }
         }
     }
@@ -281,27 +204,30 @@ void MainWindow::declareViewToggleSlots()
 void MainWindow::build(RuntimeHost &host)
 {
     m_host = &host;
+    m_menuRegistry = host.menuRegistry();
 
-    // 壳读回服务（裁定 52441633 §三 + 52442006 Step 4）：包面板声明/格式提示/
-    // 扩展主题 token/槽位表都经 workbench 接口；实现由装配层注册进服务容器。
+    // 壳读回服务（裁定 52441633 §三 + 52442006 Step 4）：格式提示/扩展主题 token/
+    // Ribbon 页组/视图声明都经 workbench 接口；实现由装配层注册进服务容器。
     // 未装配（bare 壳反证冒烟/极简装配）时保持 nullptr，各读回点退化为空。
     using namespace nextpilot::plotscope::instantiation;
     using namespace nextpilot::plotscope::workbench;
     InstantiationService *services = host.services();
     if (services)
     {
-        m_panelsService = services->getService<IPanelsService>(QStringLiteral("panels.readback"));
         m_formatHints = services->getService<IFormatHints>(QStringLiteral("format.hints"));
         m_themeService = services->getService<IThemeService>(QStringLiteral("theme.readback"));
-        m_slotsService = services->getService<ISlotsService>(QStringLiteral("slots.binding"));
+        m_ribbonService = services->getService<IRibbonService>(QStringLiteral("ribbon.readback"));
         // 视图/编辑器打开服务（A2b 笔2b 复审必修 A）：openView/openEditor 的执行体，
         // 注入 GuiContext（壳只转调，不桥回旧工厂表）。未装配时保持 nullptr。
         m_viewsService = services->getService<IViewsService>(QStringLiteral("views.readback"));
         m_editorService = services->getService<IEditorService>(QStringLiteral("editor.readback"));
     }
 
-    // 绑定器需要槽位服务，构造时给。
-    m_binder = new ShellBinder(this, m_slotsService);
+    // 绑定器构造时注入 Ribbon/views 读回服务与菜单注册表。
+    m_binder = new ShellBinder(this, m_ribbonService, m_viewsService, m_menuRegistry);
+    // 状态栏写入面归 StatusbarPart（`IStatusbarService` 壳内实现）；窗口只持借用指针。
+    m_statusbar = m_binder->statusbar();
+    m_statusbar->showMessage(QStringLiteral("就绪"));
     // Ribbon 上下文页签：binder 不认识命令库，求值器由外壳注入。
     // 用当前上下文快照求值；上下文一改，updateCommandContext 会触发重算。
     m_binder->setWhenEvaluator([this](const QString &when) {
@@ -309,44 +235,9 @@ void MainWindow::build(RuntimeHost &host)
             return true;
         return CommandRegistry::evaluateWhen(when, m_commands->contextValues());
     });
-    // 视图标题栏动作：工具箱声明（ViewTitleActionSpec）→ 外壳造 QAction → ADS 标题栏。
-    // 三条约束写在这里，不给 binder 加业务知识：
-    //   1) when 用命令层求值器判，不自己发明语法；
-    //   2) 标签/图标取命令描述（同一个命令在 Ribbon、标题栏、命令面板显示一致）；
-    //   3) 点击走 m_commands->execute，和按钮/快捷键同一条路径。
-    m_binder->setViewTitleActionProvider([this](QWidget *parent, const QString &viewId) {
-        QList<QAction *> actions;
-        if (!m_commands)
-            return actions;
-        const QHash<QString, QVariant> ctx = m_commands->contextValues();
-        // 标题动作声明经 IPanelsService 读回（裁定 52441633 §三），壳不直连扩展注册表。
-        const QList<nextpilot::plotscope::registry::ViewTitleActionSpec> specs =
-            m_panelsService ? m_panelsService->titleActions(viewId)
-                            : QList<nextpilot::plotscope::registry::ViewTitleActionSpec>{};
-        for (const ViewTitleActionSpec &spec : specs)
-        {
-            if (!spec.when.isEmpty() && !CommandRegistry::evaluateWhen(spec.when, ctx))
-                continue;
-            const CommandDescriptor *cmd = m_commands->find(spec.commandId);
-            auto *action = new QAction(parent);
-            action->setText(cmd ? cmd->title : spec.commandId);
-            action->setToolTip(action->text());
-            if (cmd && !cmd->icon.isEmpty())
-                action->setIcon(QIcon(QStringLiteral(":/icons/%1.svg").arg(cmd->icon)));
-            else
-                action->setIcon(parent ? parent->style()->standardIcon(QStyle::SP_BrowserReload)
-                                       : QIcon());
-            const QString commandId = spec.commandId;
-            connect(action, &QAction::triggered, this, [this, commandId]() {
-                QString error;
-                if (m_commands)
-                    m_commands->execute(commandId, &error);
-            });
-            actions << action;
-        }
-        return actions;
-    });
-    m_context = new GuiContext(this, m_slotsService, m_binder, m_appCtx, &host, m_viewsService, m_editorService, this);
+    // 视图标题栏动作由 ViewPane 直接读 MenuRegistry 的 view/title 条目；
+    // when 作用域注入 `view`=当前 viewId，标题/图标/执行路径归命令层。
+    m_context = new GuiContext(this, m_binder, m_appCtx, &host, m_viewsService, m_editorService, m_themeService, this);
     // 状态栏：先接好信号，模块 onAttach（activate 内）声明状态项时即可排布（验收 7）。
     setupStatusBar();
 
@@ -375,9 +266,6 @@ void MainWindow::build(RuntimeHost &host)
 
     // 报告导出的 viewAction "report.export" 由 report 模块呈现层注册（装配层
     // installReportExport）；外壳零业务 include。脚本与 Ribbon 按钮共用该入口。
-
-    // 1) 骨架插槽
-    declareStandardSlots();
 
     // 2) ribbon（SARibbon）——结构层交给第三方，绑定器只提供插槽数据
     //
@@ -527,12 +415,11 @@ void MainWindow::build(RuntimeHost &host)
             const QString pageKey = actionId.mid(QStringLiteral("view.toggleDock.").size());
             const bool nowVisible = !m_binder->isDockPageVisible(pageKey);
             if (m_binder->setDockPageVisible(pageKey, nowVisible))
-                statusBar()->showMessage(QStringLiteral("面板 %1: %2")
+                m_statusbar->showMessage(QStringLiteral("面板 %1: %2")
                                              .arg(m_binder->dockPageTitle(pageKey),
-                                                  nowVisible ? QStringLiteral("显示")
-                                                             : QStringLiteral("隐藏")));
+                                                  nowVisible ? QStringLiteral("显示") : QStringLiteral("隐藏")));
             else
-                statusBar()->showMessage(QStringLiteral("面板 %1 尚未创建").arg(pageKey));
+                m_statusbar->showMessage(QStringLiteral("面板 %1 尚未创建").arg(pageKey));
             return;
         }
         // 运行脚本：选 .lua/.py 文件 → script.run 意图（与 CLI --run 同一路径）。
@@ -547,9 +434,9 @@ void MainWindow::build(RuntimeHost &host)
             script.params[QStringLiteral("path")] = path;
             const auto sr = host.execute(script);
             if (!sr)
-                statusBar()->showMessage(QStringLiteral("脚本失败: %1").arg(sr.error().message));
+                m_statusbar->showMessage(QStringLiteral("脚本失败: %1").arg(sr.error().message));
             else
-                statusBar()->showMessage(QStringLiteral("脚本已运行: %1").arg(QFileInfo(path).fileName()));
+                m_statusbar->showMessage(QStringLiteral("脚本已运行: %1").arg(QFileInfo(path).fileName()));
             return;
         }
         // 截图：抓当前窗口存 PNG（file.screenshot）。
@@ -578,9 +465,9 @@ void MainWindow::build(RuntimeHost &host)
             QFile f(path);
             if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)
                 && f.write(QJsonDocument(root).toJson(QJsonDocument::Indented)) > 0)
-                statusBar()->showMessage(QStringLiteral("设置已导出: %1").arg(QFileInfo(path).fileName()));
+                m_statusbar->showMessage(QStringLiteral("设置已导出: %1").arg(QFileInfo(path).fileName()));
             else
-                statusBar()->showMessage(QStringLiteral("导出设置失败"));
+                m_statusbar->showMessage(QStringLiteral("导出设置失败"));
             return;
         }
         // 关于：版本与用途说明（help.about）。
@@ -601,14 +488,14 @@ void MainWindow::build(RuntimeHost &host)
             || actionId == QStringLiteral("layout.save"))
         {
             saveState();
-            statusBar()->showMessage(QStringLiteral("布局已保存"));
+            m_statusbar->showMessage(QStringLiteral("布局已保存"));
             return;
         }
         if (actionId == QStringLiteral("file.importLayout")
             || actionId == QStringLiteral("layout.import"))
         {
             restoreState();
-            statusBar()->showMessage(QStringLiteral("布局已导入"));
+            m_statusbar->showMessage(QStringLiteral("布局已导入"));
             return;
         }
 
@@ -637,13 +524,13 @@ void MainWindow::build(RuntimeHost &host)
                 if (m_appCtx.interactions().dispatchViewAction(QStringLiteral("plot.instrument.open"), ip, ires) &&
                     ires && ires.value().toBool())
                 {
-                    statusBar()->showMessage(QStringLiteral("图型: %1").arg(kind));
+                    m_statusbar->showMessage(QStringLiteral("图型: %1").arg(kind));
                     return;
                 }
-                statusBar()->showMessage(QStringLiteral("图型「%1」待接入").arg(kind));
+                m_statusbar->showMessage(QStringLiteral("图型「%1」待接入").arg(kind));
                 return;
             }
-            statusBar()->showMessage(QStringLiteral("图型: %1").arg(kind));
+            m_statusbar->showMessage(QStringLiteral("图型: %1").arg(kind));
             return;
         }
 
@@ -709,20 +596,20 @@ void MainWindow::build(RuntimeHost &host)
                 const int gc = g.value(QStringLiteral("cols")).toInt();
                 if (gr > 0 && gc > 0)
                     // A2c：缩略图按注册 id 查 IconRegistry（"plot/layout.RxC"，1..8
-                    // 全组合已由 PlotThumbnails::registerIcons 注册）。
+                    // 全组合已由绘制器注册）。
                     m_binder->updateActionStyle(
                         QStringLiteral("figure.grid"),
                         gui::IconRegistry::instance().icon(QStringLiteral("plot/layout.%1x%2").arg(gr).arg(gc)),
                         QStringLiteral("%1×%2").arg(gr).arg(gc));
             }
             if (!viewResult)
-                statusBar()->showMessage(QStringLiteral("动作失败: %1").arg(viewResult.error().message));
+                m_statusbar->showMessage(QStringLiteral("动作失败: %1").arg(viewResult.error().message));
             return;
         }
 
         if (intentOp.isEmpty()) // 纯占位动作：没有意图可发，明确提示而非发空 op
         {
-            statusBar()->showMessage(QStringLiteral("动作未声明意图: %1").arg(actionId));
+            m_statusbar->showMessage(QStringLiteral("动作未声明意图: %1").arg(actionId));
             return;
         }
         Intent intent;
@@ -730,7 +617,7 @@ void MainWindow::build(RuntimeHost &host)
         intent.params = params;
         const Result<IntentResult> r = host.execute(intent);
         if (!r)
-            statusBar()->showMessage(QStringLiteral("动作失败: %1").arg(r.error().message));
+            m_statusbar->showMessage(QStringLiteral("动作失败: %1").arg(r.error().message));
     });
 
     // 4) ribbon 重建：把工具箱的 UI 贡献 + 模块的本地入口一起渲染出来
@@ -738,6 +625,8 @@ void MainWindow::build(RuntimeHost &host)
 
     // 5) 命令层：统一命令、命令面板与键位（依赖 ribbon 动作已建好）
     buildCommandLayer(host);
+    // 命令注册表注入视图标题栏部件：标题/图标/执行路径走命令层。
+    m_binder->setCommandRegistry(m_commands.get());
 
     // 6) 恢复上次的窗口状态（首次运行则安全跳过）
     restoreState();
@@ -769,7 +658,7 @@ void MainWindow::rebuildGridMenu()
             QVariant nullV;
             Result<QVariant> r(nullV);
             if (!m_appCtx.interactions().dispatchViewAction(QStringLiteral("plot.grid"), p, r))
-                statusBar()->showMessage(QStringLiteral("网格线切换失败"));
+                m_statusbar->showMessage(QStringLiteral("网格线切换失败"));
         });
     };
     addToggle(QStringLiteral("X 网格线"), QStringLiteral("x"));
@@ -782,7 +671,7 @@ void MainWindow::rebuildGridMenu()
         QVariant nullV;
         Result<QVariant> r(nullV);
         if (!m_appCtx.interactions().dispatchViewAction(QStringLiteral("plot.grid"), p, r))
-            statusBar()->showMessage(QStringLiteral("网格线关闭失败"));
+            m_statusbar->showMessage(QStringLiteral("网格线关闭失败"));
     });
 }
 
@@ -802,11 +691,11 @@ void MainWindow::saveWorkspacePreset(RuntimeHost &host)
     const Result<IntentResult> r = host.execute(intent);
     if (!r)
     {
-        statusBar()->showMessage(QStringLiteral("保存失败: %1").arg(r.error().message));
+        m_statusbar->showMessage(QStringLiteral("保存失败: %1").arg(r.error().message));
         return;
     }
     const QVariantMap payload = r.value().payload.toMap();
-    statusBar()->showMessage(QStringLiteral("已保存工作区 %1（源 %2，页 %3）")
+    m_statusbar->showMessage(QStringLiteral("已保存工作区 %1（源 %2，页 %3）")
                                  .arg(name)
                                  .arg(payload.value(QStringLiteral("sources")).toInt())
                                  .arg(payload.value(QStringLiteral("pages")).toInt()));
@@ -820,7 +709,7 @@ void MainWindow::openWorkspacePreset(RuntimeHost &host)
     const Result<IntentResult> listed = host.execute(listIntent);
     if (!listed)
     {
-        statusBar()->showMessage(QStringLiteral("读取预设列表失败: %1").arg(listed.error().message));
+        m_statusbar->showMessage(QStringLiteral("读取预设列表失败: %1").arg(listed.error().message));
         return;
     }
     QStringList names;
@@ -828,7 +717,7 @@ void MainWindow::openWorkspacePreset(RuntimeHost &host)
         names.append(v.toObject().value(QStringLiteral("name")).toString());
     if (names.isEmpty())
     {
-        statusBar()->showMessage(QStringLiteral("还没有保存过工作区"));
+        m_statusbar->showMessage(QStringLiteral("还没有保存过工作区"));
         return;
     }
 
@@ -844,10 +733,10 @@ void MainWindow::openWorkspacePreset(RuntimeHost &host)
     const Result<IntentResult> r = host.execute(intent);
     if (!r)
     {
-        statusBar()->showMessage(QStringLiteral("打开失败: %1").arg(r.error().message));
+        m_statusbar->showMessage(QStringLiteral("打开失败: %1").arg(r.error().message));
         return;
     }
-    statusBar()->showMessage(QStringLiteral("已打开工作区 %1").arg(name));
+    m_statusbar->showMessage(QStringLiteral("已打开工作区 %1").arg(name));
 }
 
 void MainWindow::openDataWithFormat(RuntimeHost &host, const QString &formatId)
@@ -875,11 +764,11 @@ void MainWindow::openDataWithFormat(RuntimeHost &host, const QString &formatId)
         const Result<IntentResult> r = host.execute(intent);
         if (!r)
         {
-            statusBar()->showMessage(QStringLiteral("载入失败: %1").arg(r.error().message));
+            m_statusbar->showMessage(QStringLiteral("载入失败: %1").arg(r.error().message));
             return;
         }
         const int dsId = r.value().payload.toMap().value(QStringLiteral("dataset")).toInt();
-        statusBar()->showMessage(QStringLiteral("已载入数据集 #%1").arg(dsId));
+        m_statusbar->showMessage(QStringLiteral("已载入数据集 #%1").arg(dsId));
     }
 }
 
@@ -917,12 +806,12 @@ void MainWindow::writeSessionSnapshot()
     QSaveFile file(QDir(dir).filePath(QStringLiteral("last-session")));
     if (!file.open(QIODevice::WriteOnly))
     {
-        statusBar()->showMessage(QStringLiteral("会话快照写入失败: %1").arg(file.errorString()));
+        m_statusbar->showMessage(QStringLiteral("会话快照写入失败: %1").arg(file.errorString()));
         return;
     }
     file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
     if (!file.commit())
-        statusBar()->showMessage(QStringLiteral("会话快照提交失败: %1").arg(file.errorString()));
+        m_statusbar->showMessage(QStringLiteral("会话快照提交失败: %1").arg(file.errorString()));
 }
 
 void MainWindow::restoreSessionSnapshot()
@@ -939,7 +828,7 @@ void MainWindow::restoreSessionSnapshot()
     if (!doc.isObject())
     {
         // 快照损坏：整份丢弃照常启动——恢复是锦上添花，不能挡在启动路径上。
-        statusBar()->showMessage(QStringLiteral("会话快照损坏，已跳过恢复"), 5000);
+        m_statusbar->showMessage(QStringLiteral("会话快照损坏，已跳过恢复"), 5000);
         return;
     }
 
@@ -1107,8 +996,7 @@ void MainWindow::toggleSideBar()
     if (!m_binder)
         return;
     const bool visible = m_binder->toggleSideBar();
-    statusBar()->showMessage(visible ? QStringLiteral("侧栏已显示")
-                                    : QStringLiteral("侧栏已隐藏"));
+    m_statusbar->showMessage(visible ? QStringLiteral("侧栏已显示") : QStringLiteral("侧栏已隐藏"));
 }
 
 void MainWindow::buildCommandLayer(RuntimeHost &host)
@@ -1226,17 +1114,15 @@ bool MainWindow::runShellAction(const QString &op, QString *error)
     if (op == QStringLiteral("view.toggleAuxZone"))
     {
         if (m_binder->toggleAuxZone())
-            statusBar()->showMessage(m_binder->auxZoneVisible()
-                                         ? QStringLiteral("辅助栏已显示")
-                                         : QStringLiteral("辅助栏已隐藏"));
+            m_statusbar->showMessage(m_binder->auxZoneVisible() ? QStringLiteral("辅助栏已显示")
+                                                                : QStringLiteral("辅助栏已隐藏"));
         return true;
     }
     if (op == QStringLiteral("view.togglePanel"))
     {
         if (m_binder->toggleBottomPanel())
-            statusBar()->showMessage(m_binder->bottomPanelVisible()
-                                         ? QStringLiteral("底部面板已显示")
-                                         : QStringLiteral("底部面板已隐藏"));
+            m_statusbar->showMessage(m_binder->bottomPanelVisible() ? QStringLiteral("底部面板已显示")
+                                                                    : QStringLiteral("底部面板已隐藏"));
         return true;
     }
     if (op == QStringLiteral("editor.next"))
@@ -1251,7 +1137,7 @@ bool MainWindow::runShellAction(const QString &op, QString *error)
     if (op == QStringLiteral("editor.close"))
     {
         if (!m_binder->closeCurrentEditor())
-            statusBar()->showMessage(QStringLiteral("当前页签不可关闭"));
+            m_statusbar->showMessage(QStringLiteral("当前页签不可关闭"));
         return true;
     }
     if (op == QStringLiteral("plot.series.removeSelected"))
@@ -1260,7 +1146,7 @@ bool MainWindow::runShellAction(const QString &op, QString *error)
         const QString key = selection.ids.value(QStringLiteral("seriesKey")).toString();
         if (selection.kind != SelectionKind::Series || key.isEmpty())
         {
-            statusBar()->showMessage(QStringLiteral("未选中曲线"));
+            m_statusbar->showMessage(QStringLiteral("未选中曲线"));
             return true;
         }
         QVariantMap params;
@@ -1269,7 +1155,7 @@ bool MainWindow::runShellAction(const QString &op, QString *error)
         Result<QVariant> result(nullValue);
         if (!m_appCtx.interactions().dispatchViewAction(QStringLiteral("plot.series.remove"),
                                                         params, result) || !result)
-            statusBar()->showMessage(QStringLiteral("删除曲线失败"));
+            m_statusbar->showMessage(QStringLiteral("删除曲线失败"));
         return true;
     }
     if (op == QStringLiteral("preferences.keybindings"))
@@ -1322,17 +1208,14 @@ void MainWindow::onStatusTextChanged(const QString &id, const QString &text)
         label->setText(text);
 }
 
-void MainWindow::onStatusFlashed(const QString &text)
-{
-    statusBar()->showMessage(text);
-}
+void MainWindow::onStatusFlashed(const QString &text) { m_statusbar->showMessage(text); }
 
 void MainWindow::rebuildStatusBarLayout()
 {
     // 按 side 分组、priority 升序：左项永久部件（左侧），右项普通部件（右侧）。
     // 先移除全部再按序加回，项数很少（≈4），重建成本可忽略。
     for (QLabel *label : m_statusLabels)
-        statusBar()->removeWidget(label);
+        m_statusbar->removeWidget(label);
     QList<QLabel *> left;
     QList<QLabel *> right;
     for (const StatusSpec &spec : m_context->statusSpecs())
@@ -1354,40 +1237,48 @@ void MainWindow::rebuildStatusBarLayout()
     std::sort(left.begin(), left.end(), priorityLess);
     std::sort(right.begin(), right.end(), priorityLess);
     for (QLabel *label : left)
-        statusBar()->addWidget(label, 1);
+        m_statusbar->addWidget(label, 1);
     for (QLabel *label : right)
-        statusBar()->addPermanentWidget(label, 0);
+        m_statusbar->addPermanentWidget(label, 0);
 }
 
 void MainWindow::registerSlotCommands()
 {
     QSet<QString> seen;
     int added = 0;
-    if (!m_context->slotsService())
+    if (!m_ribbonService || !m_menuRegistry)
         return;
-    for (const UiSlot &slot : m_context->slotsService()->allSlots())
+    for (const auto &page : m_ribbonService->ribbonPages())
     {
-        for (const BoundUiAction &bound : m_context->slotsService()->actionsIn(slot.slotId))
+        const auto groups = m_ribbonService->ribbonGroupsOf(page.id);
+        const QList<nextpilot::plotscope::registry::IMenuItem> items =
+            m_menuRegistry->getMenuItems(nextpilot::plotscope::registry::MenuId::menubar(page.id));
+        for (const auto &group : groups)
         {
-            const UiAction &ua = bound.action;
-            if (ua.id.isEmpty() || seen.contains(ua.id))
-                continue;
-            seen.insert(ua.id);
+            for (const nextpilot::plotscope::registry::IMenuItem &item : items)
+            {
+                if (item.group != group.id)
+                    continue;
+                const nextpilot::plotscope::registry::UiAction &ua = item.action;
+                if (ua.id.isEmpty() || seen.contains(ua.id))
+                    continue;
+                seen.insert(ua.id);
 
-            CommandDescriptor command;
-            command.id = ua.id;
-            command.title = ua.label;
-            command.category = slot.label;
-            command.icon = ua.icon;
-            command.shortcut = ua.shortcut;
-            command.provider = bound.provider;
-            // D7：命令只携带纯数据。本地 Ribbon 动作 id + 意图 op + 参数，
-            // 执行时由 executeCommand 按此顺序派发（无 handler 回调）。
-            command.localActionId = ua.id;
-            command.intentOp = ua.intentOp;
-            command.data = ua.data;
-            if (m_commands->add(command))
-                ++added;
+                CommandDescriptor command;
+                command.id = ua.id;
+                command.title = ua.label;
+                command.category = group.label;
+                command.icon = ua.icon;
+                command.shortcut = ua.shortcut;
+                command.provider = item.owner;
+                // D7：命令只携带纯数据。本地 Ribbon 动作 id + 意图 op + 参数，
+                // 执行时由 executeCommand 按此顺序派发（无 handler 回调）。
+                command.localActionId = ua.id;
+                command.intentOp = ua.intentOp;
+                command.data = ua.data;
+                if (m_commands->add(command))
+                    ++added;
+            }
         }
     }
     fprintf(stdout, "[cmd] 注册动作命令 %d 条\n", added);
@@ -1434,9 +1325,8 @@ void MainWindow::registerShellCommands()
     const QStringList activities = m_binder->activityIds();
     for (const QString &activityId : activities)
     {
-        const ActivitySpec *spec =
-            m_context->slotsService() ? m_context->slotsService()->activity(activityId) : nullptr;
-        const QString label = spec ? spec->label : activityId;
+        const ActivitySpec spec = m_binder->activitySpec(activityId);
+        const QString label = spec.id.isEmpty() ? activityId : spec.label;
         add(QStringLiteral("activity.activate.%1").arg(activityId),
             QStringLiteral("转到 %1").arg(label), QStringLiteral("导航"), QString(), QString());
     }
@@ -1454,7 +1344,7 @@ void MainWindow::updateCommandContext()
     m_commands->setContextValue(QStringLiteral("selection.kind"), selectionKindName(selection.kind));
     m_commands->setContextValue(QStringLiteral("selection.count"),
                                 selection.empty() ? 0 : qMax(1, selection.ids.size()));
-    m_commands->setContextValue(QStringLiteral("dataset.count"), m_appCtx.data().ids().size());
+    m_commands->setContextValue(QStringLiteral("dataset.count"), m_appCtx.workspace().dataset().ids().size());
     m_commands->setContextValue(QStringLiteral("script.running"), false);
     m_commands->setContextValue(QStringLiteral("focus.area"), QStringLiteral("editor"));
     // 上下文变了，Ribbon 上下文页签要跟着收起/展开（只在可见集合变化时重建）。
@@ -1544,11 +1434,10 @@ QList<CommandPalette::Item> MainWindow::buildQuickItems() const
 
     for (const QString &activityId : m_binder->activityIds())
     {
-        const ActivitySpec *spec =
-            m_context->slotsService() ? m_context->slotsService()->activity(activityId) : nullptr;
+        const ActivitySpec spec = m_binder->activitySpec(activityId);
         CommandPalette::Item item;
         item.id = QStringLiteral("quick.activity.%1").arg(activityId);
-        item.title = spec ? spec->label : activityId;
+        item.title = spec.id.isEmpty() ? activityId : spec.label;
         item.category = QStringLiteral("Activity");
         item.keywords = activityId;
         item.action = [this, activityId]() { m_binder->setActiveActivity(activityId); };
@@ -1587,7 +1476,7 @@ bool MainWindow::executeCommand(const QString &id, QString *error)
     if (!ok && error)
         *error = reason;
     if (!ok && !reason.isEmpty())
-        statusBar()->showMessage(reason);
+        m_statusbar->showMessage(reason);
     return ok;
 }
 
@@ -1664,7 +1553,7 @@ void MainWindow::rebuildKeybindingActions()
             continue; // 冲突的第二个绑定不注册；Palette 会标“(冲突)”
         used.insert(sequence);
 
-        auto *action = new QAction(this);
+        auto *action = gui::ActionBar::create(this, gui::IAction{});
         action->setObjectName(QStringLiteral("command.action.%1").arg(id));
         action->setShortcut(QKeySequence(sequence));
         action->setShortcutContext(Qt::WindowShortcut);

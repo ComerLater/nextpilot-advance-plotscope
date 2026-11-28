@@ -12,9 +12,9 @@
 #include "AxesView.h"
 #include "PlaybackEngine.h"
 #include "TimelineWidget.h"
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 #include "Dataset.h"
-#include "SourceHub.h"
+#include "SourceRegistry.h"
 #include "PropertySchema.h"
 #include "Result.h"
 #include "ErrorCodes.h"
@@ -123,7 +123,8 @@ void PlotWorkspace::registerPropertyProviders()
                        s ? QString::number(s->xTimeOffset, 'f', 3) : QStringLiteral("0.000"),
                        PropKind::Number, true);
         const QString yDesc = s && !s->yTransformId.isEmpty()
-            ? m_appCtx.transforms().get(s->yTransformId).label : QStringLiteral("无");
+                                  ? m_appCtx.interactions().transforms().get(s->yTransformId).label
+                                  : QStringLiteral("无");
         tr.rows << row(QStringLiteral("yTransform"), QStringLiteral("Y 轴变换"), yDesc,
                        PropKind::Text, true);
         tr.rows.last().tooltip = QStringLiteral("可选算子/表达式/Lua；在右键菜单或脚本里用 "
@@ -150,9 +151,8 @@ void PlotWorkspace::registerPropertyProviders()
                           PropKind::Bool, true);
         }
         const QString tfId = canvas ? canvas->axisTransform(axis) : QString();
-        const QString tfLabel = tfId.isEmpty()
-            ? QStringLiteral("无（填 Transform id 或算子/表达式/Lua）")
-            : m_appCtx.transforms().get(tfId).label;
+        const QString tfLabel = tfId.isEmpty() ? QStringLiteral("无（填 Transform id 或算子/表达式/Lua）")
+                                               : m_appCtx.interactions().transforms().get(tfId).label;
         if (axis == QStringLiteral("x"))
         {
             o.rows << row(QStringLiteral("transform"), QStringLiteral("X 变换"), tfLabel,
@@ -243,7 +243,7 @@ void PlotWorkspace::registerPropertyProviders()
             if (key == QStringLiteral("transform"))
             {
                 // 轴变换通过 TransformHub 的 id 生效；实际执行在曲线内（Task #123）。
-                if (!value.isEmpty() && !m_appCtx.transforms().contains(value))
+                if (!value.isEmpty() && !m_appCtx.interactions().transforms().contains(value))
                 {
                     if (err)
                         *err = QStringLiteral("未知变换 id: %1").arg(value);

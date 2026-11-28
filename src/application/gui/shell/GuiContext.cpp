@@ -1,4 +1,5 @@
 #include "GuiContext.h"
+#include "Intent.h"
 
 #include "ShellBinder.h"
 
@@ -21,11 +22,11 @@ using namespace nextpilot::plotscope::host;
 
 namespace nextpilot::plotscope::gui {
 
-GuiContext::GuiContext(QMainWindow *window, workbench::ISlotsService *slotSvc, ShellBinder *binder, AppContext &appCtx,
-                       IIntentExecutor *executor, workbench::IViewsService *viewsService,
-                       workbench::IEditorService *editorService, QObject *parent)
-    : QObject(parent), m_window(window), m_slots(slotSvc), m_binder(binder), m_appCtx(appCtx), m_executor(executor),
-      m_viewsService(viewsService), m_editorService(editorService)
+GuiContext::GuiContext(QMainWindow *window, ShellBinder *binder, AppContext &appCtx, IIntentExecutor *executor,
+                       workbench::IViewsService *viewsService, workbench::IEditorService *editorService,
+                       const workbench::IThemeService *themeService, QObject *parent)
+    : QObject(parent), m_window(window), m_binder(binder), m_appCtx(appCtx), m_executor(executor),
+      m_viewsService(viewsService), m_editorService(editorService), m_themeService(themeService)
 {
     // 状态栏中继：登记/文案/瞬时消息的真源在 AppContext::status()（libs/context），
     // 这里只把 hub 事件转发成壳侧信号，MainWindow 的订阅代码不用动。
@@ -76,7 +77,7 @@ void GuiContext::setActivityBadge(const QString &activityId, int count)
 }
 
 // A8b-M2 裁定 52442006 Step 3：installContributions 整段搬 assembly/ContributionsInstaller
-// （写 ISlotsService/StatusHub，壳只渲染）；壳不再灌回，见 ExtensionActivationService.cpp。
+// （写 StatusHub 等装配面，壳只渲染）；壳不再灌回，见 ExtensionService.cpp。
 
 QWidget *GuiContext::openView(const QString &viewId)
 {

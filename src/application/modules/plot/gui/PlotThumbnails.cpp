@@ -60,39 +60,6 @@ QIcon PlotThumbnails::plot(const QString &kind)
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing, true);
 
-    // 文件格式/实时源：画一张"文件卡"——左色块 + 类型缩写，比纯文字好认。
-    static const struct
-    {
-        const char *key;
-        const char *tag;
-        QColor color;
-    } kFormats[] = {
-        {"csv", "CSV", QColor("#4ea1ff")},
-        {"ulog", "ULOG", QColor("#ffb454")},
-        {"custom-protocol", "PROTO", QColor("#d2a8ff")},
-        {"mavlink", "MAV", QColor("#7ee787")},
-        {"nmea", "NMEA", QColor("#39c5cf")},
-        {"stream", "LIVE", QColor("#ff7b72")},
-    };
-    for (const auto &f : kFormats)
-    {
-        if (kind != QLatin1String(f.key))
-            continue;
-        p.setPen(QPen(ink(QColor("#3a4650")), 1));
-        p.setBrush(panelBg());
-        p.drawRoundedRect(QRectF(0.5, 0.5, 95, 54.5), 3, 3);
-        p.setPen(Qt::NoPen);
-        p.setBrush(ink(f.color));
-        p.drawRoundedRect(QRectF(6, 10, 30, 36), 2, 2);
-        p.setPen(ink(QColor("#c9d1d9")));
-        QFont fo = p.font();
-        fo.setPixelSize(11);
-        fo.setBold(true);
-        p.setFont(fo);
-        p.drawText(QRectF(40, 10, 50, 36), Qt::AlignVCenter, QLatin1String(f.tag));
-        return QIcon(pm);
-    }
-
     // 图型缩略图：统一的坐标框。
     p.setPen(QPen(ink(QColor("#2d3841")), 1));
     p.setBrush(panelBg());
@@ -255,7 +222,7 @@ QIcon PlotThumbnails::plot(const QString &kind)
     return QIcon(pm);
 }
 
-void PlotThumbnails::registerIcons()
+void PlotThumbnails::registerIcons(const QVector<QPair<QString, QString>> &driverMetas)
 {
     // A2c：呈现侧三件之一——把全量缩略图按 "plot/<kind>" 注册进 IconRegistry。
     // 幂等：IconRegistry 先到者为准，装配重入安全。
@@ -273,20 +240,43 @@ void PlotThumbnails::registerIcons()
         "horizon",
         "compass",
         "gauge",
-        // 文件格式 / 实时源（文件卡：data 模块的 data.source.<id> 缩略图同表）。
-        "csv",
-        "ulog",
-        "custom-protocol",
-        "mavlink",
-        "nmea",
-        "stream",
     };
     for (const char *k : kPlotKinds)
         reg.registerIcon(QStringLiteral("plot/") + QLatin1String(k), plot(QLatin1String(k)));
+    // 文件格式 / 实时源：按扩展贡献的驱动元数据生成"文件卡"，不在此保留格式常量表。
+    static const QColor kCardColors[] = {QColor("#4ea1ff"), QColor("#ffb454"), QColor("#d2a8ff"),
+                                         QColor("#7ee787"), QColor("#39c5cf"), QColor("#ff7b72")};
+    int idx = 0;
+    for (const auto &meta : driverMetas)
+    {
+        reg.registerIcon(QStringLiteral("plot/") + meta.first, fileCard(meta.second, kCardColors[idx % 6]));
+        ++idx;
+    }
     // 布局全组合 1..8×1..8（GridPickPopup 上限一致）："plot/layout.2x3" 等。
     for (int r = 1; r <= 8; ++r)
         for (int c = 1; c <= 8; ++c)
             reg.registerIcon(QStringLiteral("plot/layout.%1x%2").arg(r).arg(c), layout(r, c));
+}
+
+QIcon PlotThumbnails::fileCard(const QString &tag, const QColor &color)
+{
+    QPixmap pm(96, 56);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(QPen(ink(QColor("#3a4650")), 1));
+    p.setBrush(panelBg());
+    p.drawRoundedRect(QRectF(0.5, 0.5, 95, 54.5), 3, 3);
+    p.setPen(Qt::NoPen);
+    p.setBrush(ink(color));
+    p.drawRoundedRect(QRectF(6, 10, 30, 36), 2, 2);
+    p.setPen(ink(QColor("#c9d1d9")));
+    QFont fo = p.font();
+    fo.setPixelSize(11);
+    fo.setBold(true);
+    p.setFont(fo);
+    p.drawText(QRectF(40, 10, 50, 36), Qt::AlignVCenter | Qt::TextWordWrap, tag);
+    return QIcon(pm);
 }
 
 } // namespace nextpilot::plotscope::gui

@@ -1,9 +1,10 @@
 #include "ReportExporter.h"
 
 #include "AppContext.h"
+#include "IWorkspace.h"
 #include "Contribution.h"
 #include "Dataset.h"
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 #include "ErrorCodes.h"
 #include "InteractionHub.h"
 #include "DialogLauncherHub.h"
@@ -38,7 +39,7 @@ QStringList metadataLines(AppContext &appCtx)
     out << QStringLiteral("导出时间: %1")
                .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));
 
-    auto &repo = appCtx.data();
+    auto &repo = appCtx.workspace().dataset();
     out << QStringLiteral("数据集: %1 个").arg(repo.count());
     for (DatasetId id : repo.ids())
     {
@@ -136,7 +137,7 @@ Result<void> exportReportPdf(AppContext &appCtx, const ReportRequest &request)
     QList<nextpilot::plotscope::registry::ReportSection> sections;
     if (!request.templateId.isEmpty())
     {
-        const auto *tpl = appCtx.toolbox().reports.find(request.templateId);
+        const auto *tpl = appCtx.workspace().reportTemplate(request.templateId);
         if (!tpl)
             return fail(err::NoEnt, QStringLiteral("报告模板不存在: %1").arg(request.templateId));
         sections = tpl->sections;

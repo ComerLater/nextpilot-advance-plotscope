@@ -1,6 +1,10 @@
 #pragma once
 
 #include "AppContext.h"
+#include "IDatasetAccess.h"
+#include "ISourceAccess.h"
+#include "ISubscriptions.h"
+#include "IWorkspace.h"
 #include "IIntentExecutor.h"
 #include "WorkspaceHistory.h"
 #include <QColor>
@@ -25,7 +29,7 @@ struct PlotDocumentSpec;
 }
 namespace nextpilot::plotscope::dataset
 {
-class SourceHub;
+class SourceRegistry;
 }
 
 namespace nextpilot::plotscope::gui
@@ -86,12 +90,11 @@ public:
     // 恢复：按 spec 建页建格（v1 按 rows×cols 等分），逐格回绑 origin 对应的数据集。
     // 两条通道只覆盖"页/格/视图/曲线"，ADS 浮动与合并仍归 dock 布局持久化。
     plot::PlotDocumentSpec toDocumentSpec() const;
-    bool applyDocumentSpec(const plot::PlotDocumentSpec &spec,
-                           const dataset::SourceHub &sources);
+    bool applyDocumentSpec(const plot::PlotDocumentSpec &spec, const dataset::ISourceAccess &sources);
 
     // ---- 全工作区快照 undo（第3仗 3b，#IKXD1P）----
     // 快照源与恢复执行都在本类，WorkspaceHistory 需要这两个口子。
-    dataset::SourceHub &sources() { return m_appCtx.sources(); }
+    dataset::ISourceAccess &sources() { return m_appCtx.workspace().sources(); }
     WorkspaceHistory *history() const { return m_history; }
     // 动作流入口：任何改变工作区形状的变更发生后调用（200ms 安静后结算一步）。
     void notifyHistoryMutation() { m_history->notifyMutation(); }
@@ -120,8 +123,8 @@ public:
     // 该格的绑定意图挂进 pending 队列；源一登记（sourceAdded/datasetAdded
     // 信号）就按 origin 自动接回曲线、回放存盘视口。
     //
-    // demand reference：每个 pending 条目在 SourceHub 上按 origin 计一个
-    // 需求引用（见 SourceHub::demandOrigin）——源被移除后需求仍在，
+    // demand reference：每个 pending 条目在 SourceRegistry 上按 origin 计一个
+    // 需求引用（见 SourceRegistry::demandOrigin）——源被移除后需求仍在，
     // 同 origin 的源再次出现即自动接回。
     int pendingBindCount() const;
     // 挂起中等待的 origin（诊断/preflight 用）。
@@ -134,9 +137,8 @@ public:
     //  · origin 缺失：画布留空态、挂 pending 等晚到——不算失败，但要报告；
     //  · channel 缺失：源在但列对不上（换表头/协议变更）——绑定会静默跳过，
     //    preflight 提前暴露。
-    static QStringList preflightDocumentSpec(const plot::PlotDocumentSpec &spec,
-                                             const dataset::SourceHub &sources,
-                                             const dataset::DatasetHub &datasets);
+    static QStringList preflightDocumentSpec(const plot::PlotDocumentSpec &spec, const dataset::ISourceAccess &sources,
+                                             const dataset::IDatasetAccess &datasets);
 
 private:
     struct Cell
@@ -286,6 +288,10 @@ private:
     int m_fullscreenCell = -1;        // >=0 表示某 cell 处于全屏（其它 cell 面板被隐藏）
     // 全屏时被隐藏的其它面板：退出时只恢复这一批，用户自己关掉的不会被重新打开。
     QVector<QPointer<DockedAxes>> m_fullscreenHidden;
+    // vscode.workspace 事件订阅（取代直连 DatasetRegistry/SourceRegistry 的 Qt 信号）。
+    nextpilot::plotscope::foundation::Subscription m_sourceAddedSub;
+    nextpilot::plotscope::foundation::Subscription m_sourceChangedSub;
+    nextpilot::plotscope::foundation::Subscription m_datasetAddedSub;
     int m_rows = 1;
     int m_cols = 1;
 

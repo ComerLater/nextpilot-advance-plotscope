@@ -16,7 +16,7 @@
 namespace nextpilot::plotscope::dataset {
 
 using nextpilot::plotscope::foundation::Result;
-using nextpilot::plotscope::workbench::Subscription;
+using nextpilot::plotscope::foundation::Subscription;
 
 class IIngest
 {
@@ -31,10 +31,10 @@ public:
 
     // §1.3.1 事件（VSCode Event 模式）：装配层从摄取管道/AppContext 转发。
     // 加载生命周期属摄取域，不抬到 workspace 全局（评论 52436915 裁定）。
-    virtual Subscription onDidStartLoad(std::function<void()> l) = 0;
-    virtual Subscription onDidFinishLoad(std::function<void(bool ok)> l) = 0;
+    virtual foundation::Subscription onDidStartLoad(std::function<void()> l) = 0;
+    virtual foundation::Subscription onDidFinishLoad(std::function<void(bool ok)> l) = 0;
     // 进度：done/total 折算成 0-100 与文案。
-    virtual Subscription onDidReportProgress(std::function<void(int, const QString &)> l) = 0;
+    virtual foundation::Subscription onDidReportProgress(std::function<void(int, const QString &)> l) = 0;
 };
 
 } // namespace nextpilot::plotscope::dataset

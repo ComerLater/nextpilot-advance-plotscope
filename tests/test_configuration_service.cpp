@@ -53,7 +53,7 @@ int main(int argc, char **argv)
     // 内存态 SettingsStore（空路径）+ 唯一扩展注册表——AppContext 组合根同款。
     context::SettingsStore settings;
     RegistryTree tree;
-    registry::ToolboxHub toolbox(tree);
+    registry::ExtensionRegistry toolbox(tree);
     assembly::ConfigurationServiceAdapter svc(settings, toolbox);
 
     // 声明两个键：lineWidth（number, default=2）与 theme.accent（string, default="blue"）。

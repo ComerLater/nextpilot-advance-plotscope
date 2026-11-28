@@ -8,6 +8,7 @@
 #include "Intent.h"
 #include "IIntentExecutor.h"
 #include "AppContext.h"
+#include "IWorkspace.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -406,7 +407,7 @@ namespace {
 void launchImportDialog(QWidget *parent, nextpilot::plotscope::context::AppContext &appCtx,
                         nextpilot::plotscope::intent::IIntentExecutor &executor)
 {
-    const auto picked = nextpilot::plotscope::gui::ImportDialog::run(appCtx.toolbox().drivers(), parent);
+    const auto picked = nextpilot::plotscope::gui::ImportDialog::run(appCtx.workspace().sourceDrivers(), parent);
     if (!picked.ok())
         return; // 用户取消
     nextpilot::plotscope::intent::Intent intent;

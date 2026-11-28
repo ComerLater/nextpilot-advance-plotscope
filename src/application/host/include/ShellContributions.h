@@ -11,14 +11,18 @@
 //     的页/组由各模块经 contributes() 声明式贡献。
 //
 // 本文件是 app 骨架的配置（app 长什么样），不是 core 机制；core 只提供
-// 插槽注册表与页/组声明能力。GUI 侧 MainWindow 脱离宿主单独使用时可再调一次
-// 作幂等确认（同内容、先到者为准）。
+// 插槽注册表与页/组声明能力。
 
+#include "ContributionParser.h"
 #include "UiSlotHub.h"
 
 namespace nextpilot::plotscope::workbench
 {
 class ISlotsService;
+}
+
+namespace nextpilot::plotscope::registry {
+class MenuRegistry;
 }
 
 namespace nextpilot::plotscope::host
@@ -29,5 +33,14 @@ void declareShellContributions(nextpilot::plotscope::registry::UiSlotHub &regist
 // A8b-M2 裁定 52442006 Step 4：壳（gui 目录）不再持 UiSlotHub，骨架声明经
 // ISlotsService 通道（同一份声明清单，与 UiSlotHub 版完全等价）。
 void declareShellContributions(nextpilot::plotscope::workbench::ISlotsService &slots);
+
+// 壳级标准动作：骨架自带的 Ribbon 入口（文件/视图/导出/截图/帮助），直接落
+// MenuRegistry（MenuId = menubar/<pageId>）；页/组归属与上方声明同源。
+void declareShellActions(nextpilot::plotscope::registry::MenuRegistry &menus);
+
+// 壳骨架的 contributes 文档（owner = app.skeleton）：页/组与 declareShellActions 的
+// 动作归属同源，经 ExtensionRegistry::mountContribution 进 contributes 数据面；
+// 壳从此不再独占一条插槽通道。
+nextpilot::plotscope::registry::ContributesDoc shellContributes();
 
 } // namespace nextpilot::plotscope::host

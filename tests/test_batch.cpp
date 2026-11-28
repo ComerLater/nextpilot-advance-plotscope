@@ -3,8 +3,9 @@
 //   2.4.2 进度反馈（可取消）—— progress 广播计数 + 分片边界取消生效
 // 走真实执行路径：App 装配 + data.load/script 同一条执行器（与 GUI/CLI 同路径）。
 #include "App.h"
+#include "test_registry_access.h"
 #include "Intent.h"
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 #include "InteractionHub.h"
 
 #include <QCoreApplication>
@@ -137,7 +138,7 @@ int main(int argc, char **argv)
     // 注：data.remove 的底层回收是延迟的（deleteLater），先冲事件循环再断言。
     for (int i = 0; i < 5; ++i)
         QCoreApplication::processEvents();
-    CHECK(application.data().count() == 0);
+    CHECK(plotscope_test::datasetHub(application.context()).count() == 0);
     fprintf(stdout, "[ok] 2.4.1 data.batch.run：3 文件 1 损坏 → 2 成功 1 失败（stage=load 明细准确）\n");
 
     // ---- 脚本阶段失败：stage=script 明细 ----
@@ -265,7 +266,7 @@ int main(int argc, char **argv)
     p5.insert(QStringLiteral("keep"), true);
     const QVariantMap s5 = runBatch(application, p5);
     CHECK(s5.value(QStringLiteral("ok")).toInt() == 1);
-    CHECK(application.data().count() == 1);
+    CHECK(plotscope_test::datasetHub(application.context()).count() == 1);
     fprintf(stdout, "[ok] keep=true 保留数据集（load 产物可继续消费）\n");
 
     fprintf(stdout, "ALL PASS\n");

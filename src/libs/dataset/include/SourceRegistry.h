@@ -10,8 +10,7 @@
 #include <QStringList>
 #include <QVector>
 
-namespace nextpilot::plotscope::dataset
-{
+namespace nextpilot::plotscope::dataset {
 
 using nextpilot::plotscope::foundation::Result;
 
@@ -28,13 +27,12 @@ using nextpilot::plotscope::foundation::Result;
 //
 // 每个数据源有稳定 id，各有独立状态与推进节奏，互不牵连；
 // 多源打开即多实例，源间无共享可变状态。
-class SourceHub : public nextpilot::plotscope::registry::RegistryNode
+class SourceRegistry : public nextpilot::plotscope::registry::RegistryNode
 {
     Q_OBJECT
 public:
     // 构造即上树（kind=Source，name=数据源；M2.8 遗留5：推迟池收口）。
-    explicit SourceHub(nextpilot::plotscope::registry::RegistryTree &tree,
-                            QObject *parent = nullptr);
+    explicit SourceRegistry(nextpilot::plotscope::registry::RegistryTree &tree, QObject *parent = nullptr);
 
     // ---- RegistryNode 可观测（diag.registries 用）----
     int count() const override { return m_sources.count(); }

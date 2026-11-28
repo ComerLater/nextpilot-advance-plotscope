@@ -1,23 +1,22 @@
-#include "SourceHub.h"
+#include "SourceRegistry.h"
 #include "ErrorCodes.h"
 
 #include <algorithm>
 
-namespace nextpilot::plotscope::dataset
-{
-using nextpilot::plotscope::foundation::Result;
+namespace nextpilot::plotscope::dataset {
 using nextpilot::plotscope::foundation::fail;
-using nextpilot::plotscope::registry::RegistryNode;
+using nextpilot::plotscope::foundation::Result;
 using nextpilot::plotscope::registry::RegistryKind;
+using nextpilot::plotscope::registry::RegistryNode;
 using nextpilot::plotscope::registry::RegistryTree;
 namespace err = nextpilot::plotscope::foundation::err;
 
-SourceHub::SourceHub(RegistryTree &tree, QObject *parent)
+SourceRegistry::SourceRegistry(RegistryTree &tree, QObject *parent)
     : RegistryNode(tree, RegistryKind::Source, QStringLiteral("数据源"), parent)
 {
 }
 
-int SourceHub::add(DataSourceInfo info)
+int SourceRegistry::add(DataSourceInfo info)
 {
     const int id = m_nextId++;
     info.id = id;
@@ -27,7 +26,7 @@ int SourceHub::add(DataSourceInfo info)
     return id;
 }
 
-Result<int> SourceHub::addWithStableId(DataSourceInfo info, int id)
+Result<int> SourceRegistry::addWithStableId(DataSourceInfo info, int id)
 {
     if (id < 0)
         return fail(err::Id, QStringLiteral("数据源 id 非法"));
@@ -42,7 +41,7 @@ Result<int> SourceHub::addWithStableId(DataSourceInfo info, int id)
     return id;
 }
 
-QStringList SourceHub::keysAsStrings() const
+QStringList SourceRegistry::keysAsStrings() const
 {
     QStringList out;
     out.reserve(m_sources.count());
@@ -54,7 +53,7 @@ QStringList SourceHub::keysAsStrings() const
     return out;
 }
 
-bool SourceHub::update(int id, const DataSourceInfo &info)
+bool SourceRegistry::update(int id, const DataSourceInfo &info)
 {
     DataSourceInfo *cur = m_sources.find(id);
     if (!cur)
@@ -66,7 +65,7 @@ bool SourceHub::update(int id, const DataSourceInfo &info)
     return true;
 }
 
-bool SourceHub::setState(int id, SourceState state, const QString &error)
+bool SourceRegistry::setState(int id, SourceState state, const QString &error)
 {
     DataSourceInfo *cur = m_sources.find(id);
     if (!cur)
@@ -77,7 +76,7 @@ bool SourceHub::setState(int id, SourceState state, const QString &error)
     return true;
 }
 
-bool SourceHub::bindParser(int id, const ParserBinding &binding)
+bool SourceRegistry::bindParser(int id, const ParserBinding &binding)
 {
     DataSourceInfo *cur = m_sources.find(id);
     if (!cur)
@@ -99,7 +98,7 @@ bool SourceHub::bindParser(int id, const ParserBinding &binding)
     return true;
 }
 
-bool SourceHub::unbindParser(int id, const QString &parserId)
+bool SourceRegistry::unbindParser(int id, const QString &parserId)
 {
     DataSourceInfo *cur = m_sources.find(id);
     if (!cur)
@@ -107,7 +106,7 @@ bool SourceHub::unbindParser(int id, const QString &parserId)
     auto &list = cur->parsers;
     const auto before = list.size();
     list.erase(std::remove_if(list.begin(), list.end(),
-                               [&parserId](const ParserBinding &b) { return b.parserId == parserId; }),
+                              [&parserId](const ParserBinding &b) { return b.parserId == parserId; }),
                list.end());
     if (list.size() == before)
         return false;
@@ -115,7 +114,7 @@ bool SourceHub::unbindParser(int id, const QString &parserId)
     return true;
 }
 
-const ParserBinding *SourceHub::parserFor(int id, const QString &parserId) const
+const ParserBinding *SourceRegistry::parserFor(int id, const QString &parserId) const
 {
     const DataSourceInfo *cur = m_sources.find(id);
     if (!cur)
@@ -126,7 +125,7 @@ const ParserBinding *SourceHub::parserFor(int id, const QString &parserId) const
     return nullptr;
 }
 
-QVector<ParserBinding> SourceHub::parsersOf(int id) const
+QVector<ParserBinding> SourceRegistry::parsersOf(int id) const
 {
     const DataSourceInfo *cur = m_sources.find(id);
     if (!cur)
@@ -134,7 +133,7 @@ QVector<ParserBinding> SourceHub::parsersOf(int id) const
     return cur->parsers;
 }
 
-bool SourceHub::addDataset(int id, int datasetId)
+bool SourceRegistry::addDataset(int id, int datasetId)
 {
     DataSourceInfo *cur = m_sources.find(id);
     if (!cur)
@@ -145,7 +144,7 @@ bool SourceHub::addDataset(int id, int datasetId)
     return true;
 }
 
-bool SourceHub::removeDataset(int id, int datasetId)
+bool SourceRegistry::removeDataset(int id, int datasetId)
 {
     DataSourceInfo *cur = m_sources.find(id);
     if (!cur)
@@ -156,7 +155,7 @@ bool SourceHub::removeDataset(int id, int datasetId)
     return removed;
 }
 
-bool SourceHub::remove(int id, QVector<int> *datasetIds)
+bool SourceRegistry::remove(int id, QVector<int> *datasetIds)
 {
     const DataSourceInfo *cur = m_sources.find(id);
     if (!cur)
@@ -169,12 +168,9 @@ bool SourceHub::remove(int id, QVector<int> *datasetIds)
     return true;
 }
 
-const DataSourceInfo *SourceHub::get(int id) const
-{
-    return m_sources.find(id);
-}
+const DataSourceInfo *SourceRegistry::get(int id) const { return m_sources.find(id); }
 
-int SourceHub::sourceOfDataset(int datasetId) const
+int SourceRegistry::sourceOfDataset(int datasetId) const
 {
     if (datasetId < 0)
         return -1;
@@ -186,7 +182,7 @@ int SourceHub::sourceOfDataset(int datasetId) const
     return -1;
 }
 
-int SourceHub::sourceByOrigin(const QString &origin) const
+int SourceRegistry::sourceByOrigin(const QString &origin) const
 {
     if (origin.isEmpty())
         return -1;
@@ -198,21 +194,21 @@ int SourceHub::sourceByOrigin(const QString &origin) const
     return -1;
 }
 
-QVector<int> SourceHub::ids() const
+QVector<int> SourceRegistry::ids() const
 {
     QVector<int> out = m_sources.keys().toVector();
     std::sort(out.begin(), out.end());
     return out;
 }
 
-void SourceHub::clear()
+void SourceRegistry::clear()
 {
     const auto all = ids();
     for (int id : all)
         remove(id);
 }
 
-void SourceHub::demandOrigin(const QString &origin)
+void SourceRegistry::demandOrigin(const QString &origin)
 {
     if (origin.isEmpty())
         return;
@@ -227,7 +223,7 @@ void SourceHub::demandOrigin(const QString &origin)
     m_demands.append({origin, 1});
 }
 
-void SourceHub::releaseOrigin(const QString &origin)
+void SourceRegistry::releaseOrigin(const QString &origin)
 {
     for (int i = 0; i < m_demands.size(); ++i)
     {
@@ -240,7 +236,7 @@ void SourceHub::releaseOrigin(const QString &origin)
     }
 }
 
-int SourceHub::demandCount(const QString &origin) const
+int SourceRegistry::demandCount(const QString &origin) const
 {
     for (const auto &d : m_demands)
     {
@@ -250,7 +246,7 @@ int SourceHub::demandCount(const QString &origin) const
     return 0;
 }
 
-QStringList SourceHub::demandedOrigins() const
+QStringList SourceRegistry::demandedOrigins() const
 {
     QStringList out;
     for (const auto &d : m_demands)
@@ -258,7 +254,7 @@ QStringList SourceHub::demandedOrigins() const
     return out;
 }
 
-QStringList SourceHub::unsatisfiedDemands() const
+QStringList SourceRegistry::unsatisfiedDemands() const
 {
     QStringList out;
     for (const auto &d : m_demands)

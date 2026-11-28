@@ -17,13 +17,13 @@ class AnalysisModule final : public nextpilot::plotscope::host::IWorkbenchContri
 {
     Q_OBJECT
 public:
-    static nextpilot::plotscope::host::ModuleInfo moduleInfo();
+    static nextpilot::plotscope::registry::ExtensionDescription extensionDescription();
     static nextpilot::plotscope::host::IWorkbenchContribution *create();
 
-    nextpilot::plotscope::host::ModuleInfo info() const override;
+    nextpilot::plotscope::registry::ExtensionDescription description() const override;
     void initialize(nextpilot::plotscope::instantiation::InstantiationService &services) override;
     void onAttach(nextpilot::plotscope::host::IUiContext &ui) override;
-    nextpilot::plotscope::registry::ModuleContributions contributes() const override;
+    nextpilot::plotscope::registry::ContributesDoc contributes() const override;
 
 private:
     class Handler;

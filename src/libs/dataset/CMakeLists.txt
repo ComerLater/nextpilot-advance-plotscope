@@ -5,13 +5,13 @@
 # 任何想用数据模型的消费者可只链本库，不必吞下整个 ps_context。
 add_library(ps_dataset STATIC
     src/Dataset.cpp
-    src/DatasetHub.cpp
-    src/SourceHub.cpp
+    src/DatasetRegistry.cpp
+    src/SourceRegistry.cpp
     include/Dataset.h
-    include/DatasetHub.h
+    include/DatasetRegistry.h
     include/Source.h
     include/DataSource.h
-    include/SourceHub.h
+    include/SourceRegistry.h
     include/ChannelMime.h
     include/IngestChannel.h
 )

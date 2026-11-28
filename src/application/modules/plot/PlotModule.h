@@ -18,16 +18,16 @@ class PlotModule final : public nextpilot::plotscope::host::IWorkbenchContributi
 {
     Q_OBJECT
 public:
-    // 静态元数据：供编译期自注册（PS_REGISTER_MODULE）使用，无需实例化。
-    static nextpilot::plotscope::host::ModuleInfo moduleInfo();
+    // 静态描述：供编译期自注册（PS_REGISTER_EXTENSION）使用，无需实例化。
+    static nextpilot::plotscope::registry::ExtensionDescription extensionDescription();
     static nextpilot::plotscope::host::IWorkbenchContribution *create();
 
-    nextpilot::plotscope::host::ModuleInfo info() const override;
+    nextpilot::plotscope::registry::ExtensionDescription description() const override;
     void initialize(nextpilot::plotscope::instantiation::InstantiationService &services) override;
 
     // GUI 环境下声明本模块的界面入口（headless 时宿主不调用）。
     void onAttach(nextpilot::plotscope::host::IUiContext &ui) override;
-    nextpilot::plotscope::registry::ModuleContributions contributes() const override;
+    nextpilot::plotscope::registry::ContributesDoc contributes() const override;
 
 private:
     class Handler;

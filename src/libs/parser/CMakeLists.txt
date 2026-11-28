@@ -5,10 +5,12 @@ add_library(ps_parser STATIC
     src/IByteSource.cpp
     src/ParserHub.cpp
     src/IMessageParser.cpp
+    src/Domain.cpp
     include/DecodedFrame.h
     include/IByteSource.h
     include/ParserHub.h
     include/IMessageParser.h
+    include/Domain.h
     include/ps_parser_spi.h
     include/ps_message_parser_spi.h
 )

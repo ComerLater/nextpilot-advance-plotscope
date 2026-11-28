@@ -1,4 +1,5 @@
 // ps_ui_driver —— offscreen UI 自动化驱动（截图 + Qt 事件注入），唯一的 UI 工具。
+#include "Intent.h"
 //
 // 职责（吸收原 plotscope-gui-shot，见 issue IKX638）：
 //   1) 交互驱动：JSON 步骤脚本，事件注入模拟用户操作；
@@ -40,6 +41,7 @@
 
 #include "App.h"
 #include "AppContext.h"
+#include "test_registry_access.h"
 #include "WorkbenchAdapters.h" // settings 场景：SettingsEditorWidget / BuiltinSettingsEditorProvider
 #include "MainWindow.h"
 #include "ShellBinder.h"
@@ -175,7 +177,7 @@ bool shotDialog(QWidget &dlg, const QString &path, int waitMs)
 
 bool dialogImport(App &application, const QJsonObject &params, const QString &path)
 {
-    ImportDialog dlg(application.context().toolbox().drivers());
+    ImportDialog dlg(plotscope_test::extensionHub(application.context()).drivers());
     const QString p = params.value(QStringLiteral("path")).toString();
     if (!p.isEmpty())
         dlg.setPath(p); // 预填路径立即探测（与"打开方式"同路径）
@@ -441,7 +443,7 @@ int main(int argc, char *argv[])
         {
             // 数据集全部数值通道上图：每次 setActiveChannel 等价于在数据集树双击一列。
             const int dsId = step.value(QStringLiteral("dataset")).toInt(lastDataset);
-            const Dataset *ds = application.context().data().get(dsId);
+            const Dataset *ds = plotscope_test::datasetHub(application.context()).get(dsId);
             if (!ds || ds->tableCount() == 0)
             {
                 fail(op, QStringLiteral("无可用数据集/表 (dataset=%1)").arg(dsId));
@@ -634,7 +636,7 @@ int main(int argc, char *argv[])
             info.kind = SourceKind::Live;
             info.state = paused ? SourceState::Paused : SourceState::Streaming;
             info.datasetIds = lastDataset >= 0 ? QVector<int>{lastDataset} : QVector<int>{};
-            const int liveId = application.context().sources().add(info);
+            const int liveId = plotscope_test::sourceHub(application.context()).add(info);
             application.context().setActiveSourceId(liveId);
             QApplication::processEvents();
             ok(QStringLiteral("演示 live 源 id=%1 name=%2 state=%3")

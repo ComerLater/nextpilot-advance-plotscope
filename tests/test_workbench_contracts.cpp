@@ -14,6 +14,7 @@
 #include <type_traits>
 
 using namespace nextpilot::plotscope::workbench;
+using nextpilot::plotscope::foundation::Subscription;
 namespace ds = nextpilot::plotscope::dataset;
 
 namespace {

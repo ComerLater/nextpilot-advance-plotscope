@@ -1,4 +1,5 @@
 // B8-b：TransformField 输入控件输出契约测试（offscreen GUI）。
+#include "Intent.h"
 // 验证选算子 / 直接敲表达式 / Lua 编辑回填三条路径的 TransformRequest 输出。
 #include "AppContext.h"
 #include "Transform.h"
@@ -42,7 +43,7 @@ int main(int argc, char **argv)
     QApplication app(argc, argv);
 
     AppContext ctx;
-    ctx.transforms().clear();
+    ctx.interactions().transforms().clear();
 
     // --- 1. 按能力过滤出 descriptor ---
     TransformField field(ctx, CapDerived);
@@ -116,7 +117,7 @@ int main(int argc, char **argv)
         d.label = name;
         d.capabilities = CapTransform;
         Q_UNUSED(source);
-        ctx.transforms().registerDescriptor(d);
+        ctx.interactions().transforms().registerDescriptor(d);
         return Result<TransformDescriptor>(d);
     };
     ctx.interactions().registerTransformScriptOps(ops);
@@ -125,7 +126,7 @@ int main(int argc, char **argv)
     // 手动走一遍"保存 -> 注册 -> 控件重拉"的链路（编辑按钮内部就是这么做的）。
     const TransformDescriptor r = ops.save(QStringLiteral("myfilter"), QByteArray()).value();
     CHECK(savedOk);
-    CHECK(ctx.transforms().contains(QStringLiteral("lua.myfilter")));
+    CHECK(ctx.interactions().transforms().contains(QStringLiteral("lua.myfilter")));
 
     // 新控件应能看到新脚本。
     TransformField field2(ctx, CapDerived);

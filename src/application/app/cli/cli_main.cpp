@@ -165,8 +165,8 @@ int main(int argc, char **argv)
 
     if (command == QStringLiteral("--kernel"))
     {
-        fprintf(stdout, "Rust kernel: version=%s abi=%u (需要 %u) selftest=%d\n",
-                ps_kernel_version(), ps_abi_version(), PS_ABI_VERSION, ps_abi_selftest());
+        fprintf(stdout, "Rust kernel: version=%s abi=%u (需要 %u) selftest=%d\n", ps_kernel_version(), ps_abi_version(),
+                PS_ABI_VERSION, ps_abi_selftest());
         return ps_abi_version() == PS_ABI_VERSION && ps_abi_selftest() == 0 ? 0 : 1;
     }
 
@@ -184,33 +184,32 @@ int main(int argc, char **argv)
     {
         // A8b-M1：只列 vscode contributes 契约表（owner/key/id/order），
         // 纯读扩展注册表的 contributes 贡献面，不链 GUI / 业务数据。
-        const auto &extensions = application.context().toolbox();
+        const auto &extensions = (*static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
+            application.context().registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension)));
         for (const auto &c : extensions.contributedCommands())
-            fprintf(stdout, "%s commands %s order=%d\n",
-                    u8(extensions.ownerOfCommand(c.command)), u8(c.command), c.order);
+            fprintf(stdout, "%s commands %s order=%d\n", u8(extensions.ownerOfCommand(c.command)), u8(c.command),
+                    c.order);
         for (const auto &e : extensions.paletteEntries())
-            fprintf(stdout, "%s menus.commandPalette %s group=%s when=%s\n",
-                    u8(e.owner), u8(e.item.command),
+            fprintf(stdout, "%s menus.commandPalette %s group=%s when=%s\n", u8(e.owner), u8(e.item.command),
                     u8(e.item.group.isEmpty() ? QStringLiteral("-") : e.item.group),
                     u8(e.item.when.isEmpty() ? QStringLiteral("-") : e.item.when));
         // A8b-M2：其余 contributes 键同样是纯声明数据，按 owner/key/id 输出，
         // 供 headless 验收「扩展一个视图 → 各 place 可见」。不渲染、不解释业务。
         for (const auto &c : extensions.contributedViewContainers())
-            fprintf(stdout, "%s viewsContainers %s area=%s order=%d\n",
-                    u8(c.owner), u8(c.item.id), u8(c.item.area), c.item.order);
+            fprintf(stdout, "%s viewsContainers %s area=%s order=%d\n", u8(c.owner), u8(c.item.id), u8(c.item.area),
+                    c.item.order);
         for (const auto &v : extensions.contributedViews())
             fprintf(stdout, "%s\n", u8(formatContributionViewLine(v.owner, v.item)));
         for (const auto &m : extensions.contributedMenuItems())
-            fprintf(stdout, "%s menus.%s %s group=%s when=%s\n",
-                    u8(m.owner), u8(m.item.place), u8(m.item.command),
+            fprintf(stdout, "%s menus.%s %s group=%s when=%s\n", u8(m.owner), u8(m.item.place), u8(m.item.command),
                     u8(m.item.group.isEmpty() ? QStringLiteral("-") : m.item.group),
                     u8(m.item.when.isEmpty() ? QStringLiteral("-") : m.item.when));
         for (const auto &c : extensions.contributedColors())
-            fprintf(stdout, "%s colors %s dark=%s light=%s\n",
-                    u8(c.owner), u8(c.item.id), u8(c.item.dark), u8(c.item.light));
+            fprintf(stdout, "%s colors %s dark=%s light=%s\n", u8(c.owner), u8(c.item.id), u8(c.item.dark),
+                    u8(c.item.light));
         for (const auto &s : extensions.contributedStatuses())
-            fprintf(stdout, "%s statusbar %s side=%s priority=%d\n",
-                    u8(s.owner), u8(s.item.id), u8(s.item.side), s.item.priority);
+            fprintf(stdout, "%s statusbar %s side=%s priority=%d\n", u8(s.owner), u8(s.item.id), u8(s.item.side),
+                    s.item.priority);
         // A8b-M3-a：customEditors 声明输出（owner / viewType / selIdx / 条件，
         // 与「owner/key/id/order」约定对齐——裁定 52442925 建议）。
         for (const auto &e : extensions.contributedCustomEditors())
@@ -220,8 +219,7 @@ int main(int argc, char **argv)
                 const auto &sel = e.item.selector.at(si);
                 const QString cond = !sel.mime.isEmpty() ? QStringLiteral("mime=%1").arg(sel.mime)
                                                          : QStringLiteral("pattern=%1").arg(sel.filenamePattern);
-                fprintf(stdout, "%s customEditors %s %d %s\n",
-                        u8(e.owner), u8(e.item.viewType), si, u8(cond));
+                fprintf(stdout, "%s customEditors %s %d %s\n", u8(e.owner), u8(e.item.viewType), si, u8(cond));
             }
         }
         // configuration 属性输出（owner / key / default / scope）。
@@ -245,10 +243,9 @@ int main(int argc, char **argv)
 
     if (command == QStringLiteral("--list-modules"))
     {
-        for (const auto &info : application.host().availableModules())
+        for (const auto &info : application.host().availableExtensions())
         {
-            fprintf(stdout, "%-16s %s\n", u8(info.id),
-                    u8(info.provides.join(QLatin1Char(','))));
+            fprintf(stdout, "%-16s %s\n", u8(info.identifier), u8(info.dependencies.join(QLatin1Char(','))));
         }
         return 0;
     }
@@ -256,19 +253,20 @@ int main(int argc, char **argv)
     if (command == QStringLiteral("--list-packs"))
     {
         // 扩展包是装载/卸载的原子单位：每包聚合任意 kind 的贡献。
-        const auto &toolbox = application.host().toolbox();
+        const auto &toolbox = (*static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
+            application.context().registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension)));
         for (const auto &pack : toolbox.packs.values())
         {
-            fprintf(stdout, "%-18s %-12s [%s]\n",
-                    u8(pack.id), u8(pack.name),
-                    u8(QString::fromLatin1(nextpilot::plotscope::registry::domainKey(pack.domain))));
+            fprintf(stdout, "%-18s %-12s [%s]\n", u8(pack.id), u8(pack.name),
+                    u8(QString::fromLatin1(nextpilot::plotscope::parser::domainKey(pack.domain))));
         }
         return 0;
     }
 
     if (command == QStringLiteral("--list-contributions"))
     {
-        const auto &toolbox = application.host().toolbox();
+        const auto &toolbox = (*static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
+            application.context().registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension)));
         const QString filter = args.size() >= 3 ? args.at(2) : QString();
         namespace reg = nextpilot::plotscope::registry;
         // 内容全是数据：各类型表逐一列出（类型即身份，无 kind 字符串索引）。
@@ -286,10 +284,8 @@ int main(int argc, char **argv)
                 return;
             fprintf(stdout, "[%s / %s] %d 项\n", kind, cn, table.count());
             for (const auto &c : table.values())
-                fprintf(stdout, "  %-26s %-18s %-10s <- %s\n",
-                        u8(c.id), u8(displayNameOf(c)),
-                        u8(QString::fromLatin1(reg::domainKey(c.domain))),
-                        u8(c.provider));
+                fprintf(stdout, "  %-26s %-18s %-10s <- %s\n", u8(c.id), u8(displayNameOf(c)),
+                        u8(QString::fromLatin1(nextpilot::plotscope::parser::domainKey(c.domain))), u8(c.provider));
         };
         listTable("ui", "界面", toolbox.uiActions);
         listTable("script", "脚本", toolbox.scripts);
@@ -303,9 +299,8 @@ int main(int argc, char **argv)
             {
                 fprintf(stdout, "[parser / 解析器] %d 项\n", static_cast<int>(list.size()));
                 for (reg::IMessageParser *p : list)
-                    fprintf(stdout, "  %-26s %-18s %-10s <- %s\n",
-                            u8(p->id()), u8(p->displayName()),
-                            u8(QString::fromLatin1(reg::domainKey(p->domain()))),
+                    fprintf(stdout, "  %-26s %-18s %-10s <- %s\n", u8(p->id()), u8(p->displayName()),
+                            u8(QString::fromLatin1(nextpilot::plotscope::parser::domainKey(p->domain()))),
                             u8(p->provider()));
             }
         }
@@ -319,14 +314,11 @@ int main(int argc, char **argv)
         for (const nextpilot::plotscope::registry::UiSlot &slot : slotReg.allSlots())
         {
             const auto actions = slotReg.actionsIn(slot.slotId);
-            fprintf(stdout, "[%s] %s (%s) <- %d 项\n",
-                    u8(slot.slotId), u8(slot.label),
-                    u8(slot.owner), static_cast<int>(actions.size()));
+            fprintf(stdout, "[%s] %s (%s) <- %d 项\n", u8(slot.slotId), u8(slot.label), u8(slot.owner),
+                    static_cast<int>(actions.size()));
             for (const nextpilot::plotscope::registry::BoundUiAction &b : actions)
-                fprintf(stdout, "    %-24s %-14s op=%s (来自 %s)\n",
-                        u8(b.action.id), u8(b.action.label),
-                        u8(b.action.intentOp.isEmpty() ? QStringLiteral("-") : b.action.intentOp),
-                        u8(b.provider));
+                fprintf(stdout, "    %-24s %-14s op=%s (来自 %s)\n", u8(b.action.id), u8(b.action.label),
+                        u8(b.action.intentOp.isEmpty() ? QStringLiteral("-") : b.action.intentOp), u8(b.provider));
         }
         return 0;
     }
@@ -334,21 +326,20 @@ int main(int argc, char **argv)
     if (command == QStringLiteral("--list-parser"))
     {
         // 工具箱按业务领域分组展示（通用 / 飞控 / 汽车 / 机器人 / 卫导 / 视频）。
-        const auto &toolbox = application.host().toolbox();
-        const nextpilot::plotscope::registry::Domain order[] = {
-            nextpilot::plotscope::registry::Domain::General,    nextpilot::plotscope::registry::Domain::Autopilot,
-            nextpilot::plotscope::registry::Domain::Automotive, nextpilot::plotscope::registry::Domain::Robotics,
-            nextpilot::plotscope::registry::Domain::Gnss,       nextpilot::plotscope::registry::Domain::Video};
+        const auto &toolbox = (*static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
+            application.context().registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension)));
+        const nextpilot::plotscope::parser::Domain order[] = {
+            nextpilot::plotscope::parser::Domain::General,    nextpilot::plotscope::parser::Domain::Autopilot,
+            nextpilot::plotscope::parser::Domain::Automotive, nextpilot::plotscope::parser::Domain::Robotics,
+            nextpilot::plotscope::parser::Domain::Gnss,       nextpilot::plotscope::parser::Domain::Video};
         for (auto domain : order)
         {
             const auto drivers = toolbox.driversByDomain(domain);
             if (drivers.isEmpty())
                 continue;
-            fprintf(stdout, "[%s]\n", u8(nextpilot::plotscope::registry::domainName(domain)));
+            fprintf(stdout, "[%s]\n", u8(nextpilot::plotscope::parser::domainName(domain)));
             for (nextpilot::plotscope::parser::IMessageParser *driver : drivers)
-                fprintf(stdout, "  %-10s %-18s 后缀[%s]\n",
-                        u8(driver->id()),
-                        u8(driver->displayName()),
+                fprintf(stdout, "  %-10s %-18s 后缀[%s]\n", u8(driver->id()), u8(driver->displayName()),
                         u8(driver->suffixes().join(QLatin1Char(','))));
         }
         return 0;
@@ -380,8 +371,7 @@ int main(int argc, char **argv)
             QStringList cols;
             for (const Column &c : t->columns)
                 cols << QStringLiteral("%1(%2)").arg(c.name, QLatin1String(valueTypeName(c.type)));
-            fprintf(stdout, "  表 %s: %d 行, 列 [%s]\n", u8(t->name), t->rowCount(),
-                    u8(cols.join(QLatin1Char(','))));
+            fprintf(stdout, "  表 %s: %d 行, 列 [%s]\n", u8(t->name), t->rowCount(), u8(cols.join(QLatin1Char(','))));
         }
         fprintf(stdout, "时间范围: %.3f .. %.3f 秒\n", ds->timeMin(), ds->timeMax());
         return 0;
@@ -399,8 +389,7 @@ int main(int argc, char **argv)
         Job job = Job::fromJson(QJsonDocument::fromJson(f.readAll()).object(), &parseError);
         if (!parseError)
         {
-            fprintf(stderr, "job parse failed[%s]: %s\n", u8(parseError.error().code),
-                    u8(parseError.error().message));
+            fprintf(stderr, "job parse failed[%s]: %s\n", u8(parseError.error().code), u8(parseError.error().message));
             return 2;
         }
 
@@ -410,8 +399,8 @@ int main(int argc, char **argv)
             Result<IntentResult> r = application.host().execute(intent);
             if (!r)
             {
-                fprintf(stderr, "intent %d (%s) failed[%s]: %s\n", i, u8(intent.op),
-                        u8(r.error().code), u8(r.error().message));
+                fprintf(stderr, "intent %d (%s) failed[%s]: %s\n", i, u8(intent.op), u8(r.error().code),
+                        u8(r.error().message));
                 return 1;
             }
             if (intent.op == QStringLiteral("plot.render"))
@@ -488,8 +477,7 @@ int main(int argc, char **argv)
         Result<IntentResult> r = application.host().execute(bi);
         if (!r)
         {
-            fprintf(stderr, "batch run failed[%s]: %s\n",
-                    u8(r.error().code), u8(r.error().message));
+            fprintf(stderr, "batch run failed[%s]: %s\n", u8(r.error().code), u8(r.error().message));
             return 1;
         }
         const QJsonDocument doc(QJsonObject::fromVariantMap(r.value().payload.toMap()));
@@ -510,8 +498,7 @@ int main(int argc, char **argv)
         }
         else
         {
-            fprintf(stdout, "%s\n",
-                    u8(QString::fromUtf8(doc.toJson(QJsonDocument::Indented))));
+            fprintf(stdout, "%s\n", u8(QString::fromUtf8(doc.toJson(QJsonDocument::Indented))));
         }
         return 0;
     }

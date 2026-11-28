@@ -1,4 +1,5 @@
 #include "LuaEngine.h"
+#include "Intent.h"
 
 #include "ScriptFacade.h"
 

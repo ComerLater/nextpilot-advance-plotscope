@@ -1,4 +1,5 @@
 // CAN 报文浏览器：**汽车领域的专属面板**。
+#include "DatasetRegistry.h"
 //
 // 为什么它住在扩展的呈现层，而不是 gui/views/：
 //   这个面板的形态**本身就是领域知识** —— 列有哪些信号、怎么分组、
@@ -16,10 +17,21 @@
 #include "CanBrowserPanel.h"
 
 #include "AppContext.h"
+#include "DatasetRegistry.h"
+#include "RegistryNode.h"
 #include "IIntentExecutor.h"
 #include <QHeaderView>
 #include <QTableWidget>
 #include <QVBoxLayout>
+
+namespace {
+// A0 §八.2：AppContext 不再对外开 registry 访问器；扩展层按 kind 从注册树定位（只依赖 ps_context）。
+inline nextpilot::plotscope::dataset::DatasetRegistry &datasetHub(nextpilot::plotscope::context::AppContext &c)
+{
+    return *static_cast<nextpilot::plotscope::dataset::DatasetRegistry *>(
+        c.registryTree().find(nextpilot::plotscope::registry::RegistryKind::Dataset));
+}
+} // namespace
 
 namespace nextpilot::plotscope::ext::automotive
 {
@@ -41,9 +53,9 @@ CanBrowserPanel::CanBrowserPanel(nextpilot::plotscope::context::AppContext &appC
 
     // 内容随数据源动态变化：仓库里有数据集就列出它们可能涉及的报文。
     // 这里先给出骨架（空表），真实填充等 CAN 格式接入后由数据驱动。
-    connect(&m_appCtx.data(), &nextpilot::plotscope::dataset::DatasetHub::datasetAdded, this,
+    connect(&datasetHub(m_appCtx), &nextpilot::plotscope::dataset::DatasetRegistry::datasetAdded, this,
             [this](nextpilot::plotscope::dataset::DatasetId) { refresh(); });
-    connect(&m_appCtx.data(), &nextpilot::plotscope::dataset::DatasetHub::datasetRemoved, this,
+    connect(&datasetHub(m_appCtx), &nextpilot::plotscope::dataset::DatasetRegistry::datasetRemoved, this,
             [this](nextpilot::plotscope::dataset::DatasetId) { refresh(); });
     refresh();
 }
@@ -53,11 +65,11 @@ void CanBrowserPanel::refresh()
     // 数据源里若有 CAN 相关表，按其 schema 动态生成列与行——
     // 这正是"形态随业务变化"的落点：面板自己从数据推出形态，
     // 不需要 GUI 层或模块预先知道会有哪些信号。
-    const auto datasets = m_appCtx.data().ids();
+    const auto datasets = datasetHub(m_appCtx).ids();
     m_table->setRowCount(0);
     for (nextpilot::plotscope::dataset::DatasetId id : datasets)
     {
-        const nextpilot::plotscope::dataset::Dataset *ds = m_appCtx.data().get(id);
+        const nextpilot::plotscope::dataset::Dataset *ds = datasetHub(m_appCtx).get(id);
         if (!ds)
             continue;
         for (int ti = 0; ti < ds->tableCount(); ++ti)

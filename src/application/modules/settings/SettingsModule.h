@@ -24,11 +24,11 @@ class SettingsModule final : public nextpilot::plotscope::host::IWorkbenchContri
 {
     Q_OBJECT
 public:
-    // 静态元数据：供编译期自注册（PS_REGISTER_MODULE）使用，无需实例化。
-    static nextpilot::plotscope::host::ModuleInfo moduleInfo();
+    // 静态描述：供编译期自注册（PS_REGISTER_EXTENSION）使用，无需实例化。
+    static nextpilot::plotscope::registry::ExtensionDescription extensionDescription();
     static nextpilot::plotscope::host::IWorkbenchContribution *create();
 
-    nextpilot::plotscope::host::ModuleInfo info() const override;
+    nextpilot::plotscope::registry::ExtensionDescription description() const override;
     void initialize(nextpilot::plotscope::instantiation::InstantiationService &services) override;
 
 private:

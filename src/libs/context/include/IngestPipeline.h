@@ -1,7 +1,7 @@
 #pragma once
 
 #include "DataSource.h"
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 #include "Result.h"
 #include "ps_parser_spi.h"
 
@@ -16,14 +16,13 @@
 namespace nextpilot::plotscope::context
 {
 
-using nextpilot::plotscope::dataset::DatasetHub;
-using nextpilot::plotscope::dataset::DataSourceInfo;
-using nextpilot::plotscope::dataset::ParserBinding;
 using nextpilot::plotscope::dataset::DatasetId;
+using nextpilot::plotscope::dataset::DatasetRegistry;
+using nextpilot::plotscope::dataset::DataSourceInfo;
 using nextpilot::plotscope::dataset::kInvalidDataset;
-using nextpilot::plotscope::foundation::Result;
+using nextpilot::plotscope::dataset::ParserBinding;
 using nextpilot::plotscope::foundation::fail;
-
+using nextpilot::plotscope::foundation::Result;
 
 // 摄取管道：**一个数据源（单前端）的字节流 → 多个解析器 → 多个数据集**。
 //
@@ -63,7 +62,7 @@ public:
         QString error;             // 最近一次错误
     };
 
-    explicit IngestPipeline(DatasetHub &repo, QObject *parent = nullptr);
+    explicit IngestPipeline(DatasetRegistry &repo, QObject *parent = nullptr);
     ~IngestPipeline() override;
 
     // 绑定一个解析器到指定数据源（扇出的一路）。
@@ -133,7 +132,7 @@ private:
         QString tableName;
     };
 
-    DatasetHub &m_repo;
+    DatasetRegistry &m_repo;
     QHash<int, QVector<ParserChannel>> m_channels; // sourceId -> 通道
     // 每个通道一个 sink 上下文（与通道同寿命）。
     // 用 std::map 而非 QHash：QHash 的值类型不支持 move-only（Qt6.2 拷贝语义），

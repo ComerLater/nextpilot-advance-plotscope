@@ -3,6 +3,7 @@
 #include "AppContext.h"
 #include "CommandPalette.h"
 #include "ProductSpec.h"
+#include "parts/StatusbarPart.h"
 #include "command/CommandRegistry.h"
 #include "command/KeybindingRegistry.h"
 #include <QJsonObject>
@@ -44,14 +45,16 @@ class QAction;
 
 namespace nextpilot::plotscope::workbench
 {
-class IPanelsService;
 class IFormatHints;
 class IThemeService;
-class ISlotsService;
+class IRibbonService;
 class IViewsService;
 class IEditorService;
 }
 
+namespace nextpilot::plotscope::registry {
+class MenuRegistry;
+}
 
 namespace nextpilot::plotscope::gui
 {
@@ -117,6 +120,8 @@ public:
 
     // 诊断/测试用。
     ShellBinder *binder() const { return m_binder; }
+    // 状态栏写入面（`IStatusbarService` 壳内实现）：壳外不再直接摸 QStatusBar。
+    StatusbarPart *statusbar() const { return m_statusbar; }
     GuiContext *context() const { return m_context; }
     ThemeManager *themeManager() const { return m_theme; }
     CommandRegistry *commandRegistry() const { return m_commands.get(); }
@@ -133,8 +138,6 @@ public:
     void openKeybindingDialog();
 
 private:
-    // 声明 app 骨架提供的标准插槽（ribbon 页签/分组、停靠区、菜单）。
-    void declareStandardSlots();
     void declareViewToggleSlots();
 
     // 打开数据对话框已归 data 模块呈现层（D18a/A2a）：由模块自注册启动器
@@ -202,6 +205,7 @@ private:
     const nextpilot::plotscope::registry::ProductSpec m_spec;
     nextpilot::plotscope::host::RuntimeHost *m_host = nullptr; // 用于取设置（状态持久化）
     ShellBinder *m_binder = nullptr;
+    StatusbarPart *m_statusbar = nullptr; // 借用，归 ShellBinder
     QMenu *m_gridMenu = nullptr;   // 「网格」大按钮的下拉（X/Y 网格线开关）
     std::unique_ptr<CommandRegistry> m_commands;
     std::unique_ptr<KeybindingRegistry> m_keybindings;
@@ -218,13 +222,13 @@ private:
     // 对话框启动器（组合根注入；见 setDialogLauncher）。
     std::function<bool(const QString &)> m_dialogLauncher;
     ThemeManager *m_theme = nullptr;   // 系统级主题管理，生命周期归宿主
-    // 壳读回服务（A8b-M2 裁定 52441633 §三）：包面板声明/格式提示/扩展主题 token
+    // 壳读回服务（A8b-M2 裁定 52441633 §三）：格式提示/扩展主题 token/Ribbon 页组
     // 都经 workbench 接口读回，MainWindow 不直连扩展注册表。借用指针，归装配层。
-    const nextpilot::plotscope::workbench::IPanelsService *m_panelsService = nullptr;
     const nextpilot::plotscope::workbench::IFormatHints *m_formatHints = nullptr;
     const nextpilot::plotscope::workbench::IThemeService *m_themeService = nullptr;
-    // 槽位表服务（裁定 52442006 Step 4）：壳读写唯一通道；未装配（bare 壳）为 nullptr。
-    nextpilot::plotscope::workbench::ISlotsService *m_slotsService = nullptr;
+    // Ribbon 页/组读回服务（裁定 52442006 Step 4）：未装配（bare 壳）为 nullptr。
+    nextpilot::plotscope::workbench::IRibbonService *m_ribbonService = nullptr;
+    nextpilot::plotscope::registry::MenuRegistry *m_menuRegistry = nullptr;
     // 视图/编辑器打开服务（A2b 笔2b 复审必修 A）：构造 GuiContext 时注入，
     // openView/openEditor 的执行体；借用指针，归装配层，未装配为 nullptr。
     nextpilot::plotscope::workbench::IViewsService *m_viewsService = nullptr;

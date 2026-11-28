@@ -15,8 +15,8 @@ class InteractionHub;
 
 namespace nextpilot::plotscope::dataset
 {
-class DatasetHub;
-class SourceHub;
+class DatasetRegistry;
+class SourceRegistry;
 }
 
 namespace nextpilot::plotscope::script
@@ -50,9 +50,8 @@ public:
     using ViewDispatcher = std::function<bool(const QString &, const QVariantMap &, Result<QVariant> &)>;
 
     // data 为空指针时跳过"空解析"判定（极端 headless 兜底，正常装配恒有）。
-    BatchHandler(IIntentExecutor &executor, context::InteractionHub *inter,
-                 dataset::DatasetHub *data, dataset::SourceHub *sources,
-                 ViewDispatcher viewDispatcher, QObject *parent = nullptr);
+    BatchHandler(IIntentExecutor &executor, context::InteractionHub *inter, dataset::DatasetRegistry *data,
+                 dataset::SourceRegistry *sources, ViewDispatcher viewDispatcher, QObject *parent = nullptr);
 
     bool canHandle(const Intent &intent) const override
     {
@@ -67,8 +66,8 @@ public:
 private:
     IIntentExecutor &m_executor;
     context::InteractionHub *m_inter = nullptr; // 进度上报（headless 为空：静默无 UI）
-    dataset::DatasetHub *m_data = nullptr;      // 空解析判定（损坏文件 → load 阶段失败）
-    dataset::SourceHub *m_sources = nullptr;    // 数据集 → 源反查（data.remove 收的是源 id）
+    dataset::DatasetRegistry *m_data = nullptr; // 空解析判定（损坏文件 → load 阶段失败）
+    dataset::SourceRegistry *m_sources = nullptr; // 数据集 → 源反查（data.remove 收的是源 id）
     ViewDispatcher m_viewDispatcher;
     std::atomic<bool> m_cancel{false};
     std::atomic<bool> m_running{false}; // 重入保护：GUI/脚本并发批量明确报错

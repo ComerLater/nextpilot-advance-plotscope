@@ -169,8 +169,8 @@ int main(int argc, char *argv[])
                     out << c.name;
             return out;
         }();
-        const int srcId = application.context().sources().sourceOfDataset(dsId);
-        const DataSourceInfo *src = application.context().sources().get(srcId);
+        const int srcId = application.context().workspace().sources().sourceOfDataset(dsId);
+        const DataSourceInfo *src = application.context().workspace().sources().get(srcId);
         if (!src || cols.size() < 4)
         {
             fprintf(stderr, "not enough columns / source\n");
@@ -223,13 +223,13 @@ int main(int argc, char *argv[])
         // 预热一次（首开含 widget/画布创建的冷路径），再计 3 次热打开。
         QElapsedTimer t;
         t.start();
-        CHECK_APPLY(ws->applyDocumentSpec(doc, application.context().sources()), 1);
+        CHECK_APPLY(ws->applyDocumentSpec(doc, application.context().workspace().sources()), 1);
         fprintf(stdout, "工作区打开（8格x4通道，冷）：%.1f ms\n", t.elapsed() / 1.0);
         std::vector<double> ms;
         for (int i = 0; i < 3; ++i)
         {
             t.restart();
-            CHECK_APPLY(ws->applyDocumentSpec(doc, application.context().sources()), 2);
+            CHECK_APPLY(ws->applyDocumentSpec(doc, application.context().workspace().sources()), 2);
             ms.push_back(t.elapsed() / 1.0);
         }
         std::sort(ms.begin(), ms.end());

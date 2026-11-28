@@ -1,7 +1,10 @@
 #pragma once
 
+#include <QColor>
 #include <QIcon>
+#include <QPair>
 #include <QString>
+#include <QVector>
 
 // 图库缩略图：按 kind 画一张小图，用于 ribbon gallery 的图型/格式项。
 //
@@ -20,8 +23,10 @@ class PlotThumbnails
 {
 public:
     // kind: timeseries/xy/scatter/bar/histogram/fft/traj3d/map/surface3d/horizon/compass/gauge
-    //       以及文件格式 csv/ulog/custom-protocol/... 与实时源 stream。
     static QIcon plot(const QString &kind);
+
+    // 文件格式/实时源的"文件卡"：左色块 + 标签，标签与配色由扩展贡献的驱动元数据给出。
+    static QIcon fileCard(const QString &tag, const QColor &color);
 
     // 布局缩略图（"布局"组的大按钮）：按 rows×cols 画分格，抄 main 的 layoutThumb。
     // 与图型缩略图同一尺寸与配色，视觉上属于同一套 ribbon 缩略图。
@@ -33,7 +38,8 @@ public:
     //                        上限一致；动态回写如 figure.grid 回写 2x3 只查表不画）。
     // 注册时机：plot 呈现层装配（installPlotViewFactories），对位 VSCode "扩展
     // 激活时注册图标"；headless（CLI）不装配呈现层，自然不注册。
-    static void registerIcons();
+    // driverMetas：扩展贡献的驱动 {id, displayName}；文件卡按它生成（不留格式常量表）。
+    static void registerIcons(const QVector<QPair<QString, QString>> &driverMetas = {});
 };
 
 } // namespace nextpilot::plotscope::gui

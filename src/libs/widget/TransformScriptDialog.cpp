@@ -1,4 +1,5 @@
 #include "TransformScriptDialog.h"
+#include "Intent.h"
 
 #include "AppContext.h"
 #include "InteractionHub.h"

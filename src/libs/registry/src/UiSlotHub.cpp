@@ -17,7 +17,7 @@ void UiSlotHub::declareSlot(const QString &area, const QString &label, const QSt
     Q_EMIT objectAdded(area); // M2.8：统一节点信号（带 key）
 }
 
-void UiSlotHub::refreshFrom(const ToolboxHub &registry)
+void UiSlotHub::refreshFrom(const ExtensionRegistry &registry)
 {
     m_bound.clear();
     m_unbound.clear();

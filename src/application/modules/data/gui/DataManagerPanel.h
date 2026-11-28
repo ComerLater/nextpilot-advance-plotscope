@@ -2,8 +2,8 @@
 
 #include "IIntentExecutor.h"
 #include "AppContext.h"
-#include "DatasetHub.h"
-#include "SourceHub.h"
+#include "IDatasetAccess.h"
+#include "ISourceAccess.h"
 
 #include <QWidget>
 
@@ -85,10 +85,16 @@ private:
     void removeDerivedChannels(QTreeWidgetItem *item);                 // 删除该列的派生曲线
 
     nextpilot::plotscope::context::AppContext &m_appCtx;
-    nextpilot::plotscope::dataset::DatasetHub &m_repo;
-    nextpilot::plotscope::dataset::SourceHub &m_sources;
+    nextpilot::plotscope::dataset::IDatasetAccess &m_repo;
+    nextpilot::plotscope::dataset::ISourceAccess &m_sources;
     nextpilot::plotscope::intent::IIntentExecutor &m_executor;
 
+    // vscode.workspace 事件订阅（取代直连 registry 的 Qt 信号）。
+    nextpilot::plotscope::foundation::Subscription m_datasetAddedSub;
+    nextpilot::plotscope::foundation::Subscription m_datasetRemovedSub;
+    nextpilot::plotscope::foundation::Subscription m_sourceAddedSub;
+    nextpilot::plotscope::foundation::Subscription m_sourceRemovedSub;
+    nextpilot::plotscope::foundation::Subscription m_sourceChangedSub;
     QLabel *m_srcCount = nullptr;            // 标题右侧「N源 · N已连接」
     QToolButton *m_chips[3] = {nullptr, nullptr, nullptr};
     QLineEdit *m_filter = nullptr;
@@ -103,7 +109,7 @@ private:
     int m_msgCount = 0;
     // 弹设置对话框（「数据设置…」菜单项、源右键菜单都到这里；ribbon「文件→设置」
     // 走同一意图）。面板只发意图，弹窗归外壳的常驻订阅者——面板不反向依赖 shell。
-    void openSettingsDialog();
+    void openSettings();
 };
 
 QWidget *createDatasetTreePanel(nextpilot::plotscope::context::AppContext &appCtx, nextpilot::plotscope::intent::IIntentExecutor &exec,

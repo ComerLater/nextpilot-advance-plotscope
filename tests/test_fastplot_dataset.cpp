@@ -6,7 +6,7 @@
 //     → nextpilot::plotscope::fastplot::Curve::fromLod（C++ 只画，不重扫）→ PlotWidget
 //
 // 关键点：C++ 侧从头到尾没有拿到全量行，也没有复制数据。
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 #include "RegistryTree.h"
 #include "IngestPipeline.h"
 #include "ParserHub.h"
@@ -63,7 +63,7 @@ int main(int argc, char **argv)
 
     // ---- 1) 走真实管道装载 ULog ----
     RegistryTree tree;
-    DatasetHub repo(tree); // M2.8：构造即上树
+    DatasetRegistry repo(tree); // M2.8：构造即上树
     IngestPipeline pipe(repo);
     const Result<int> bound = pipe.bindParser(1, ParserBinding{QStringLiteral("ulog"), {}, true});
     if (!bound)

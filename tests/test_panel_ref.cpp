@@ -14,7 +14,7 @@
 #include "PanelReferenceValidator.h"
 #include "ProductSpec.h"
 #include "RegistryTree.h"
-#include "ToolboxHub.h"
+#include "ExtensionRegistry.h"
 #include "UiSlotHub.h"
 
 #include <QCoreApplication>

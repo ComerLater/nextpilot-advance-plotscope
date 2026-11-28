@@ -3,7 +3,7 @@
 // provider/domain 由 mount() 自动写入；按包原子撤销。
 
 #include "Contribution.h"
-#include "ToolboxHub.h"
+#include "ExtensionRegistry.h"
 #include "RegistryTree.h"
 
 #include <QCoreApplication>
@@ -38,7 +38,7 @@ int main(int argc, char **argv)
 
     // --- 1. 扩展包贡献模板 + mount 自动写归属 ---
     RegistryTree tree;
-    ToolboxHub reg(tree); // M2.8：构造即上树（不存在不上树形态）
+    ExtensionRegistry reg(tree); // M2.8：构造即上树（不存在不上树形态）
     reg.installBuiltinPacks(); // 内置包先挂上（含 id 占位，防撞）
 
     Pack pack;

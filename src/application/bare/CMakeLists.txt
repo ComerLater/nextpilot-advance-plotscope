@@ -1,7 +1,7 @@
 # 裸壳独立产物 ps_shell_bare（契约 §19/§20，验收 6/18/19/20）。
 #
-# 链接面只许：ps_gui + libs 层 + Qt Widgets。一个 ps_module_* / ps_toolbox_* /
-# ps_parser_* 都不许出现——护栏 ps_guard_shell_links 与 ps_gui 共用同一道，
+# 链接面只许：ps_gui + libs 层 + Qt Widgets。任何业务 target（模块/扩展/解析）
+# 都不许出现——护栏 ps_guard_shell_links 与 ps_gui 共用同一道，
 # configure 期硬拦。本目标与完整产品 plotscope-gui 在同一 build 目录共存。
 
 option(PS_BUILD_BARE "构建裸壳独立产物 ps_shell_bare（零模块第二产品）" ON)

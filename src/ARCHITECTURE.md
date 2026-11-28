@@ -496,7 +496,7 @@ SPI 解析器的职责被刻意收窄为「字节 → 结构化批」，于是�
 
 ```cpp
 // 模块 TU 末尾一行：
-PS_REGISTER_MODULE(SourceModule)   // 需提供 moduleInfo() / create()
+PS_REGISTER_EXTENSION(SourceModule)   // 需提供 extensionDescription() / create()
 ```
 
 宿主启动时遍历全局表装载。**宿主、App、其它模块一律不改。**
@@ -593,7 +593,9 @@ PS_REGISTER_MODULE(SourceModule)   // 需提供 moduleInfo() / create()
 |                               | `PanelFactory`                           | `StaticRegistry<工厂>`                                                                  | 面板实现工厂（编译期自注册）                                                            |
 |                               | `TransformHub`                           | `Registry<TransformDescriptor>`（静态）                                                 | 内置算子不可覆盖（领域语义）；保序=all() 顺序                                           |
 |                               | `ModuleFactory`                          | `Registry<ModuleEntry>`（静态）                                                         | 模块工厂（编译期自注册），与包自注册同构不再复写                                        |
-|                               | `UiSlotHub`                              | 插槽声明 + 绑定视图                                                                     | Ribbon 页/组/动作声明与动作→槽绑定；壳级容器在 `ShellContributions` 一处声明            |
+|                               | `ExtensionRegistry`                      | contributes 声明（Ribbon 页/组、动作）                                                  | 扩展 contributes 集中登记；壳按声明摆放 Ribbon 页/组/动作                               |
+|                               | `ViewRegistry`                           | 视图/容器声明 + 内容提供者工厂                                                          | 视图/容器声明与 provider 分离；壳按容器 region + order 摆放                             |
+|                               | `MenuRegistry`                           | 菜单项登记（`appendMenuItem`）                                                          | 菜单声明集中登记；本类不创建 QAction、不渲染                                            |
 | **运行态**（会话实例）        | `DatasetHub`                             | `TypedRegistry<Dataset,int>`（薄壳继承，kind=Dataset）                                  | id 分配、datasetAdded/Removed 信号                                                      |
 |                               | `SourceHub`                              | `Registry<DataSourceInfo,int>`                                                          | id 分配、信号、解析器绑定关系、dataset 反查                                             |
 |                               | `DerivedSeriesHub`                       | `Registry<Entry,QString>`                                                               | 同名覆盖刷新缓存、水位推进、按 dataset 级联清理                                         |
@@ -657,7 +659,7 @@ PS_REGISTER_MODULE(SourceModule)   // 需提供 moduleInfo() / create()
 外壳只保留**一个绑定器**：
 
 ```text
-registry::UiSlotHub（纯数据：有哪些 Ribbon 页签/分组/动作；面板走 PanelFactory + Region）
+registry::ExtensionRegistry / ViewRegistry / MenuRegistry（纯数据：Ribbon 页/组、视图/容器、菜单项声明；面板走 PanelFactory + Region）
         ↓
 gui::ShellBinder（唯一知道 SARibbon / ADS 的地方）
    ribbon.page  → SARibbonCategory
@@ -1079,11 +1081,11 @@ application/gui      ps_gui 壳（仅 GUI 进程，链接关：零 ps_module_*/p
 application/host     运行时编排：模块生命周期 · 意图执行 · 扩展装配（Toolbox/PluginScanner）
   ↓
 libs/                机制库：foundation（L0）+ dataset / registry / intent / parser /
-                     protocol / uischema / fastplot / context / module / recording（L1）
+                     protocol / uischema / fastplot / context / workbench / recording（L1）
   ↓
 kernel/              Rust：typed 表 · LOD · 缓存 · 算子（只经 include/ps_kernel.h）
 
-application/modules  模块（机制）：data / plot / script / protocol / analysis / settings / report
+application/modules  模块（机制）：data / plot / script / protocol / analysis / settings / report / workspace
 toolbox/             扩展（领域知识）：common / autopilot / automotive / robotics / gnss
   —— 只被装配根链接；模块之间互不链接，彼此只经 host 注册与意图协作。
 ```
@@ -1135,7 +1137,7 @@ toolbox/             扩展（领域知识）：common / autopilot / automotive 
 | `uischema`      | 变换契约（能力位 + 自描述）、Form/Property/Marker schema                                                                                                               | 新算子先登记能力位；禁止无自描述的算子                                                              |
 | `fastplot`      | 视口/刻度/轴/曲线/仪表等绘图部件                                                                                                                                       | 画布宿主经 LOD 取数后喂 fastplot；禁止在部件里认数据/主题                                           |
 | `recording`     | Recorder / RecordingFormat / RecordingBackend / Sink                                                                                                                   | 流录制能力登记与组合；禁止各处自写落盘循环                                                          |
-| `module`        | `IModule`/`ModuleInfo`/`IUiContext`（模块契约，纯接口面）                                                                                                              | 实现模块只链本库（运行时在 host）；契约头禁止写实现体、禁止持有运行态                               |
+| `workbench`     | `IWorkbenchContribution`/`IUiContext`（工作台贡献契约，纯接口面；静态描述见 registry 的 `ExtensionDescription`）                                                       | 实现扩展只链本库（运行时在 assembly::ExtensionService）；契约头禁止写实现体、禁止持有运行态         |
 
 新增机制的流程（三步，缺一不可）：
 

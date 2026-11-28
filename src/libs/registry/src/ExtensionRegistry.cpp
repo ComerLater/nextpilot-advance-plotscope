@@ -1,20 +1,18 @@
-#include "ToolboxHub.h"
+#include "ExtensionRegistry.h"
 
 #include <QHash>
 #include <QSet>
 
 #include <algorithm>
 
-namespace nextpilot::plotscope::registry
-{
+namespace nextpilot::plotscope::registry {
 
-namespace
-{
+namespace {
 
 // 内置包工厂静态表：函数内 static，避免静态初始化顺序问题；保序（登记顺序即装载顺序）。
 struct BuiltinPackStore
 {
-    QList<QPair<QString, ToolboxHub::PackFactory>> ordered;
+    QList<QPair<QString, ExtensionRegistry::PackFactory>> ordered;
     QHash<QString, int> indexById;
 };
 
@@ -25,34 +23,46 @@ BuiltinPackStore &builtinPacks()
     return s;
 }
 
-bool producesFrames(const IMessageParser *p)
+// 内置扩展静态表：描述 + 工厂，保序（登记顺序即激活顺序）。
+struct BuiltinExtensionStore
 {
-    return p && p->outputs().contains(ParseOutput::FrameBatch);
+    QList<QPair<ExtensionDescription, ExtensionRegistry::ExtensionFactory>> ordered;
+    QHash<QString, int> indexById;
+};
+
+BuiltinExtensionStore &builtinExtensionsStore()
+{
+    static BuiltinExtensionStore s;
+    return s;
 }
+
+bool producesFrames(const IMessageParser *p) { return p && p->outputs().contains(ParseOutput::FrameBatch); }
 
 } // namespace
 
-ToolboxHub::ToolboxHub(RegistryTree &tree) : RegistryNode(tree, RegistryKind::Extension, QStringLiteral("扩展包")) {}
+ExtensionRegistry::ExtensionRegistry(RegistryTree &tree)
+    : RegistryNode(tree, RegistryKind::Extension, QStringLiteral("扩展包"))
+{
+}
 
 // RegistryNode 可观测：扩展 id = 内置包 id ∪ contributes owner（去重）。
 // 内置包与外部 manifest 是同一个 ExtensionRegistry 的两种来源，diagnostics 必须
 // 同时看见——只装外置 manifest 时 extension 行 count 也应 >0（审核 52440654 §3）。
-QStringList ToolboxHub::keysAsStrings() const
+QStringList ExtensionRegistry::keysAsStrings() const
 {
     QSet<QString> seen;
     for (const QString &id : packs.keys())
         seen.insert(id);
     for (const QString &owner : m_contribByOwner.keys())
         seen.insert(owner);
+    for (const QString &id : builtinExtensionIds())
+        seen.insert(id);
     return seen.values();
 }
 
-int ToolboxHub::count() const
-{
-    return keysAsStrings().size();
-}
+int ExtensionRegistry::count() const { return keysAsStrings().size(); }
 
-bool ToolboxHub::registerBuiltinPack(const QString &id, PackFactory factory)
+bool ExtensionRegistry::registerBuiltinPack(const QString &id, PackFactory factory)
 {
     if (id.isEmpty() || !factory)
         return false;
@@ -64,7 +74,39 @@ bool ToolboxHub::registerBuiltinPack(const QString &id, PackFactory factory)
     return true;
 }
 
-QStringList ToolboxHub::installBuiltinPacks()
+bool ExtensionRegistry::registerBuiltinExtension(const ExtensionDescription &description, ExtensionFactory factory)
+{
+    if (description.identifier.isEmpty() || !factory)
+        return false;
+    BuiltinExtensionStore &r = builtinExtensionsStore();
+    if (r.indexById.contains(description.identifier))
+        return false; // 重复 id：先到者为准
+    r.indexById.insert(description.identifier, r.ordered.size());
+    r.ordered.append({description, std::move(factory)});
+    return true;
+}
+
+QList<QPair<ExtensionDescription, ExtensionRegistry::ExtensionFactory>> ExtensionRegistry::builtinExtensions()
+{
+    return builtinExtensionsStore().ordered;
+}
+
+QStringList ExtensionRegistry::builtinExtensionIds()
+{
+    QStringList out;
+    for (const auto &entry : builtinExtensionsStore().ordered)
+        out.append(entry.first.identifier);
+    return out;
+}
+
+void ExtensionRegistry::resetBuiltinExtensions()
+{
+    BuiltinExtensionStore &r = builtinExtensionsStore();
+    r.ordered.clear();
+    r.indexById.clear();
+}
+
+QStringList ExtensionRegistry::installBuiltinPacks()
 {
     QStringList installed;
     for (const auto &entry : builtinPacks().ordered)
@@ -79,14 +121,14 @@ QStringList ToolboxHub::installBuiltinPacks()
     return installed;
 }
 
-void ToolboxHub::resetBuiltinPacks()
+void ExtensionRegistry::resetBuiltinPacks()
 {
     BuiltinPackStore &r = builtinPacks();
     r.ordered.clear();
     r.indexById.clear();
 }
 
-bool ToolboxHub::mount(Pack pack)
+bool ExtensionRegistry::mount(Pack pack)
 {
     if (pack.id.isEmpty())
         return false;
@@ -121,10 +163,12 @@ bool ToolboxHub::mount(Pack pack)
         if (!checkId(r.id) || reports.contains(r.id))
             return false;
     for (const ViewTitleActionSpec &t : pack.viewTitleActions)
-        if (!checkId(t.commandId + QLatin1Char('@') + t.viewId) || viewTitleActions.contains(t.commandId + QLatin1Char('@') + t.viewId))
+        if (!checkId(t.commandId + QLatin1Char('@') + t.viewId) ||
+            viewTitleActions.contains(t.commandId + QLatin1Char('@') + t.viewId))
             return false;
     for (const ItemContextSpec &c : pack.itemContexts)
-        if (!checkId(c.commandId + QLatin1Char('@') + c.viewId) || itemContexts.contains(c.commandId + QLatin1Char('@') + c.viewId))
+        if (!checkId(c.commandId + QLatin1Char('@') + c.viewId) ||
+            itemContexts.contains(c.commandId + QLatin1Char('@') + c.viewId))
             return false;
     for (const ThemeTokenSpec &t : pack.themeTokens)
         if (!checkId(t.id) || themeTokens.contains(t.id))
@@ -200,7 +244,7 @@ bool ToolboxHub::mount(Pack pack)
     return true;
 }
 
-bool ToolboxHub::unmount(const QString &packId)
+bool ExtensionRegistry::unmount(const QString &packId)
 {
     if (!packs.contains(packId))
         return false;
@@ -223,9 +267,7 @@ bool ToolboxHub::unmount(const QString &packId)
     dropByProvider(itemContexts);
     dropByProvider(themeTokens);
     m_parsers.erase(std::remove_if(m_parsers.begin(), m_parsers.end(),
-                                   [&packId](const auto &p) {
-                                       return p && p->provider() == packId;
-                                   }),
+                                   [&packId](const auto &p) { return p && p->provider() == packId; }),
                     m_parsers.end());
     packs.remove(packId);
     Q_EMIT objectRemoved(QVariant(packId));
@@ -234,7 +276,7 @@ bool ToolboxHub::unmount(const QString &packId)
 
 // === 壳的查询面（按视图裁剪 + 排序，壳不直接翻表）===
 
-QList<ViewTitleActionSpec> ToolboxHub::titleActionsFor(const QString &viewId) const
+QList<ViewTitleActionSpec> ExtensionRegistry::titleActionsFor(const QString &viewId) const
 {
     QList<ViewTitleActionSpec> out;
     for (const ViewTitleActionSpec &t : viewTitleActions.values())
@@ -246,7 +288,7 @@ QList<ViewTitleActionSpec> ToolboxHub::titleActionsFor(const QString &viewId) co
     return out;
 }
 
-QList<ItemContextSpec> ToolboxHub::itemContextsFor(const QString &viewId) const
+QList<ItemContextSpec> ExtensionRegistry::itemContextsFor(const QString &viewId) const
 {
     QList<ItemContextSpec> out;
     for (const ItemContextSpec &c : itemContexts.values())
@@ -258,16 +300,15 @@ QList<ItemContextSpec> ToolboxHub::itemContextsFor(const QString &viewId) const
     return out;
 }
 
-QList<ThemeTokenSpec> ToolboxHub::themeTokensAll() const
+QList<ThemeTokenSpec> ExtensionRegistry::themeTokensAll() const
 {
     QList<ThemeTokenSpec> out = themeTokens.values();
-    std::stable_sort(out.begin(), out.end(), [](const ThemeTokenSpec &a, const ThemeTokenSpec &b) {
-        return a.id < b.id;
-    });
+    std::stable_sort(out.begin(), out.end(),
+                     [](const ThemeTokenSpec &a, const ThemeTokenSpec &b) { return a.id < b.id; });
     return out;
 }
 
-QString ToolboxHub::themeFallback(const QString &tokenId) const
+QString ExtensionRegistry::themeFallback(const QString &tokenId) const
 {
     const ThemeTokenSpec *t = themeTokens.find(tokenId);
     return t ? t->fallback : QString();
@@ -275,7 +316,7 @@ QString ToolboxHub::themeFallback(const QString &tokenId) const
 
 // === 解析器视图（行为式条目）===
 
-QList<IMessageParser *> ToolboxHub::parsers() const
+QList<IMessageParser *> ExtensionRegistry::parsers() const
 {
     QList<IMessageParser *> out;
     out.reserve(static_cast<int>(m_parsers.size()));
@@ -284,7 +325,7 @@ QList<IMessageParser *> ToolboxHub::parsers() const
     return out;
 }
 
-QList<IMessageParser *> ToolboxHub::parsersByDomain(Domain domain) const
+QList<IMessageParser *> ExtensionRegistry::parsersByDomain(Domain domain) const
 {
     QList<IMessageParser *> out;
     for (IMessageParser *p : parsers())
@@ -293,7 +334,7 @@ QList<IMessageParser *> ToolboxHub::parsersByDomain(Domain domain) const
     return out;
 }
 
-IMessageParser *ToolboxHub::parser(const QString &id) const
+IMessageParser *ExtensionRegistry::parser(const QString &id) const
 {
     for (const auto &p : m_parsers)
         if (p && p->id() == id)
@@ -301,7 +342,7 @@ IMessageParser *ToolboxHub::parser(const QString &id) const
     return nullptr;
 }
 
-IMessageParser *ToolboxHub::parserForProtocol(const QString &protocolId) const
+IMessageParser *ExtensionRegistry::parserForProtocol(const QString &protocolId) const
 {
     const QString key = protocolId.trimmed().toLower();
     for (IMessageParser *p : parsers())
@@ -310,7 +351,7 @@ IMessageParser *ToolboxHub::parserForProtocol(const QString &protocolId) const
     return nullptr;
 }
 
-QList<IMessageParser *> ToolboxHub::parsersByTransport(const QString &transport) const
+QList<IMessageParser *> ExtensionRegistry::parsersByTransport(const QString &transport) const
 {
     QList<IMessageParser *> out;
     for (IMessageParser *p : parsers())
@@ -321,7 +362,7 @@ QList<IMessageParser *> ToolboxHub::parsersByTransport(const QString &transport)
 
 // === 旧 API 兼容别名：筛 outputs() 含 FrameBatch 的解析器 ===
 
-bool ToolboxHub::registerDriver(std::unique_ptr<IMessageParser> driver)
+bool ExtensionRegistry::registerDriver(std::unique_ptr<IMessageParser> driver)
 {
     if (!driver)
         return false;
@@ -333,13 +374,13 @@ bool ToolboxHub::registerDriver(std::unique_ptr<IMessageParser> driver)
     return mount(std::move(pack));
 }
 
-bool ToolboxHub::unregisterDriver(const QString &id)
+bool ExtensionRegistry::unregisterDriver(const QString &id)
 {
     IMessageParser *p = parser(id);
     return p ? unmount(p->provider()) : false;
 }
 
-IMessageParser *ToolboxHub::driverForFormat(const QString &format) const
+IMessageParser *ExtensionRegistry::driverForFormat(const QString &format) const
 {
     if (format.isEmpty())
         return nullptr;
@@ -349,7 +390,7 @@ IMessageParser *ToolboxHub::driverForFormat(const QString &format) const
     return nullptr;
 }
 
-IMessageParser *ToolboxHub::driverForPath(const QString &path) const
+IMessageParser *ExtensionRegistry::driverForPath(const QString &path) const
 {
     for (IMessageParser *p : parsers())
         if (producesFrames(p) && p->acceptsSuffix(path))
@@ -357,7 +398,7 @@ IMessageParser *ToolboxHub::driverForPath(const QString &path) const
     return nullptr;
 }
 
-QList<IMessageParser *> ToolboxHub::drivers() const
+QList<IMessageParser *> ExtensionRegistry::drivers() const
 {
     QList<IMessageParser *> out;
     for (IMessageParser *p : parsers())
@@ -366,7 +407,7 @@ QList<IMessageParser *> ToolboxHub::drivers() const
     return out;
 }
 
-QList<IMessageParser *> ToolboxHub::driversByDomain(Domain domain) const
+QList<IMessageParser *> ExtensionRegistry::driversByDomain(Domain domain) const
 {
     QList<IMessageParser *> out;
     for (IMessageParser *p : parsers())
@@ -375,7 +416,7 @@ QList<IMessageParser *> ToolboxHub::driversByDomain(Domain domain) const
     return out;
 }
 
-QList<Domain> ToolboxHub::domains() const
+QList<Domain> ExtensionRegistry::domains() const
 {
     QList<Domain> out;
     for (IMessageParser *p : drivers())
@@ -384,7 +425,7 @@ QList<Domain> ToolboxHub::domains() const
     return out;
 }
 
-QStringList ToolboxHub::ids() const
+QStringList ExtensionRegistry::ids() const
 {
     QStringList out;
     for (IMessageParser *p : drivers())
@@ -392,22 +433,18 @@ QStringList ToolboxHub::ids() const
     return out;
 }
 
-bool ToolboxHub::contains(const QString &id) const
-{
-    return parser(id) != nullptr;
-}
+bool ExtensionRegistry::contains(const QString &id) const { return parser(id) != nullptr; }
 
 // count() 改为 RegistryNode::count override（头文件内联，packs 表口径）。
 
 // === vscode contributes 贡献面（A8b-M1 / IKXXJ2）===
 // 与 mount(Pack) 并存于同一 Extension 节点：贡献是扩展的属性，不是第二个宿主。
 
-bool ToolboxHub::mountContribution(const ContributesDoc &doc)
+bool ExtensionRegistry::mountContribution(const ContributesDoc &doc)
 {
     if (doc.owner.isEmpty())
     {
-        recordContributionIssue(QStringLiteral("<empty>"), QStringLiteral("owner"),
-                                QStringLiteral("owner 为空，拒载"));
+        recordContributionIssue(QStringLiteral("<empty>"), QStringLiteral("owner"), QStringLiteral("owner 为空，拒载"));
         return false;
     }
     if (m_contribByOwner.contains(doc.owner))
@@ -445,10 +482,31 @@ bool ToolboxHub::mountContribution(const ContributesDoc &doc)
         m_contribViews.append(OwnedView{item, doc.owner});
     for (const auto &item : doc.menuItems)
         m_contribMenuItems.append(OwnedMenuItem{item, doc.owner});
+    for (auto item : doc.ribbonPages)
+    {
+        item.provider = doc.owner;
+        m_ribbonPages.append(item);
+    }
+    for (auto item : doc.ribbonGroups)
+    {
+        item.provider = doc.owner;
+        m_ribbonGroups.append(item);
+    }
     for (const auto &item : doc.colors)
         m_contribColors.append(OwnedColor{item, doc.owner});
-    for (const auto &item : doc.statuses)
+    for (const auto &spec : doc.statuses)
+    {
+        ContributedStatus item;
+        item.id = spec.id;
+        item.side = spec.side == StatusSide::Right ? QStringLiteral("right") : QStringLiteral("left");
+        item.priority = spec.priority;
+        item.when = spec.when;
+        item.icon = spec.icon;
+        item.tooltip = spec.tooltip;
+        item.commandId = spec.commandId;
+        item.text = spec.text;
         m_contribStatuses.append(OwnedStatus{item, doc.owner});
+    }
     // M3-a：customEditors 按 owner 归属存表；viewType 跨 owner 全局唯一，重复跳过 + 诊断（含双方 owner）。
     for (const auto &item : doc.customEditors)
     {
@@ -504,7 +562,7 @@ bool ToolboxHub::mountContribution(const ContributesDoc &doc)
     return true;
 }
 
-QList<ToolboxHub::OwnedMenuItem> ToolboxHub::menuItemsIn(const QString &place) const
+QList<ExtensionRegistry::OwnedMenuItem> ExtensionRegistry::menuItemsIn(const QString &place) const
 {
     QList<OwnedMenuItem> out;
     for (const auto &it : m_contribMenuItems)
@@ -513,7 +571,16 @@ QList<ToolboxHub::OwnedMenuItem> ToolboxHub::menuItemsIn(const QString &place) c
     return out;
 }
 
-bool ToolboxHub::unmountContribution(const QString &owner)
+QList<RibbonGroupDecl> ExtensionRegistry::ribbonGroupsOf(const QString &pageId) const
+{
+    QList<RibbonGroupDecl> out;
+    for (const auto &g : m_ribbonGroups)
+        if (g.pageId == pageId)
+            out.append(g);
+    return out;
+}
+
+bool ExtensionRegistry::unmountContribution(const QString &owner)
 {
     if (!m_contribByOwner.contains(owner))
         return false;
@@ -530,6 +597,12 @@ bool ToolboxHub::unmountContribution(const QString &owner)
     removeOwned(m_contribViewContainers);
     removeOwned(m_contribViews);
     removeOwned(m_contribMenuItems);
+    for (int i = m_ribbonPages.size() - 1; i >= 0; --i)
+        if (m_ribbonPages.at(i).provider == owner)
+            m_ribbonPages.removeAt(i);
+    for (int i = m_ribbonGroups.size() - 1; i >= 0; --i)
+        if (m_ribbonGroups.at(i).provider == owner)
+            m_ribbonGroups.removeAt(i);
     removeOwned(m_contribColors);
     removeOwned(m_contribStatuses);
     removeOwned(m_contribCustomEditors);
@@ -569,18 +642,14 @@ bool ToolboxHub::unmountContribution(const QString &owner)
     return true;
 }
 
-const ContributedCommand *ToolboxHub::findCommand(const QString &commandId) const
+const ContributedCommand *ExtensionRegistry::findCommand(const QString &commandId) const
 {
     return m_contribCommands.find(commandId);
 }
 
-QStringList ToolboxHub::commandIdsOf(const QString &owner) const
-{
-    return m_contribByOwner.value(owner);
-}
+QStringList ExtensionRegistry::commandIdsOf(const QString &owner) const { return m_contribByOwner.value(owner); }
 
-void ToolboxHub::recordContributionIssue(const QString &owner, const QString &keyPath,
-                                         const QString &message)
+void ExtensionRegistry::recordContributionIssue(const QString &owner, const QString &keyPath, const QString &message)
 {
     m_contribDiagnostics.append(ContributionDiagnostic{owner, keyPath, message});
 }

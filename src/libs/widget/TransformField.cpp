@@ -1,4 +1,5 @@
 #include "TransformField.h"
+#include "Intent.h"
 
 #include "AppContext.h"
 #include "TransformScriptDialog.h"
@@ -76,7 +77,7 @@ void TransformField::setLabel(const QString &label) { m_description->setText(lab
 void TransformField::rebuildDescriptors()
 {
     m_updating = true;
-    m_descriptors = m_appCtx.transforms().byCapability(static_cast<TransformCapability>(m_capability));
+    m_descriptors = m_appCtx.interactions().transforms().byCapability(static_cast<TransformCapability>(m_capability));
     m_combo->clear();
     for (const TransformDescriptor &d : m_descriptors)
     {
@@ -244,7 +245,7 @@ QJsonObject TransformField::request() const
     }
     else
     {
-        kind = m_appCtx.transforms().get(id).kind;
+        kind = m_appCtx.interactions().transforms().get(id).kind;
     }
 
     TransformRequest req;

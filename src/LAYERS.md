@@ -30,15 +30,15 @@ Toolbox 与 Plugin **统称扩展**，两者**没有本质区别**，只差来�
 
 ## 命名定标（"Registry" 一词三层禁用规则）
 
-| 词                      | 归属                                               | 例子                                                                                                                                                                                     |
-| ----------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Registry*** 前缀/后缀 | **机制层专用**：树、节点、货架基类、存储原语       | `RegistryTree`、`RegistryNode`、`TypedRegistry`、`Registry<T>`、`RegistryKind`                                                                                                           |
-| ***Hub** 后缀           | **业务保管类**：肚子里有一组条目、全系统唯一访问口 | `DatasetHub`、`SourceHub`、`DerivedSeriesHub`、`InteractionHub`、`UiSlotHub`、`ToolboxHub`、`ParserHub`、`RecordingFormatHub`、`RecordingBackendHub`、`TransformHub`、`BuiltinModuleHub` |
-| **Node**                | 节点身份，由**继承**表达，不进名字                 | `DatasetHub : RegistryNode`（Hub 说职责，继承说身份）                                                                                                                                    |
+| 词                      | 归属                                               | 例子                                                                                                                                                    |
+| ----------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Registry*** 前缀/后缀 | **机制层专用**：树、节点、货架基类、存储原语       | `RegistryTree`、`RegistryNode`、`TypedRegistry`、`Registry<T>`、`RegistryKind`                                                                          |
+| ***Hub** 后缀           | **业务保管类**：肚子里有一组条目、全系统唯一访问口 | `DatasetHub`、`SourceHub`、`DerivedSeriesHub`、`InteractionHub`、`ToolboxHub`、`ParserHub`、`RecordingFormatHub`、`RecordingBackendHub`、`TransformHub` |
+| **Node**                | 节点身份，由**继承**表达，不进名字                 | `DatasetHub : RegistryNode`（Hub 说职责，继承说身份）                                                                                                   |
 
 判定句：**Hub 回答"你保管什么、谁经过你"，继承 `RegistryNode/TypedRegistry` 回答"你挂在哪"。新建业务保管类一律 `<域>Hub`，禁止 Registry/Store/Repo/List/Manager 等同义后缀；机制层（libs/registry 树族）禁止 Hub 后缀。**
 
-**静态表一律走 `StaticHub<Entry, Key>` 门面模板**（`libs/registry/include/StaticAutoRegistry.h`）：编译期可枚举的静态自注册表（BuiltinModuleHub / RecordingFormatHub / RecordingBackendHub 等）只写 Entry 结构 + `using <域>Hub = StaticHub<<域>Entry, Key>` 别名，插入/查找/遍历/计数由模板统一提供；**禁止再手写 QHash+order 私有存储或重复的 XXXHub 类**。运行期增删的表（DatasetHub 等）不走此模板，仍用运行期句柄机制。
+**静态表一律走 `StaticHub<Entry, Key>` 门面模板**（`libs/registry/include/StaticAutoRegistry.h`）：编译期可枚举的静态自注册表（RecordingFormatHub / RecordingBackendHub 等）只写 Entry 结构 + `using <域>Hub = StaticHub<<域>Entry, Key>` 别名，插入/查找/遍历/计数由模板统一提供；**禁止再手写 QHash+order 私有存储或重复的 XXXHub 类**。运行期增删的表（DatasetHub 等）不走此模板，仍用运行期句柄机制。
 
 ## 依赖方向（严格向下，禁止逆向）
 
@@ -46,7 +46,7 @@ Toolbox 与 Plugin **统称扩展**，两者**没有本质区别**，只差来�
 L0  foundation              Result / 事件 / 常量（INTERFACE，无状态）
      ↑
 L1  dataset  registry  intent  uischema  protocol  fastplot    机制能力库
-    context  module          运行态容器 · 模块契约（均居 libs/ 物理目录）
+    context  workbench       运行态容器 · 工作台贡献契约（均居 libs/ 物理目录）
      ↑
 L2  ——（已消亡）core 过渡层已整体删除，编号保留以免历史引用断裂——
      ↑
@@ -82,7 +82,7 @@ L6  app / 装配根            组合根：创建 AppContext + RuntimeHost，装
 | 可依赖   | Qt::Core、系统库                               |
 | 禁依赖   | 除 Qt/系统外的一切（含其他 L1 库）             |
 
-### L1 `libs/{dataset,registry,intent,parser,protocol,uischema,fastplot,context,module,command,recording}`
+### L1 `libs/{dataset,registry,intent,parser,protocol,uischema,fastplot,context,workbench,command,recording}`
 
 | 项       | 内容                                                                     |
 | -------- | ------------------------------------------------------------------------ |
@@ -105,9 +105,11 @@ L6  app / 装配根            组合根：创建 AppContext + RuntimeHost，装
 | `uischema`  | 字段契约树 + SchemaEngine + 主题 token 纯色表（`ThemeTokens`，QColor 值类型，无 Widgets）；唯一 Qt 渲染器在 `uischema_widgets` 渲染子库 |
 | `fastplot`  | 通用绘图能力库（将来独立为 Qwt-like 库）                                                                                                |
 | `context`   | AppContext 运行态容器 + 设置 + 摄取 + 交互注册（唯一实例在 app，构造注入）                                                              |
-| `module`    | 模块契约：IModule / ModuleInfo / IUiContext（纯接口面，运行时在 host）                                                                  |
+| `workbench` | 工作台贡献契约：IWorkbenchContribution / IUiContext（纯接口面）                                                                         |
 | `command`   | 命令注册表 / 键位绑定 / when 表达式求值：ContextStack 三层作用域、when 编译缓存、白名单语法；registry 只存 when 串，求值在本层          |
 | `recording` | 流录制机制：Recorder / RecordingFormat / RecordingBackend / Sink / Mcap+Raw 编解码                                                      |
+
+工作台贡献契约的静态描述 `ExtensionDescription` 居 `libs/registry`；扩展装载与生命周期归装配层 `ExtensionService`。
 
 ### L2（已消亡）
 
@@ -131,7 +133,7 @@ core 过渡层已整体删除，目录不存在。任何新增代码**禁止重�
 | 项               | 内容                                                                                                                                                                                                             |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 定位             | 模块（基底功能）与工具箱（内部扩展，业务的承载者）——见顶部术语定标                                                                                                                                               |
-| `modules` 放什么 | 编译期增删的功能模块：data / plot / script / protocol / analysis / settings / report；**无业务知识**，静态自注册、无法卸载、无运行时卸载概念                                                                     |
+| `modules` 放什么 | 编译期增删的功能模块：data / plot / script / protocol / analysis / settings / report / workspace；**无业务知识**，静态自注册、无法卸载、无运行时卸载概念                                                         |
 | `toolbox` 放什么 | 内部扩展（工具箱）：common / autopilot / automotive / robotics / gnss——扩展（纯数据清单 + 解析器），运行时 mount/unmount（装配入口 Toolbox/PluginScanner 在 host，**禁止**在 toolbox/ 下建装配或 registry 目录） |
 | 禁放什么         | 彼此的实现细节、对方的私有头、具体格式分支跨包渗透                                                                                                                                                               |
 | 可依赖           | L0–L3、Qt（GUI 模块可依赖 Widgets）、本模块内的子目录                                                                                                                                                            |
@@ -185,7 +187,7 @@ core 过渡层已整体删除，目录不存在。任何新增代码**禁止重�
 
 **写 UI 的两条通道**（模块/扩展永不直接碰 MainWindow）：
 
-1. **声明式**（IUiContext 契约，`libs/module`）：override `contributes()` 返回动作与面板位的纯数据——宿主统一灌回，零 Widgets 依赖
+1. **声明式**（IUiContext 契约，`libs/workbench`）：override `contributes()` 返回动作与面板位的纯数据——宿主统一灌回，零 Widgets 依赖
 2. **声明式打开**（IUiContext 契约，A2c/A2d 定稿）：视图在模块呈现层 TU 里经 `installXxxViewFactories` 装配——views/editor 声明 + provider 注册同 TU 同次完成；运行期 `ui()->openView(viewId)` / `ui()->openEditor(viewType, ref)` 按声明落区（viewsContainers[].area）创建、经 ShellBinder 放置。provider 签名带 `AppContext + IIntentExecutor`——**视图取数与 CLI/脚本走同一条意图路径**，没有第二条取数通道（旧工厂表/宏通道 A2d 已整体退场）。
 
 **装载链**（谁装载）：GUI 可执行文件链接各 `*_gui` OBJECT 库 → 进程启动时装配 TU 注册声明与 provider → `host.activate()` → 模块 `onAttach` 声明动作并 openView/openEditor → `GuiContext` 路由 → views/editor provider 创建 → `ShellBinder` 放置（带去重复用）。CLI 只链 headless 目标，UI 通道整体缺席。
@@ -241,7 +243,7 @@ L1 同层依赖按库定位单向：uischema_widgets → uischema、dataset → 
 
 ## 新增代码判定顺序
 
-1. 是纯值语义/契约、无状态？→ L0 `foundation` 或 L1 对应契约库（模块接口 → `module`）
+1. 是纯值语义/契约、无状态？→ L0 `foundation` 或 L1 对应契约库（工作台贡献接口 → `workbench`）
 2. 是可复用机制、调用方实例化即可？→ L1 对应库
 3. 是进程级运行态或可序列化偏好？→ L1 `context`
 4. 是协调"谁来做"/生命周期/路由？→ L3 `host`

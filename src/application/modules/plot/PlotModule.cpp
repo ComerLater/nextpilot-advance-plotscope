@@ -2,19 +2,18 @@
 
 #include "PlotDocument.h"
 
-#include "BuiltinModuleHub.h"
 #include "ChannelTransformConfig.h"
 #include "InstantiationService.h"
 #include "IWorkspace.h"
 #include "ICommands.h"
 #include "IScriptCapabilities.h"
 #include "CommandAdapter.h"
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 #include "Dataset.h"
 #include "Intent.h"
 #include "RuntimeHost.h"
 #include "SettingsStore.h"
-#include "SourceHub.h"
+#include "SourceRegistry.h"
 #include "Transform.h"
 #include "InteractionHub.h"
 
@@ -38,8 +37,7 @@ using namespace nextpilot::plotscope::host;
 // 数据访问全部经 Dataset 门面走 Rust C ABI：通道读 ps_dataset_read_window，
 // 视口抽稀走 ps_dataset_lod_minmax（降采样在 Rust 侧完成）。绘图模块不认识任何格式。
 
-namespace
-{
+namespace {
 // 变换路径的 C++ min/max 分桶抽稀：与 Rust lodMinMax 同语义（每桶取最小/最大，
 // x 用桶首样本时间）。桶数恒 <= px。
 // 配置扁平读写：IWorkspace 只给扁平键值（get/setConfiguration），scope→前缀由调用点给出
@@ -112,11 +110,9 @@ public:
 
     bool canHandle(const Intent &intent) const override
     {
-        return intent.op == QStringLiteral("plot.render")
-            || intent.op == QStringLiteral("plot.channel")
-            || intent.op == QStringLiteral("plot.layout.save")
-            || intent.op == QStringLiteral("plot.layout.load")
-            || intent.op == QStringLiteral("plot.instrument");
+        return intent.op == QStringLiteral("plot.render") || intent.op == QStringLiteral("plot.channel") ||
+               intent.op == QStringLiteral("plot.layout.save") || intent.op == QStringLiteral("plot.layout.load") ||
+               intent.op == QStringLiteral("plot.instrument");
     }
 
     Result<IntentResult> execute(const Intent &intent) override
@@ -169,8 +165,7 @@ private:
         // 缺省用全表范围；越界一律夹回表范围，避免取空。
         TimeNs t0Ns = t->firstTimeNs;
         TimeNs t1Ns = t->lastTimeNs;
-        if (intent.params.contains(QStringLiteral("t0Ns"))
-            && intent.params.contains(QStringLiteral("t1Ns")))
+        if (intent.params.contains(QStringLiteral("t0Ns")) && intent.params.contains(QStringLiteral("t1Ns")))
         {
             const qint64 reqT0 = intent.params.value(QStringLiteral("t0Ns")).toLongLong();
             const qint64 reqT1 = intent.params.value(QStringLiteral("t1Ns")).toLongLong();
@@ -199,13 +194,11 @@ private:
         if (intent.params.contains(QStringLiteral("transform")))
         {
             const QVariant tv = intent.params.value(QStringLiteral("transform"));
-            transformReq =
-                (tv.type() == QVariant::String || tv.type() == QVariant::ByteArray)
-                ? QJsonDocument::fromJson(tv.type() == QVariant::ByteArray
-                                              ? tv.toByteArray()
-                                              : tv.toString().toUtf8())
-                      .object()
-                : QJsonObject::fromVariantMap(tv.toMap());
+            transformReq = (tv.type() == QVariant::String || tv.type() == QVariant::ByteArray)
+                               ? QJsonDocument::fromJson(tv.type() == QVariant::ByteArray ? tv.toByteArray()
+                                                                                          : tv.toString().toUtf8())
+                                     .object()
+                               : QJsonObject::fromVariantMap(tv.toMap());
         }
         else
         {
@@ -216,8 +209,7 @@ private:
                 {
                     const ChannelTransformConfig cfg = ChannelTransformConfig::fromJson(readFlatJson(
                         m_ws, QStringLiteral("ws/") + QString::fromLatin1(ChannelTransformConfig::kSettingsKey)));
-                    if (const ChannelTransformSpec *spec =
-                            cfg.find(info->origin, table, column))
+                    if (const ChannelTransformSpec *spec = cfg.find(info->origin, table, column))
                         transformReq = spec->transform;
                 }
             }
@@ -226,8 +218,7 @@ private:
         if (!transformReq.isEmpty() && transformReq.contains(QStringLiteral("descriptorId")))
         {
             if (!m_scriptCaps.hasTransformEvaluator())
-                return fail(err::NoEval,
-                            QStringLiteral("变换求值器未注册（script 模块未装载）"));
+                return fail(err::NoEval, QStringLiteral("变换求值器未注册（script 模块未装载）"));
 
             std::optional<ChannelView> ch = ds->channel(table, column);
             if (!ch)
@@ -281,8 +272,7 @@ private:
                 {QStringLiteral("dataset"), id},
                 {QStringLiteral("table"), table},
                 {QStringLiteral("column"), column},
-                {QStringLiteral("title"),
-                 QStringLiteral("%1 / %2.%3").arg(ds->name(), table, column)},
+                {QStringLiteral("title"), QStringLiteral("%1 / %2.%3").arg(ds->name(), table, column)},
                 {QStringLiteral("points"), lodT.size()},
                 {QStringLiteral("t0"), t0Ns / 1000000000.0},
                 {QStringLiteral("t1"), t1Ns / 1000000000.0},
@@ -361,8 +351,10 @@ private:
             QVariantList tList, vList;
             tList.reserve(view->time.size());
             vList.reserve(view->value.size());
-            for (double x : view->time) tList.append(x);
-            for (double x : view->value) vList.append(x);
+            for (double x : view->time)
+                tList.append(x);
+            for (double x : view->value)
+                vList.append(x);
             QVariantMap m;
             m[QStringLiteral("name")] = view->name;
             m[QStringLiteral("time")] = tList;
@@ -386,8 +378,7 @@ private:
             if (roles.contains(QStringLiteral("pitch")))
                 ok |= putRole(QStringLiteral("pitch"), roles.value(QStringLiteral("pitch")).toString());
             if (!ok)
-                return fail(err::Chan,
-                            QStringLiteral("姿态仪至少需要 roll / pitch 中的一个通道"));
+                return fail(err::Chan, QStringLiteral("姿态仪至少需要 roll / pitch 中的一个通道"));
         }
         else if (kind == QStringLiteral("compass"))
         {
@@ -434,8 +425,10 @@ private:
                 QVariantList tList, vList;
                 tList.reserve(view->time.size());
                 vList.reserve(view->value.size());
-                for (double x : view->time) tList.append(x);
-                for (double x : view->value) vList.append(x);
+                for (double x : view->time)
+                    tList.append(x);
+                for (double x : view->value)
+                    vList.append(x);
                 QVariantMap m;
                 m[QStringLiteral("name")] = view->name;
                 m[QStringLiteral("time")] = tList;
@@ -476,8 +469,7 @@ private:
         r.payload = QVariantMap{
             {QStringLiteral("dataset"), id},
             {QStringLiteral("kind"), kind},
-            {QStringLiteral("title"),
-             QStringLiteral("%1 · %2").arg(ds->name(), kKindLabel.value(kind, kind))},
+            {QStringLiteral("title"), QStringLiteral("%1 · %2").arg(ds->name(), kKindLabel.value(kind, kind))},
             {QStringLiteral("scalars"), scalars},
             {QStringLiteral("series"), series},
             {QStringLiteral("channels"), channelsOut},
@@ -492,8 +484,7 @@ private:
     // 于是可存盘、可分享、可跨会话恢复；恢复时按 id 匹配，匹配不上的安全跳过。
     Result<IntentResult> saveLayout(const Intent &intent)
     {
-        const QString name = intent.params.value(QStringLiteral("name"),
-                                                QStringLiteral("default")).toString();
+        const QString name = intent.params.value(QStringLiteral("name"), QStringLiteral("default")).toString();
         const QJsonObject obj = intent.params.value(QStringLiteral("layout")).toJsonObject();
         const PlotDocumentSpec spec = PlotDocumentSpec::fromJson(obj);
         writeFlatJson(m_ws, QStringLiteral("doc/plot/%1").arg(name), spec.toJson());
@@ -505,8 +496,7 @@ private:
     // plot.layout.load：读回 plot 布局。
     Result<IntentResult> loadLayout(const Intent &intent)
     {
-        const QString name = intent.params.value(QStringLiteral("name"),
-                                                QStringLiteral("default")).toString();
+        const QString name = intent.params.value(QStringLiteral("name"), QStringLiteral("default")).toString();
         const QJsonObject obj = readFlatJson(m_ws, QStringLiteral("doc/plot/%1").arg(name));
         if (obj.isEmpty())
             return fail(err::NoEnt, QStringLiteral("plot 布局不存在: %1").arg(name));
@@ -530,8 +520,7 @@ private:
             const QStringList tables = ds->tableNames();
             if (tables.isEmpty() || ds->table(tables.first())->columns.isEmpty())
                 return fail(err::Chan, QStringLiteral("数据集无通道"));
-            qualified = tables.first() + QLatin1Char('.')
-                      + ds->table(tables.first())->columns.first().name;
+            qualified = tables.first() + QLatin1Char('.') + ds->table(tables.first())->columns.first().name;
         }
         const int dot = qualified.indexOf(QLatin1Char('.'));
         if (dot <= 0)
@@ -557,8 +546,7 @@ private:
 
         if (px > 0)
         {
-            const QVector<LodTriple> lod = ds->lodMinMax(
-                tableName, columnName, t->firstTimeNs, t->lastTimeNs, px);
+            const QVector<LodTriple> lod = ds->lodMinMax(tableName, columnName, t->firstTimeNs, t->lastTimeNs, px);
             spec[QStringLiteral("mode")] = QStringLiteral("lod");
             spec[QStringLiteral("points")] = lod.size();
             spec[QStringLiteral("lodTriples")] = lod.size();
@@ -590,9 +578,9 @@ private:
     nextpilot::plotscope::uischema::IScriptCapabilities &m_scriptCaps;
 
     // 派生序列取数（独立派生字段）：缓存 t/v → C++ min/max 抽稀 → payload。
-    Result<IntentResult> derivedChannelPayload(int id, const QString &table, const QString &column,
-                                               const Dataset *ds, const QVector<double> &t,
-                                               const QVector<double> &v, int px, const Intent &intent)
+    Result<IntentResult> derivedChannelPayload(int id, const QString &table, const QString &column, const Dataset *ds,
+                                               const QVector<double> &t, const QVector<double> &v, int px,
+                                               const Intent &intent)
     {
         const int n = qMin(t.size(), v.size());
         if (n <= 0)
@@ -600,8 +588,7 @@ private:
 
         // 可选时间窗过滤（秒）。
         double w0 = -1e18, w1 = 1e18;
-        if (intent.params.contains(QStringLiteral("t0Ns"))
-            && intent.params.contains(QStringLiteral("t1Ns")))
+        if (intent.params.contains(QStringLiteral("t0Ns")) && intent.params.contains(QStringLiteral("t1Ns")))
         {
             w0 = intent.params.value(QStringLiteral("t0Ns")).toLongLong() / 1000000000.0;
             w1 = intent.params.value(QStringLiteral("t1Ns")).toLongLong() / 1000000000.0;
@@ -650,23 +637,21 @@ private:
     }
 };
 
-ModuleInfo PlotModule::moduleInfo()
+ExtensionDescription PlotModule::extensionDescription()
 {
-    return ModuleInfo{
-        QStringLiteral("mod.plot"),
-        QStringLiteral("绘图模块"),
-        QStringLiteral("1.0"),
-        {QStringLiteral("plot.renderer")},
-        {QStringLiteral("data.session")} // 依赖数据模块的能力，不 include 它的头
-    };
+    ExtensionDescription d;
+    d.identifier = QStringLiteral("mod.plot");
+    d.name = QStringLiteral("绘图模块");
+    d.version = QStringLiteral("1.0");
+    d.isBuiltin = true;
+    d.dependencies = {QStringLiteral("mod.data")}; // 依赖数据扩展（原 data.session 能力名对位）
+    d.activationEvents = {QStringLiteral("*")};
+    return d;
 }
 
 IWorkbenchContribution *PlotModule::create() { return new PlotModule(); }
 
-ModuleInfo PlotModule::info() const
-{
-    return moduleInfo();
-}
+ExtensionDescription PlotModule::description() const { return extensionDescription(); }
 
 void PlotModule::initialize(InstantiationService &services)
 {
@@ -692,11 +677,10 @@ void PlotModule::initialize(InstantiationService &services)
     reg(QStringLiteral("plot.layout.load"), m_handler);
 }
 
-ModuleContributions PlotModule::contributes() const
+ContributesDoc PlotModule::contributes() const
 {
     // A8b-M2 裁定 52441074：声明式数据（单一通道）。字段无损复用既有纯数据类型。
-    ModuleContributions c;
-    c.owner = QStringLiteral("plot");
+    ContributesDoc c;
 
     // 语义色 token（验收 8）：兜底色对齐历史硬编码实色，token 接管不改变外观。
     {
@@ -746,29 +730,28 @@ ModuleContributions PlotModule::contributes() const
                                                                           QStringLiteral("绘图工作区")};
     c.activities.append(plotActivity);
 
-    c.ribbonPages.append(RibbonPageDecl{QStringLiteral("ribbon.page.plot"),
-                                        QStringLiteral("绘图"), 3});
-    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.plot.figure"),
-                                          QStringLiteral("页面"), QStringLiteral("ribbon.page.plot"), 0});
-    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.plot.layout"),
-                                          QStringLiteral("布局"), QStringLiteral("ribbon.page.plot"), 1});
-    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.plot.display"),
-                                          QStringLiteral("显示"), QStringLiteral("ribbon.page.plot"), 2});
-    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.plot.tool"),
-                                          QStringLiteral("交互"), QStringLiteral("ribbon.page.plot"), 3});
-    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.plot.action"),
-                                          QStringLiteral("导出"), QStringLiteral("ribbon.page.plot"), 4});
-    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.plot.type"),
-                                          QStringLiteral("图表类型"), QStringLiteral("ribbon.page.plot"), 5});
-    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.plot.series"),
-                                          QStringLiteral("曲线与轴"), QStringLiteral("ribbon.page.plot"), 6});
+    c.ribbonPages.append(RibbonPageDecl{QStringLiteral("ribbon.page.plot"), QStringLiteral("绘图"), 3});
+    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.plot.figure"), QStringLiteral("页面"),
+                                          QStringLiteral("ribbon.page.plot"), 0});
+    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.plot.layout"), QStringLiteral("布局"),
+                                          QStringLiteral("ribbon.page.plot"), 1});
+    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.plot.display"), QStringLiteral("显示"),
+                                          QStringLiteral("ribbon.page.plot"), 2});
+    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.plot.tool"), QStringLiteral("交互"),
+                                          QStringLiteral("ribbon.page.plot"), 3});
+    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.plot.action"), QStringLiteral("导出"),
+                                          QStringLiteral("ribbon.page.plot"), 4});
+    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.plot.type"), QStringLiteral("图表类型"),
+                                          QStringLiteral("ribbon.page.plot"), 5});
+    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.plot.series"), QStringLiteral("曲线与轴"),
+                                          QStringLiteral("ribbon.page.plot"), 6});
 
-    const QString fig    = QStringLiteral("ribbon.group.plot.figure");
+    const QString fig = QStringLiteral("ribbon.group.plot.figure");
     const QString layout = QStringLiteral("ribbon.group.plot.layout");
-    const QString disp   = QStringLiteral("ribbon.group.plot.display");
-    const QString tool   = QStringLiteral("ribbon.group.plot.tool");
-    const QString act    = QStringLiteral("ribbon.group.plot.action");
-    const QString type   = QStringLiteral("ribbon.group.plot.type");
+    const QString disp = QStringLiteral("ribbon.group.plot.display");
+    const QString tool = QStringLiteral("ribbon.group.plot.tool");
+    const QString act = QStringLiteral("ribbon.group.plot.action");
+    const QString type = QStringLiteral("ribbon.group.plot.type");
     auto add = [&c](const QString &id, const QString &label, const QString &slot, const QString &icon, int order,
                     const QString &data = QString(), bool large = false, bool checkable = false,
                     const QString &intentOp = QString(), const QString &thumbnail = QString(),
@@ -796,81 +779,73 @@ ModuleContributions PlotModule::contributes() const
     };
 
     // 页面组。
-    add(QStringLiteral("figure.new"), QStringLiteral("新建页"), fig,
-        QStringLiteral("newpage"), 0, QString(), true);
-    add(QStringLiteral("figure.closeCurrent"), QStringLiteral("删除页"), fig,
-        QStringLiteral("trash"), 1, QString(), true);
+    add(QStringLiteral("figure.new"), QStringLiteral("新建页"), fig, QStringLiteral("newpage"), 0, QString(), true);
+    add(QStringLiteral("figure.closeCurrent"), QStringLiteral("删除页"), fig, QStringLiteral("trash"), 1, QString(),
+        true);
 
     // 布局组。
-    add(QStringLiteral("figure.grid"), QStringLiteral("2×1"), layout,
-        QStringLiteral("grid"), 0, QStringLiteral("pick"), true, false,
-        QString(), QStringLiteral("layout:2x1"));
-    add(QStringLiteral("figure.addAxes"), QStringLiteral("添加"), layout,
-        QStringLiteral("plus"), 1);
-    add(QStringLiteral("figure.removeAxes"), QStringLiteral("删除"), layout,
-        QStringLiteral("trash"), 2);
-    add(QStringLiteral("figure.splitHorizontal"), QStringLiteral("左右"), layout,
-        QStringLiteral("split_h"), 3);
-    add(QStringLiteral("figure.splitVertical"), QStringLiteral("上下"), layout,
-        QStringLiteral("split_v"), 4);
+    add(QStringLiteral("figure.grid"), QStringLiteral("2×1"), layout, QStringLiteral("grid"), 0, QStringLiteral("pick"),
+        true, false, QString(), QStringLiteral("layout:2x1"));
+    add(QStringLiteral("figure.addAxes"), QStringLiteral("添加"), layout, QStringLiteral("plus"), 1);
+    add(QStringLiteral("figure.removeAxes"), QStringLiteral("删除"), layout, QStringLiteral("trash"), 2);
+    add(QStringLiteral("figure.splitHorizontal"), QStringLiteral("左右"), layout, QStringLiteral("split_h"), 3);
+    add(QStringLiteral("figure.splitVertical"), QStringLiteral("上下"), layout, QStringLiteral("split_v"), 4);
 
     // 显示组。
-    add(QStringLiteral("plot.action.redraw"), QStringLiteral("重绘"), disp,
-        QStringLiteral("plot_refresh"), 0, QString(), true, false,
-        QStringLiteral("plot.render"));
-    add(QStringLiteral("plot.grid.menu"), QStringLiteral("网格"), disp,
-        QStringLiteral("grid_lines"), 1, QString(), true);
-    add(QStringLiteral("plot.box"), QStringLiteral("边框"), disp,
-        QStringLiteral("box"), 2, QString(), false, true);
-    add(QStringLiteral("plot.legend.toggle"), QStringLiteral("图例"), disp,
-        QStringLiteral("legend"), 3, QString(), false, true,
-        QStringLiteral("plot.legend.toggle"));
+    add(QStringLiteral("plot.action.redraw"), QStringLiteral("重绘"), disp, QStringLiteral("plot_refresh"), 0,
+        QString(), true, false, QStringLiteral("plot.render"));
+    add(QStringLiteral("plot.grid.menu"), QStringLiteral("网格"), disp, QStringLiteral("grid_lines"), 1, QString(),
+        true);
+    add(QStringLiteral("plot.box"), QStringLiteral("边框"), disp, QStringLiteral("box"), 2, QString(), false, true);
+    add(QStringLiteral("plot.legend.toggle"), QStringLiteral("图例"), disp, QStringLiteral("legend"), 3, QString(),
+        false, true, QStringLiteral("plot.legend.toggle"));
 
     // 交互组。
-    add(QStringLiteral("plot.bookmark.add"), QStringLiteral("标记"), tool,
-        QStringLiteral("marker"), 0, QString(), true);
-    add(QStringLiteral("plot.ab.toggle"), QStringLiteral("AB"), tool,
-        QStringLiteral("ruler"), 1, QString(), true, true);
-    add(QStringLiteral("plot.tool"), QStringLiteral("放大"), tool,
-        QStringLiteral("zoom_in"), 2, QStringLiteral("{\"tool\":1}"), false, true);
-    add(QStringLiteral("plot.tool"), QStringLiteral("移动"), tool,
-        QStringLiteral("hand"), 3, QStringLiteral("{\"tool\":0}"), false, true);
-    add(QStringLiteral("plot.tool"), QStringLiteral("缩小"), tool,
-        QStringLiteral("zoom_out"), 4, QStringLiteral("{\"tool\":2}"), false, true);
-    add(QStringLiteral("plot.autoscale"), QStringLiteral("恢复"), tool,
-        QStringLiteral("fit"), 5);
+    add(QStringLiteral("plot.bookmark.add"), QStringLiteral("标记"), tool, QStringLiteral("marker"), 0, QString(),
+        true);
+    add(QStringLiteral("plot.ab.toggle"), QStringLiteral("AB"), tool, QStringLiteral("ruler"), 1, QString(), true,
+        true);
+    add(QStringLiteral("plot.tool"), QStringLiteral("放大"), tool, QStringLiteral("zoom_in"), 2,
+        QStringLiteral("{\"tool\":1}"), false, true);
+    add(QStringLiteral("plot.tool"), QStringLiteral("移动"), tool, QStringLiteral("hand"), 3,
+        QStringLiteral("{\"tool\":0}"), false, true);
+    add(QStringLiteral("plot.tool"), QStringLiteral("缩小"), tool, QStringLiteral("zoom_out"), 4,
+        QStringLiteral("{\"tool\":2}"), false, true);
+    add(QStringLiteral("plot.autoscale"), QStringLiteral("恢复"), tool, QStringLiteral("fit"), 5);
 
     // 导出组。
-    add(QStringLiteral("plot.screenshot"), QStringLiteral("截图"), act,
-        QStringLiteral("screenshot"), 0);
-    add(QStringLiteral("plot.export.png"), QStringLiteral("导出 PNG"), act,
-        QStringLiteral("export"), 1, QString(), false, false,
-        QStringLiteral("plot.export.png"));
-    add(QStringLiteral("plot.export.csv"), QStringLiteral("导出 CSV"), act,
-        QStringLiteral("export_data"), 2, QString(), false, false,
-        QStringLiteral("plot.export.csv"));
+    add(QStringLiteral("plot.screenshot"), QStringLiteral("截图"), act, QStringLiteral("screenshot"), 0);
+    add(QStringLiteral("plot.export.png"), QStringLiteral("导出 PNG"), act, QStringLiteral("export"), 1, QString(),
+        false, false, QStringLiteral("plot.export.png"));
+    add(QStringLiteral("plot.export.csv"), QStringLiteral("导出 CSV"), act, QStringLiteral("export_data"), 2, QString(),
+        false, false, QStringLiteral("plot.export.csv"));
 
     // 图表类型库：12 种图型，纯 UiAction 进 gallery。
-    struct PlotDef { const char *kind; QString label; QString group; int order; };
+    struct PlotDef
+    {
+        const char *kind;
+        QString label;
+        QString group;
+        int order;
+    };
     static const PlotDef kPlots[] = {
-        {"timeseries", QStringLiteral("时间序列"), QStringLiteral("常用"),       0},
-        {"xy",         QStringLiteral("XY 曲线"), QStringLiteral("常用"),       1},
-        {"scatter",    QStringLiteral("散点图"), QStringLiteral("常用"),       2},
-        {"traj3d",     QStringLiteral("3D 轨迹"), QStringLiteral("常用"),       3},
-        {"map",        QStringLiteral("GPS 地图"), QStringLiteral("常用"),      4},
-        {"bar",        QStringLiteral("柱状图"), QStringLiteral("曲线"),       10},
-        {"histogram",  QStringLiteral("直方图"), QStringLiteral("曲线"),       11},
-        {"fft",        QStringLiteral("频谱 FFT"), QStringLiteral("曲线"),     12},
-        {"surface3d",  QStringLiteral("3D 曲面"), QStringLiteral("地图 / 3D"), 20},
-        {"horizon",    QStringLiteral("地平仪"), QStringLiteral("仪表"),       30},
-        {"compass",    QStringLiteral("罗盘"),   QStringLiteral("仪表"),       31},
-        {"gauge",      QStringLiteral("仪表盘"), QStringLiteral("仪表"),       32},
+        {"timeseries", QStringLiteral("时间序列"), QStringLiteral("常用"), 0},
+        {"xy", QStringLiteral("XY 曲线"), QStringLiteral("常用"), 1},
+        {"scatter", QStringLiteral("散点图"), QStringLiteral("常用"), 2},
+        {"traj3d", QStringLiteral("3D 轨迹"), QStringLiteral("常用"), 3},
+        {"map", QStringLiteral("GPS 地图"), QStringLiteral("常用"), 4},
+        {"bar", QStringLiteral("柱状图"), QStringLiteral("曲线"), 10},
+        {"histogram", QStringLiteral("直方图"), QStringLiteral("曲线"), 11},
+        {"fft", QStringLiteral("频谱 FFT"), QStringLiteral("曲线"), 12},
+        {"surface3d", QStringLiteral("3D 曲面"), QStringLiteral("地图 / 3D"), 20},
+        {"horizon", QStringLiteral("地平仪"), QStringLiteral("仪表"), 30},
+        {"compass", QStringLiteral("罗盘"), QStringLiteral("仪表"), 31},
+        {"gauge", QStringLiteral("仪表盘"), QStringLiteral("仪表"), 32},
     };
     for (const PlotDef &d : kPlots)
     {
         const QString kind = QString::fromLatin1(d.kind);
-        add(QStringLiteral("plot.type.") + kind, d.label, type,
-            QString(), d.order, kind, false, false,
+        add(QStringLiteral("plot.type.") + kind, d.label, type, QString(), d.order, kind, false, false,
             QStringLiteral("plot.setType"), kind, d.group);
     }
     return c;
@@ -935,4 +910,4 @@ void PlotModule::onDetach()
 
 #include "ErrorCodes.h"
 // 编译期自注册：新增绘图模块无需改 App / 宿主。
-PS_REGISTER_MODULE(PlotModule)
+PS_REGISTER_EXTENSION(PlotModule)

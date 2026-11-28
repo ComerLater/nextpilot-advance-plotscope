@@ -34,7 +34,7 @@ public:
     };
 
     // drivers 是解析目录快照（IMessageParser* 抽象接口列表），由装配侧经
-    // AppContext::drivers() 提供——对话框不 include ToolboxHub、不认识工具箱容器。
+    // AppContext::drivers() 提供——对话框不 include ExtensionRegistry、不认识工具箱容器。
     explicit ImportDialog(const QList<nextpilot::plotscope::parser::IMessageParser *> &drivers,
                           QWidget *parent = nullptr);
     ~ImportDialog() override;

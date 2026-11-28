@@ -1,0 +1,243 @@
+name: debug-shell
+
+# 调试专用 workflow：不参与门禁，不进 required checks，只给开发期取证用。
+#
+# 触发方式（两条，都只落本分支，不碰 main）：
+#   1. push 改动 debug-run/args.env —— 改参数即重跑，等同于「重新 dispatch」。
+#      （workflow_dispatch 要求 workflow 已存在于默认分支，本文件刻意只在特性分支，
+#        所以用 push 触发当开关，避免为调试工具在 main 上开洞。）
+#   2. 若本文件将来进了默认分支，也可手动 dispatch（下面的 inputs 就是为此保留的）。
+#
+# 存在理由：
+#   - 空壳（PS_DISABLE_MODULE 剔光业务）这条装配模式不在任何正式 job 里跑，
+#     而它正是 M4 第 1 步的验收口径（壳零业务仍能 build/run）。
+#   - ps_gui_shell 起不来时要能拿到调用栈：Linux 下用 gdb 直取 backtrace，
+#     比 Windows 的 0xC00000FD（进程直接消失）好定位。
+#
+# 纪律：本文件只增不改其它 workflow（ci.yml / build-packages.yml / lint.yml /
+# sanitizer.yml / pack-dryrun.yml 一律不动）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '装配模式：shell-only 剔光业务（空壳）；full 全模块'
+        required: true
+        default: 'shell-only'
+        type: choice
+        options:
+          - shell-only
+          - full
+      targets:
+        description: '构建目标（空格分隔；留空按 mode 取默认）'
+        required: false
+        default: ''
+        type: string
+      run:
+        description: '构建完成后跑什么'
+        required: true
+        default: 'ps_gui_shell'
+        type: choice
+        options:
+          - ps_gui_shell
+          - smoke
+          - none
+      stack_limit:
+        description: 'ps_gui_shell 的补充栈上限（KB；0 表示不做大栈对照）'
+        required: false
+        default: '0'
+        type: string
+  push:
+    paths:
+      - 'debug-run/args.env'
+      - '.github/workflows/debug-shell.yml'
+
+concurrency:
+  group: debug-shell-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: debug (linux)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Read toolchain versions（toolchain.json 为唯一源）
+        shell: bash
+        run: |
+          set -euo pipefail
+          QT_VER=$(node tools/ci/toolchain-ver.cjs qt)
+          RUST_VER=$(node tools/ci/toolchain-ver.cjs rust)
+          [ -n "$QT_VER" ] || { echo "toolchain-ver.cjs 没给出 qt 版本"; exit 1; }
+          [ -n "$RUST_VER" ] || { echo "toolchain-ver.cjs 没给出 rust 版本"; exit 1; }
+          echo "Qt=$QT_VER rust=$RUST_VER"
+          {
+            echo "PS_QT_VER=$QT_VER"
+            echo "PS_RUST_VER=$RUST_VER"
+          } >> "$GITHUB_ENV"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build build-essential curl file gdb \
+            libgl1-mesa-dev libegl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
+            libfontconfig1 libdbus-1-3 python3 python3-numpy
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.PS_RUST_VER }}
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.PS_QT_VER }}
+          modules: 'qtcharts'
+
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1
+        with:
+          key: debug-shell
+
+      - name: Resolve 参数与装配清单
+        id: params
+        shell: bash
+        env:
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_TARGETS: ${{ inputs.targets }}
+          INPUT_RUN: ${{ inputs.run }}
+          INPUT_STACK_LIMIT: ${{ inputs.stack_limit }}
+        run: |
+          set -euo pipefail
+          # 参数来源：dispatch 的 inputs 优先，其次 debug-run/args.env（push 触发路径）。
+          # args.env 是 key=value 纯文本，改一行就重跑，不用在 UI 里点。
+          if [ -f debug-run/args.env ]; then
+            set -a; . debug-run/args.env; set +a
+          fi
+          MODE="${INPUT_MODE:-${MODE:-shell-only}}"
+          RUN="${INPUT_RUN:-${RUN:-ps_gui_shell}}"
+          TARGETS="${INPUT_TARGETS:-${TARGETS:-}}"
+          STACK_LIMIT="${INPUT_STACK_LIMIT:-${STACK_LIMIT:-0}}"
+
+          ASM=src/application/assembly/CMakeLists.txt
+          # 从装配清单自身抽「业务目标全集」，不在这里另抄一份：清单加了模块而这里漏改，
+          # 空壳就不再是空壳，调试结论会变成假象。
+          ALL=$(sed -n '/set(PS_ASSEMBLY_MODULES/,/)/p;/set(PS_ASSEMBLY_TOOLBOXES/,/)/p' "$ASM" \
+                | grep -oE 'ps_(module|toolbox|parser)_[a-z0-9_]+' | sort -u | paste -sd ';' -)
+          if [ "$MODE" = "shell-only" ]; then
+            DISABLE="$ALL"
+          else
+            DISABLE=""
+          fi
+          [ -n "$TARGETS" ] || TARGETS="plotscope-gui ps_test_gui_shell"
+
+          # 逐行写 $GITHUB_OUTPUT：仓库的输出契约检查只认这种字面形式（分组写法它读不到）。
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "run=$RUN" >> "$GITHUB_OUTPUT"
+          echo "targets=$TARGETS" >> "$GITHUB_OUTPUT"
+          echo "disable=$DISABLE" >> "$GITHUB_OUTPUT"
+          echo "stack_limit=$STACK_LIMIT" >> "$GITHUB_OUTPUT"
+          {
+            echo "### debug-shell 参数"
+            echo '```'
+            echo "mode:        $MODE"
+            echo "run:         $RUN"
+            echo "targets:     $TARGETS"
+            echo "stack_limit: $STACK_LIMIT"
+            echo "disabled($(echo "$DISABLE" | tr ';' '\n' | grep -c .)): $DISABLE"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Configure CMake
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARGS=(-S . -B build -G Ninja
+                -DCMAKE_BUILD_TYPE=Release
+                -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
+                -DPS_BUILD_TESTS=ON
+                -DCMAKE_C_COMPILER_LAUNCHER=ccache
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+          if [ -n "${{ steps.params.outputs.disable }}" ]; then
+            ARGS+=(-DPS_DISABLE_MODULE="${{ steps.params.outputs.disable }}")
+          fi
+          cmake "${ARGS[@]}"
+
+      - name: Build
+        shell: bash
+        run: |
+          set -o pipefail
+          LOG="$RUNNER_TEMP/build.log"
+          TARGETS=(${{ steps.params.outputs.targets }})
+          if ! { echo "__PS_BUILD_LOG_START__"; cmake --build build -j"$(nproc)" --target "${TARGETS[@]}"; } 2>&1 | tee "$LOG"; then
+            { echo '```'; tail -80 "$LOG"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            TAIL_LOG="$RUNNER_TEMP/build.tail"
+            marker=$(grep -n '__PS_BUILD_LOG_START__' "$LOG" | tail -1 | cut -d: -f1)
+            marker=${marker:-0}
+            tail -n +"$(( marker + 1 ))" "$LOG" > "$TAIL_LOG"
+            PATTERN='error:|error C[0-9]|fatal error|FAILED:|ld: |Undefined symbols|undefined reference'
+            grep -nE "$PATTERN" "$TAIL_LOG" | head -10 | while IFS=: read -r ln _; do
+              ctx=$(sed -n "${ln},$(( ln + 2 ))p" "$TAIL_LOG" | cut -c1-160 | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+              echo "::error::${ctx}"
+            done
+            exit 1
+          fi
+
+      - name: ccache 命中证据
+        if: always()
+        shell: bash
+        run: |
+          ccache -s 2>/dev/null || true
+          { echo '### ccache'; echo '```'; ccache -s 2>/dev/null | head -12; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run（ps_gui_shell，gdb 取证）
+        if: steps.params.outputs.run == 'ps_gui_shell'
+        shell: bash
+        run: |
+          set +e
+          BIN="$(find build -type f -name 'ps_test_gui_shell' -perm -u+x | head -1)"
+          if [ -z "$BIN" ]; then
+            echo "没编出 ps_test_gui_shell（目标名或装配模式不对）" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "binary: $BIN"
+          echo "--- 直跑 ---"
+          timeout 300 "$BIN"; rc=$?
+          echo "direct rc=$rc"
+          LIMIT="${{ steps.params.outputs.stack_limit }}"
+          if [ "$rc" -ne 0 ] && [ -n "$LIMIT" ] && [ "$LIMIT" != "0" ]; then
+            echo "--- 大栈对照（ulimit -s $LIMIT）---"
+            ( ulimit -s "$LIMIT"; exec "$BIN" ); rc2=$?
+            echo "bigstack rc=$rc2"
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "--- gdb 现场 ---"
+            gdb -batch -ex 'set pagination off' -ex run -ex 'bt 60' --args "$BIN" 2>&1 | tail -150
+            echo '### ps_gui_shell 退出码 '"$rc" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Run（plotscope-gui --smoke）
+        if: steps.params.outputs.run == 'smoke'
+        shell: bash
+        run: |
+          set +e
+          BIN="$(find build -type f -name 'plotscope-gui' -perm -u+x | head -1)"
+          if [ -z "$BIN" ]; then
+            echo "没编出 plotscope-gui" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          "$BIN" --smoke 2>&1 | tail -40
+          rc=${PIPESTATUS[0]}
+          echo "smoke rc=$rc"
+          exit "$rc"

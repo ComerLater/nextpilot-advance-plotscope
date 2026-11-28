@@ -1,6 +1,5 @@
 #include "WorkspaceModule.h"
 
-#include "BuiltinModuleHub.h"
 #include "ErrorCodes.h"
 #include "IIntentExecutor.h"
 #include "InstantiationService.h"
@@ -29,9 +28,9 @@ using namespace nextpilot::plotscope::foundation;
 using namespace nextpilot::plotscope::intent;
 using namespace nextpilot::plotscope::context;
 using namespace nextpilot::plotscope::host;
+using namespace nextpilot::plotscope::registry;
 
-namespace
-{
+namespace {
 
 // 配置扁平映射：WorkspaceDataConfig 存在 SettingsStore 的 Workspace 作用域，
 // 扁平 key = "ws/"+kSettingsKey（scopePrefix(Workspace)="ws"），值存 JSON 紧凑文本。
@@ -78,10 +77,7 @@ bool isSafeName(const QString &name)
     return !name.contains(QStringLiteral(".."));
 }
 
-QString presetPath(const QString &name)
-{
-    return QDir(presetDir()).filePath(name + QStringLiteral(".psw"));
-}
+QString presetPath(const QString &name) { return QDir(presetDir()).filePath(name + QStringLiteral(".psw")); }
 
 bool writeJson(const QString &path, const QJsonObject &obj, QString *err)
 {
@@ -200,10 +196,10 @@ private:
             return fail(err::Io, err);
 
         IntentResult r;
-        r.payload = QVariantMap{{QStringLiteral("path"), path},
-                                {QStringLiteral("sources"), preset.sources.size()},
-                                {QStringLiteral("pages"),
-                                 preset.plots.value(QStringLiteral("pages")).toArray().size()}};
+        r.payload =
+            QVariantMap{{QStringLiteral("path"), path},
+                        {QStringLiteral("sources"), preset.sources.size()},
+                        {QStringLiteral("pages"), preset.plots.value(QStringLiteral("pages")).toArray().size()}};
         return r;
     }
 
@@ -295,21 +291,20 @@ private:
     nextpilot::plotscope::workbench::ICommands &m_cmds;
 };
 
-ModuleInfo WorkspaceModule::moduleInfo()
+ExtensionDescription WorkspaceModule::extensionDescription()
 {
-    return ModuleInfo{QStringLiteral("mod.workspace"),
-                      QStringLiteral("工作区预设模块"),
-                      QStringLiteral("1.0"),
-                      {QStringLiteral("workspace.preset")},
-                      {}};
+    ExtensionDescription d;
+    d.identifier = QStringLiteral("mod.workspace");
+    d.name = QStringLiteral("工作区预设模块");
+    d.version = QStringLiteral("1.0");
+    d.isBuiltin = true;
+    d.activationEvents = {QStringLiteral("*")};
+    return d;
 }
 
 IWorkbenchContribution *WorkspaceModule::create() { return new WorkspaceModule(); }
 
-ModuleInfo WorkspaceModule::info() const
-{
-    return moduleInfo();
-}
+ExtensionDescription WorkspaceModule::description() const { return extensionDescription(); }
 
 void WorkspaceModule::initialize(InstantiationService &services)
 {
@@ -341,4 +336,4 @@ void WorkspaceModule::onDetach()
 #include "WorkspaceModule.moc"
 
 // 编译期自注册：新增模块无需改 App / 宿主。
-PS_REGISTER_MODULE(WorkspaceModule)
+PS_REGISTER_EXTENSION(WorkspaceModule)

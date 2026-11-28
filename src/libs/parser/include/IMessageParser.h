@@ -23,6 +23,9 @@
 #include "ParamSpec.h"
 
 #include <QByteArray>
+
+namespace nextpilot::plotscope::registry {
+}
 #include <QFileInfo>
 #include <QJsonObject>
 #include <QString>
@@ -33,8 +36,8 @@
 namespace nextpilot::plotscope::parser
 {
 
-using nextpilot::plotscope::registry::Domain;
 using nextpilot::plotscope::intent::Intent;
+using nextpilot::plotscope::parser::Domain;
 using nextpilot::plotscope::uischema::ParamSpec;
 
 // 解析器能提供的输出类型（能力声明，调用方按需取用）。
@@ -55,7 +58,7 @@ class IMessageParser
 public:
     virtual ~IMessageParser() = default;
 
-    // === 身份与归属（字段语义：provider/domain 由 ToolboxHub::mount 写入）===
+    // === 身份与归属（字段语义：provider/domain 由 ExtensionRegistry::mount 写入）===
     virtual QString id() const = 0;
     virtual QString displayName() const = 0;
     virtual Domain domain() const { return Domain::General; }

@@ -50,14 +50,12 @@
 #include <QShortcut>
 #include <QSplitter>
 #include <QTableWidget>
-#include <QStyledItemDelegate>
 #include <QTabWidget>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <functional>
 
 using namespace nextpilot::plotscope::foundation;
 using namespace nextpilot::plotscope::dataset;
@@ -3043,7 +3041,7 @@ void ProtocolEditorDialog::configureChecksumTransform()
         return;
     m_checksumRequest = req;
     const QString id = req.value(QStringLiteral("descriptorId")).toString();
-    m_checksumLabel = m_appCtx->transforms().get(id).label;
+    m_checksumLabel = m_appCtx->interactions().transforms().get(id).label;
     m_status->setText(QStringLiteral("Checksum 变换已配置：%1").arg(m_checksumLabel));
 }
 

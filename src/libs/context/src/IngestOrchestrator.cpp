@@ -1,7 +1,10 @@
 #include "IngestOrchestrator.h"
 #include "ErrorCodes.h"
 
-#include "SourceHub.h"
+#include "SourceRegistry.h"
+#include "DatasetRegistry.h"
+#include "IngestPipeline.h"
+#include "ParserHub.h"
 
 #include <QFileInfo>
 
@@ -25,10 +28,10 @@ using nextpilot::plotscope::dataset::Dataset;
 using nextpilot::plotscope::dataset::SourceKind;
 using nextpilot::plotscope::dataset::SourceState;
 
-using nextpilot::plotscope::parser::ParserEntry;
-using nextpilot::plotscope::parser::IByteSource;
 using nextpilot::plotscope::parser::FileByteSource;
-
+using nextpilot::plotscope::parser::IByteSource;
+using nextpilot::plotscope::parser::ParserEntry;
+using nextpilot::plotscope::parser::ParserHub;
 
 namespace
 {
@@ -49,8 +52,7 @@ QString cachePathFor(const QString &origin, const QString &parserId)
 }
 } // namespace
 
-IngestOrchestrator::IngestOrchestrator(DatasetHub &repo, SourceHub &sources,
-                                       IngestPipeline &pipeline)
+IngestOrchestrator::IngestOrchestrator(DatasetRegistry &repo, SourceRegistry &sources, IngestPipeline &pipeline)
     : m_repo(repo), m_sources(sources), m_pipeline(pipeline)
 {
 }

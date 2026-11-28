@@ -2,7 +2,7 @@
 // 用 QTemporaryDir 造样例，不依赖构建产物目录。
 
 #include "ExtensionScanner.h"
-#include "ToolboxHub.h"
+#include "ExtensionRegistry.h"
 #include "RegistryTree.h"
 
 #include <QCoreApplication>
@@ -72,7 +72,7 @@ int main(int argc, char **argv)
 
     // mount 后扩展表可读，验证扫描→贡献面链路
     RegistryTree tree;
-    ToolboxHub extensions(tree);
+    ExtensionRegistry extensions(tree);
     for (const auto &doc : report.docs)
         extensions.mountContribution(doc);
     CHECK(extensions.contributedCommands().size() == 1);

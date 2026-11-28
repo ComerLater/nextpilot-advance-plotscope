@@ -1,7 +1,7 @@
 #include "ProtocolModule.h"
+#include "Intent.h"
 
 #include "ProtocolIntentHandler.h"
-#include "BuiltinModuleHub.h"
 #include "Contribution.h"
 #include "IWorkbenchContribution.h"
 #include "InstantiationService.h"
@@ -19,26 +19,20 @@ using namespace nextpilot::plotscope::parser;
 using namespace nextpilot::plotscope::context;
 using namespace nextpilot::plotscope::host;
 
-ModuleInfo ProtocolModule::moduleInfo()
+ExtensionDescription ProtocolModule::extensionDescription()
 {
-    return ModuleInfo{
-        QStringLiteral("mod.protocol"),
-        QStringLiteral("协议模块"),
-        QStringLiteral("1.0"),
-        // 能力声明与 ProtocolIntentHandler 的 op 表一一对应：
-        // 声明了却不实现，等于对外承诺一个空入口。
-        {QStringLiteral("protocol.editor"), QStringLiteral("protocol.validate"),
-         QStringLiteral("protocol.preview"), QStringLiteral("protocol.templates")},
-        {}                                  // 不依赖其它模块
-    };
+    ExtensionDescription d;
+    d.identifier = QStringLiteral("mod.protocol");
+    d.name = QStringLiteral("协议模块");
+    d.version = QStringLiteral("1.0");
+    d.isBuiltin = true;
+    d.activationEvents = {QStringLiteral("*")};
+    return d;
 }
 
 IWorkbenchContribution *ProtocolModule::create() { return new ProtocolModule(); }
 
-ModuleInfo ProtocolModule::info() const
-{
-    return moduleInfo();
-}
+ExtensionDescription ProtocolModule::description() const { return extensionDescription(); }
 
 void ProtocolModule::initialize(InstantiationService &services)
 {
@@ -58,22 +52,17 @@ void ProtocolModule::initialize(InstantiationService &services)
         reg(op, m_handler);
 }
 
-ModuleContributions ProtocolModule::contributes() const
+ContributesDoc ProtocolModule::contributes() const
 {
-    ModuleContributions c;
-    c.owner = QStringLiteral("protocol");
-    c.ribbonPages.append(RibbonPageDecl{QStringLiteral("ribbon.page.protocol"),
-                                        QStringLiteral("协议"), 5});
-    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.protocol.editor"),
-                                          QStringLiteral("编辑器"),
+    ContributesDoc c;
+    c.ribbonPages.append(RibbonPageDecl{QStringLiteral("ribbon.page.protocol"), QStringLiteral("协议"), 5});
+    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.protocol.editor"), QStringLiteral("编辑器"),
                                           QStringLiteral("ribbon.page.protocol"), 0});
-    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.protocol.debug"),
-                                          QStringLiteral("检查"),
+    c.ribbonGroups.append(RibbonGroupDecl{QStringLiteral("ribbon.group.protocol.debug"), QStringLiteral("检查"),
                                           QStringLiteral("ribbon.page.protocol"), 1});
 
     // 协议页"编辑器"组：新建 / 打开 / 校验 + 编辑器入口；外壳按 id 特判弹窗。
-    auto add = [&c](const QString &id, const QString &label, const QString &area,
-                    const QString &icon, int order) {
+    auto add = [&c](const QString &id, const QString &label, const QString &area, const QString &icon, int order) {
         UiAction a;
         a.id = id;
         a.label = label;
@@ -87,11 +76,11 @@ ModuleContributions ProtocolModule::contributes() const
     add(QStringLiteral("protocol.open"), QStringLiteral("打开编辑"), editor, QStringLiteral("file_open"), 1);
     add(QStringLiteral("protocol.validate"), QStringLiteral("校验协议"), editor, QStringLiteral("check"), 2);
     add(QStringLiteral("protocol.editor"), QStringLiteral("协议编辑器"), editor, QStringLiteral("settings"), 3);
-    add(QStringLiteral("app.action.protocolEditor"), QStringLiteral("协议编辑器"),
-        editor, QStringLiteral("file_open"), 4);
+    add(QStringLiteral("app.action.protocolEditor"), QStringLiteral("协议编辑器"), editor, QStringLiteral("file_open"),
+        4);
     const QString debug = QStringLiteral("ribbon.group.protocol.debug");
-    add(QStringLiteral("app.action.protocolInspector"), QStringLiteral("协议检查器"),
-        debug, QStringLiteral("file_open"), 0);
+    add(QStringLiteral("app.action.protocolInspector"), QStringLiteral("协议检查器"), debug,
+        QStringLiteral("file_open"), 0);
     return c;
 }
 
@@ -111,4 +100,4 @@ void ProtocolModule::onDetach()
 
 #include "ProtocolModule.moc"
 
-PS_REGISTER_MODULE(ProtocolModule)
+PS_REGISTER_EXTENSION(ProtocolModule)

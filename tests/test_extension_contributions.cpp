@@ -1,8 +1,8 @@
 // A8b-M1 contributes 契约单测：mount/unmount/owner 索引/find + 整批撤回。
-// 贡献面是唯一扩展注册表 ToolboxHub 的 contributes 属性（不是第二个宿主）——
+// 贡献面是唯一扩展注册表 ExtensionRegistry 的 contributes 属性（不是第二个宿主）——
 // 只链 ps_registry + Qt6::Core，验证 contributes 是纯数据表，不碰壳/命令层。
 
-#include "ToolboxHub.h"
+#include "ExtensionRegistry.h"
 #include "ContributionParser.h"
 #include "RegistryTree.h"
 
@@ -40,7 +40,7 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
 
     RegistryTree tree;
-    ToolboxHub extensions(tree);
+    ExtensionRegistry extensions(tree);
 
     // 唯一扩展节点上树（kind=Extension）；contributes 是该节点的属性面，不新增 kind。
     bool onTree = false;

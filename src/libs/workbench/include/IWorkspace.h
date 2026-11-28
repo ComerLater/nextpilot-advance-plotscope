@@ -14,12 +14,22 @@
 #include <QStringList>
 #include <QVector>
 #include <QPair>
+#include <QList>
 
 // derived() 返回类型只前向声明，避免 include context 头（§1.3.1 要求头不依赖具体 Hub）。
 // configuration 不返回 SettingsStore&（避免 workbench→context 反向依赖），改为扁平 QVariant
 // 键值（§1.3.2 类型对齐表），底层由装配层映射到 SettingsStore::value/setValue。
 namespace nextpilot::plotscope::context {
 class DerivedSeriesHub;
+}
+
+namespace nextpilot::plotscope::parser {
+class IMessageParser;
+}
+
+namespace nextpilot::plotscope::registry {
+struct ItemContextSpec;
+struct ReportTemplate;
 }
 
 namespace nextpilot::plotscope::workbench {
@@ -45,9 +55,17 @@ public:
     // 删键 / 按前缀枚举键（settings.remove / settings.list 用；scope 名映射为 "app/" "ws/" "doc/" 前缀）。
     virtual void removeConfiguration(const QString &key) = 0;
     virtual QStringList configurationKeys(const QString &prefix = {}) const = 0;
-    // 格式驱动目录：{id, displayName} 元数据对（按名给能力，不暴露 ToolboxHub/IMessageParser）。
+    // 格式驱动目录：{id, displayName} 元数据对（按名给能力，不暴露 ExtensionRegistry/IMessageParser）。
     // DataModule 的 onAttach 用它生成"来源"Ribbon 图块，避免模块回头拿宿主拿 drivers。
     virtual QVector<QPair<QString, QString>> sourceDriverMetas() const = 0;
+
+    // 扩展贡献的只读查询面：模块按需要读，不接触 ExtensionRegistry（A0 §八.3）。
+    // 装配层把扩展注册表接在这四个回调上；headless 下同样可用。
+    virtual QList<nextpilot::plotscope::parser::IMessageParser *> sourceDrivers() const = 0;
+    virtual QList<nextpilot::plotscope::parser::IMessageParser *> messageParsers() const = 0;
+    virtual QStringList extensionIds() const = 0;
+    virtual QList<nextpilot::plotscope::registry::ItemContextSpec> itemContextsFor(const QString &viewId) const = 0;
+    virtual const nextpilot::plotscope::registry::ReportTemplate *reportTemplate(const QString &id) const = 0;
 
     // 派生序列注册表（libs 具体类型，装配层注入）。
     virtual nextpilot::plotscope::context::DerivedSeriesHub &derived() = 0;

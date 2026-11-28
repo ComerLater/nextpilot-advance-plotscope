@@ -16,7 +16,6 @@
 #include <limits>
 #include <vector>
 #include <cmath>
-#include <limits>
 
 namespace nextpilot::plotscope::fastplot
 {

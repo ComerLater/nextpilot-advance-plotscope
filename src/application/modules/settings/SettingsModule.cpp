@@ -1,6 +1,5 @@
 #include "SettingsModule.h"
 
-#include "BuiltinModuleHub.h"
 #include "IIntentExecutor.h"
 #include "InstantiationService.h"
 #include "IWorkspace.h"
@@ -21,8 +20,7 @@ using namespace nextpilot::plotscope::parser;
 using namespace nextpilot::plotscope::context;
 using namespace nextpilot::plotscope::host;
 
-namespace
-{
+namespace {
 // 意图参数里的 scope 名（app/workspace/document，便于脚本/CLI）→ SettingsStore 的存储前缀
 // （app/ws/doc，同 SettingsStore.cpp scopePrefix）。扁平 key = 前缀 + "/" + 相对键。
 QString scopeKeyPrefix(const QString &name)
@@ -54,10 +52,7 @@ class SettingsModule::Handler final : public QObject, public IIntentHandler
 public:
     explicit Handler(nextpilot::plotscope::workbench::IWorkspace &ws, QObject *parent) : QObject(parent), m_ws(ws) {}
 
-    bool canHandle(const Intent &intent) const override
-    {
-        return intent.op.startsWith(QStringLiteral("settings."));
-    }
+    bool canHandle(const Intent &intent) const override { return intent.op.startsWith(QStringLiteral("settings.")); }
 
     Result<IntentResult> execute(const Intent &intent) override
     {
@@ -139,23 +134,20 @@ private:
     nextpilot::plotscope::workbench::IWorkspace &m_ws;
 };
 
-ModuleInfo SettingsModule::moduleInfo()
+ExtensionDescription SettingsModule::extensionDescription()
 {
-    return ModuleInfo{
-        QStringLiteral("mod.settings"),
-        QStringLiteral("设置模块"),
-        QStringLiteral("1.0"),
-        {QStringLiteral("settings.store")},
-        {}
-    };
+    ExtensionDescription d;
+    d.identifier = QStringLiteral("mod.settings");
+    d.name = QStringLiteral("设置模块");
+    d.version = QStringLiteral("1.0");
+    d.isBuiltin = true;
+    d.activationEvents = {QStringLiteral("*")};
+    return d;
 }
 
 IWorkbenchContribution *SettingsModule::create() { return new SettingsModule(); }
 
-ModuleInfo SettingsModule::info() const
-{
-    return moduleInfo();
-}
+ExtensionDescription SettingsModule::description() const { return extensionDescription(); }
 
 void SettingsModule::initialize(InstantiationService &services)
 {
@@ -193,4 +185,4 @@ void SettingsModule::onDetach()
 
 #include "ErrorCodes.h"
 // 编译期自注册：新增模块无需改 App / 宿主。
-PS_REGISTER_MODULE(SettingsModule)
+PS_REGISTER_EXTENSION(SettingsModule)

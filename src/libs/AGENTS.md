@@ -4,11 +4,11 @@
 
 ## 本目录是什么
 
-可复用的**机制与契约**库：foundation / dataset / registry / intent / parser / protocol / uischema / fastplot / context / module / command / recording。谁用谁实例化——库自身**没有进程语义**（不装载、不启动、不持有会话）。
+可复用的**机制与契约**库：foundation / dataset / registry / intent / parser / protocol / uischema / fastplot / context / workbench / command / recording。谁用谁实例化——库自身**没有进程语义**（不装载、不启动、不持有会话）。
 
 ## 允许放
 
-- 纯接口与数据契约（无方法体、无状态；如 `libs/module` 的 IModule/IUiContext）
+- 纯接口与数据契约（无方法体、无状态；如 `libs/workbench` 的 IWorkbenchContribution/IUiContext）
 - 数据结构与算法、格式编解码、纯 metadata
 - 无状态模板与工具（Result、OpDispatch）
 - AppContext 运行态容器（仅 `libs/context`，唯一实例在 app 构造）

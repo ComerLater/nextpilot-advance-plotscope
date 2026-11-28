@@ -14,5 +14,5 @@ target_include_directories(ps_module_report_gui PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/..  # IReportExportHost.h（模块本体零 Qt Widgets）
 )
 target_link_libraries(ps_module_report_gui PUBLIC
-    ps_context ps_registry ps_parser ps_dataset ps_uischema Qt6::Widgets Qt6::Gui Qt6::Core)
+    ps_context ps_workbench ps_registry ps_parser ps_dataset ps_uischema Qt6::Widgets Qt6::Gui Qt6::Core)
 set_target_properties(ps_module_report_gui PROPERTIES AUTOMOC ON CXX_STANDARD 17 POSITION_INDEPENDENT_CODE ON)

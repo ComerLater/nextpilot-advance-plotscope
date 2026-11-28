@@ -161,9 +161,6 @@ add_subdirectory(libs/parser)
 # 运行态容器：AppContext + 设置 + 摄取 + 交互注册（唯一实例在 app）。
 add_subdirectory(libs/context)
 
-# 器官契约：IModule/ModuleInfo/UiContext（纯接口面，运行时在 host）。
-add_subdirectory(libs/module)
-
 # B7 core 已消亡：类型全部迁入 libs/*，消费者直接链对应库。
 add_subdirectory(libs/recording)
 

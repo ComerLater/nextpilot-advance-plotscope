@@ -10,8 +10,7 @@ using namespace nextpilot::plotscope::app;
 using namespace nextpilot::plotscope::host;
 using namespace nextpilot::plotscope::registry;
 
-namespace nextpilot::plotscope::app::diag
-{
+namespace nextpilot::plotscope::app::diag {
 
 QJsonObject collect(App &application)
 {
@@ -24,13 +23,13 @@ QJsonObject collect(App &application)
         {QStringLiteral("qt"), QString::fromLatin1(qVersion())},
     };
 
-    // 模块模块
+    // 内置扩展（原模块）
     QJsonArray modules;
-    for (const ModuleInfo &info : application.host().availableModules())
+    for (const auto &info : application.host().availableExtensions())
     {
         modules.append(QJsonObject{
-            {QStringLiteral("id"), info.id},
-            {QStringLiteral("provides"), QJsonArray::fromStringList(info.provides)},
+            {QStringLiteral("id"), info.identifier},
+            {QStringLiteral("dependencies"), QJsonArray::fromStringList(info.dependencies)},
         });
     }
     root[QStringLiteral("modules")] = modules;
@@ -43,7 +42,8 @@ QJsonObject collect(App &application)
 
     // 扩展包
     QJsonArray packs;
-    const auto &toolbox = application.host().toolbox();
+    const auto &toolbox = (*static_cast<nextpilot::plotscope::registry::ExtensionRegistry *>(
+        application.context().registryTree().find(nextpilot::plotscope::registry::RegistryKind::Extension)));
     for (const auto &pack : toolbox.packs.values())
     {
         packs.append(QJsonObject{
@@ -56,7 +56,7 @@ QJsonObject collect(App &application)
 
     // 数据面：数据集/源数量（载入前为 0，诊断截屏常配合 --datafile 使用）
     root[QStringLiteral("data")] = QJsonObject{
-        {QStringLiteral("datasets"), application.context().data().count()},
+        {QStringLiteral("datasets"), application.context().workspace().dataset().count()},
     };
 
     // AI 工具目录（MCP 桥/意图工具层的白名单面）

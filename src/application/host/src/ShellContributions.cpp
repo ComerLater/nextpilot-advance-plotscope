@@ -1,6 +1,9 @@
 #include "ShellContributions.h"
 
 #include "ISlotsService.h"
+#include "MenuId.h"
+#include "MenuRegistry.h"
+#include "Contribution.h"
 
 namespace nextpilot::plotscope::host
 {
@@ -85,4 +88,109 @@ void declareShellContributions(nextpilot::plotscope::workbench::ISlotsService &s
         [&slotSvc](const registry::ActivitySpec &spec) { slotSvc.registerActivity(spec); });
 }
 
+void declareShellActions(registry::MenuRegistry &menus)
+{
+    // 组 → 页映射：与上方 applyShellContributions 声明同源。
+    static const struct
+    {
+        const char *group;
+        const char *page;
+    } kGroupPage[] = {
+        {"ribbon.group.file.document", "ribbon.page.file"},   {"ribbon.group.file.export", "ribbon.page.file"},
+        {"ribbon.group.file.screenshot", "ribbon.page.file"}, {"ribbon.group.file.help", "ribbon.page.file"},
+        {"ribbon.group.view.appearance", "ribbon.page.view"},
+    };
+    auto pageOf = [](const QString &group) -> QString {
+        for (const auto &entry : kGroupPage)
+            if (QLatin1String(entry.group) == group)
+                return QString::fromLatin1(entry.page);
+        return {};
+    };
+
+    const QString owner = QStringLiteral("app.skeleton");
+    auto add = [&menus, &pageOf, &owner](const QString &id, const QString &label, const QString &group,
+                                         const QString &op, const QString &icon, const QString &shortcut, int order) {
+        registry::UiAction a;
+        a.id = id;
+        a.label = label;
+        a.slotId = group;
+        a.intentOp = op;
+        a.icon = icon;
+        a.shortcut = shortcut;
+        a.order = order;
+        const QString pageId = pageOf(group);
+        if (pageId.isEmpty())
+            return;
+        menus.appendMenuItem(registry::MenuId::menubar(pageId), registry::IMenuItem{a, group, owner});
+    };
+
+    // 文件页 · 文件组：打开(0) / 导入布局(1) / 设置(2) / 打开工作区(3) / 保存工作区(4)
+    add(QStringLiteral("file.open"), QStringLiteral("打开文件"), QStringLiteral("ribbon.group.file.document"),
+        QStringLiteral("data.load"), QStringLiteral("file_open"), QStringLiteral("Ctrl+O"), 0);
+    add(QStringLiteral("file.importLayout"), QStringLiteral("导入布局"), QStringLiteral("ribbon.group.file.document"),
+        QStringLiteral("layout.import"), QStringLiteral("import"), QString(), 1);
+    add(QStringLiteral("file.settings"), QStringLiteral("设置"), QStringLiteral("ribbon.group.file.document"),
+        QStringLiteral("preferences.open"), QStringLiteral("settings"), QStringLiteral("Ctrl+,"), 2);
+    add(QStringLiteral("workspace.open"), QStringLiteral("打开工作区"), QStringLiteral("ribbon.group.file.document"),
+        QString(), QStringLiteral("file_open"), QString(), 3);
+    add(QStringLiteral("workspace.save"), QStringLiteral("保存工作区"), QStringLiteral("ribbon.group.file.document"),
+        QString(), QStringLiteral("export"), QString(), 4);
+
+    // 视图页 · 外观组：切换主题(0)
+    add(QStringLiteral("app.action.toggleTheme"), QStringLiteral("切换主题"),
+        QStringLiteral("ribbon.group.view.appearance"), QStringLiteral("theme.toggle"), QStringLiteral("theme_toggle"),
+        QStringLiteral("Ctrl+T"), 0);
+
+    // 文件页 · 导出组：保存布局(0) / 导出设置(1) / 导出数据(2)
+    add(QStringLiteral("file.saveLayout"), QStringLiteral("保存布局"), QStringLiteral("ribbon.group.file.export"),
+        QStringLiteral("layout.save"), QStringLiteral("export"), QStringLiteral("Ctrl+S"), 0);
+    add(QStringLiteral("file.exportSettings"), QStringLiteral("导出设置"), QStringLiteral("ribbon.group.file.export"),
+        QStringLiteral("settings.export"), QStringLiteral("export_cfg"), QString(), 1);
+    add(QStringLiteral("file.exportData"), QStringLiteral("导出数据"), QStringLiteral("ribbon.group.file.export"),
+        QStringLiteral("data.export"), QStringLiteral("export"), QString(), 2);
+
+    // 文件页 · 截图组：截图(0)
+    add(QStringLiteral("file.screenshot"), QStringLiteral("截图"), QStringLiteral("ribbon.group.file.screenshot"),
+        QStringLiteral("file.screenshot"), QStringLiteral("screenshot"), QString(), 0);
+
+    // 文件页 · 帮助组：关于(0)
+    add(QStringLiteral("help.about"), QStringLiteral("关于"), QStringLiteral("ribbon.group.file.help"),
+        QStringLiteral("help.about"), QStringLiteral("settings"), QString(), 0);
+}
+
+registry::ContributesDoc shellContributes()
+{
+    registry::ContributesDoc doc;
+    doc.owner = QStringLiteral("app.skeleton");
+    applyShellContributions(
+        [&doc](const QString &id, const QString &label, int order) {
+            registry::RibbonPageDecl pageDecl;
+            pageDecl.id = id;
+            pageDecl.label = label;
+            pageDecl.order = order;
+            doc.ribbonPages.append(pageDecl);
+        },
+        [&doc](const QString &id, const QString &label, const QString &parent, int order) {
+            registry::RibbonGroupDecl groupDecl;
+            groupDecl.id = id;
+            groupDecl.label = label;
+            groupDecl.pageId = parent;
+            groupDecl.order = order;
+            doc.ribbonGroups.append(groupDecl);
+        },
+        [&doc](const registry::ActivitySpec &spec) {
+            registry::ContributedViewContainer container;
+            container.id = spec.id;
+            container.title = spec.label;
+            container.area = QStringLiteral("activitybar");
+            container.icon = spec.icon;
+            container.order = spec.order;
+            container.ribbonPage = spec.ribbonPage;
+            container.panelTypes = spec.panelTypes;
+            container.centralEditor = spec.centralEditor;
+            container.centralRef = spec.centralRef;
+            doc.viewContainers.append(container);
+        });
+    return doc;
+}
 } // namespace nextpilot::plotscope::host

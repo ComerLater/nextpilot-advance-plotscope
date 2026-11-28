@@ -13,10 +13,7 @@ QString MdfFormatParser::displayName() const
     return QStringLiteral("MDF 4.x 格式解析器");
 }
 
-nextpilot::plotscope::registry::Domain MdfFormatParser::domain() const
-{
-    return Domain::Automotive;
-}
+nextpilot::plotscope::parser::Domain MdfFormatParser::domain() const { return Domain::Automotive; }
 
 QStringList MdfFormatParser::suffixes() const
 {

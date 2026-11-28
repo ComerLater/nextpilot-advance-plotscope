@@ -4,7 +4,7 @@
 
 ## 本目录是什么
 
-**模块（Module）——app 的基底功能，没有业务知识**：data / plot / script / protocol / analysis / settings / report。每个实现 `libs/workbench` 的 IWorkbenchContribution，在各自 TU 静态自注册（PS_REGISTER_MODULE），随 app 编译、宿主按依赖拓扑装载。**编译期固定：只能编译时增删，无运行时卸载概念**（术语定标见 `../LAYERS.md` 词表）；业务知识归扩展（工具箱/插件，见 `../../toolbox/`）。
+**模块（Module）——app 的基底功能，没有业务知识**：data / plot / script / protocol / analysis / settings / report / workspace。每个实现 `libs/workbench` 的 IWorkbenchContribution，在各自 TU 静态自注册（PS_REGISTER_EXTENSION），随 app 编译、装配层 ExtensionService 按依赖拓扑装载。**编译期固定：只能编译时增删，无运行时卸载概念**（术语定标见 `../LAYERS.md` 词表）；业务知识归扩展（工具箱/插件，见 `../../toolbox/`）。
 
 ## 允许放
 

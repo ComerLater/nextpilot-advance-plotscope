@@ -8,6 +8,7 @@
 #include "ChannelMime.h"
 
 #include "AppContext.h"
+#include "IWorkspace.h"
 #include "Dataset.h"
 #include "DataSource.h"
 #include "IIntentExecutor.h"
@@ -375,7 +376,7 @@ bool isKeyValueTable(const Table *t)
 } // namespace
 
 DataManagerPanel::DataManagerPanel(AppContext &appCtx, IIntentExecutor &executor, QWidget *parent)
-    : QWidget(parent), m_appCtx(appCtx), m_repo(appCtx.data()), m_sources(appCtx.sources()),
+    : QWidget(parent), m_appCtx(appCtx), m_repo(appCtx.workspace().dataset()), m_sources(appCtx.workspace().sources()),
       m_executor(executor)
 {
     auto *lay = new QVBoxLayout(this);
@@ -408,7 +409,7 @@ DataManagerPanel::DataManagerPanel(AppContext &appCtx, IIntentExecutor &executor
     addBtn->setMenu(addMenu);
     connect(addOpen, &QAction::triggered, this, &DataManagerPanel::openLogFile);
     connect(addLive, &QAction::triggered, this, &DataManagerPanel::openLiveConnect);
-    connect(addSettings, &QAction::triggered, this, &DataManagerPanel::openSettingsDialog);
+    connect(addSettings, &QAction::triggered, this, &DataManagerPanel::openSettings);
     headerLay->addWidget(addBtn);
     m_srcCount = new QLabel(QStringLiteral("0 源 · 0 已连接"), headerRow);
     m_srcCount->setObjectName(QStringLiteral("textDim"));
@@ -645,11 +646,11 @@ DataManagerPanel::DataManagerPanel(AppContext &appCtx, IIntentExecutor &executor
         }
     });
 
-    connect(&m_repo, &DatasetHub::datasetAdded, this, [this](DatasetId) { refresh(); });
-    connect(&m_repo, &DatasetHub::datasetRemoved, this, [this](DatasetId) { refresh(); });
-    connect(&m_sources, &SourceHub::sourceAdded, this, [this](int) { refresh(); });
-    connect(&m_sources, &SourceHub::sourceRemoved, this, [this](int) { refresh(); });
-    connect(&m_sources, &SourceHub::sourceChanged, this, [this](int) { rebuildTree(); });
+    m_datasetAddedSub = m_repo.onDidAddDocument([this](const QString &) { refresh(); });
+    m_datasetRemovedSub = m_repo.onDidRemoveDocument([this](const QString &) { refresh(); });
+    m_sourceAddedSub = m_sources.onDidAddSource([this](const QString &) { refresh(); });
+    m_sourceRemovedSub = m_sources.onDidRemoveSource([this](const QString &) { refresh(); });
+    m_sourceChangedSub = m_sources.onDidChangeSource([this](const QString &) { rebuildTree(); });
 
     // 对齐老界面：Ctrl+T 对当前选中列直接添加变换（derive）。
     auto *transformShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+T")), this);
@@ -1508,7 +1509,7 @@ void DataManagerPanel::showSourceMenu(int sourceId, const QPoint &globalPos)
     }
     else if (chosen == settingsAction)
     {
-        openSettingsDialog();
+        openSettings();
     }
     else if (chosen == clearCache)
     {
@@ -1529,7 +1530,7 @@ void DataManagerPanel::showSourceMenu(int sourceId, const QPoint &globalPos)
 // 这样：
 //   · 面板不 include 外壳头文件（模块视图不反向依赖 shell）；
 //   · 落盘、主题、时间轴派发都在外壳一处，三处入口不会走散。
-void DataManagerPanel::openSettingsDialog()
+void DataManagerPanel::openSettings()
 {
     Intent intent;
     intent.op = QStringLiteral("preferences.open");
@@ -1582,7 +1583,7 @@ void DataManagerPanel::showColumnMenu(QTreeWidgetItem *item, const QPoint &globa
     itemCtx.insert(QStringLiteral("item.id"),
                    QStringLiteral("%1/%2/%3").arg(dsId.toInt()).arg(table.toString(), column.toString()));
     for (const nextpilot::plotscope::registry::ItemContextSpec &spec :
-         m_appCtx.toolbox().itemContextsFor(QStringLiteral("data.datasetTree")))
+         m_appCtx.workspace().itemContextsFor(QStringLiteral("data.datasetTree")))
     {
         if (spec.domain.isEmpty())
             continue; // 没写键空间归属就没法求值 item.*，宁可不显示
@@ -1660,7 +1661,8 @@ QAction *chosen = menu.exec(globalPos);
         intent.params[QStringLiteral("table")] = tableName;
         intent.params[QStringLiteral("column")] = columnName;
         intent.params[QStringLiteral("transform")] = QVariant(req);
-        const QString label = m_appCtx.transforms().get(req.value(QStringLiteral("descriptorId")).toString()).label;
+        const QString label =
+            m_appCtx.interactions().transforms().get(req.value(QStringLiteral("descriptorId")).toString()).label;
         intent.params[QStringLiteral("name")] = tableName + QLatin1Char('.') + columnName
                                                + QStringLiteral(".") + label;
         const auto r = m_executor.execute(intent);
@@ -1859,7 +1861,7 @@ void DataManagerPanel::openLogFile()
 
 void DataManagerPanel::openLiveConnect()
 {
-    LiveConnectDialog dlg(m_executor, m_appCtx.toolbox().ids(), this);
+    LiveConnectDialog dlg(m_executor, m_appCtx.workspace().extensionIds(), this);
     if (dlg.exec() == QDialog::Accepted)
     {
         refresh();

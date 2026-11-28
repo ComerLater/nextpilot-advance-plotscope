@@ -74,6 +74,7 @@ target_include_directories(ps_module_plot_gui PUBLIC
 # 主题（token 配色 / 图标）与变换编辑器是横向 GUI 基础设施，单独成库谁需要谁链；
 # fastplot 是绘图库；ads 是停靠系统。不链 ps_gui / ps_shell（模块呈现层禁反向依赖外壳）。
 target_link_libraries(ps_module_plot_gui PUBLIC
+    ps_workbench
     ps_context
     ps_instantiation
     fastplot

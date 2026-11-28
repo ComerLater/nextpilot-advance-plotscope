@@ -13,10 +13,7 @@ QString ApbinFormatParser::displayName() const
     return QStringLiteral("DataFlash 格式解析器");
 }
 
-nextpilot::plotscope::registry::Domain ApbinFormatParser::domain() const
-{
-    return Domain::Autopilot;
-}
+nextpilot::plotscope::parser::Domain ApbinFormatParser::domain() const { return Domain::Autopilot; }
 
 QStringList ApbinFormatParser::suffixes() const
 {

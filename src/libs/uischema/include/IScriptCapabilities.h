@@ -24,8 +24,8 @@
 #include <functional>
 
 namespace nextpilot::plotscope::dataset {
-class DatasetHub;
-class SourceHub;
+class DatasetRegistry;
+class SourceRegistry;
 } // namespace nextpilot::plotscope::dataset
 namespace nextpilot::plotscope::context {
 class InteractionHub;
@@ -87,8 +87,8 @@ public:
 
     // BatchHandler/PythonHandler 的构造仍收具体 Hub 指针（B 组冻结、逻辑不动）。
     // 这里按名给出这些实例的引用，模块 TU 不必写 host.app()、也不 include AppContext.h。
-    virtual nextpilot::plotscope::dataset::DatasetHub &dataHub() = 0;
-    virtual nextpilot::plotscope::dataset::SourceHub &sourcesHub() = 0;
+    virtual nextpilot::plotscope::dataset::DatasetRegistry &dataHub() = 0;
+    virtual nextpilot::plotscope::dataset::SourceRegistry &sourcesHub() = 0;
     virtual nextpilot::plotscope::context::InteractionHub &interactionsHub() = 0;
 };
 

@@ -18,9 +18,9 @@
 #include "WorkspaceHistory.h"
 #include "playback/PlaybackController.h"
 #include "PlaybackEngine.h"
-#include "DatasetHub.h"
+#include "DatasetRegistry.h"
 #include "Dataset.h"
-#include "SourceHub.h"
+#include "SourceRegistry.h"
 #include "PropertySchema.h"
 #include "Result.h"
 #include "ErrorCodes.h"
@@ -62,7 +62,6 @@
 #include <QStackedWidget>
 #include <QStringList>
 
-#include <algorithm>
 
 using namespace nextpilot::plotscope::foundation;
 using namespace nextpilot::plotscope::dataset;
@@ -208,12 +207,12 @@ PlotWorkspace::PlotWorkspace(AppContext &appCtx, IIntentExecutor &executor, QWid
     // 再尝试接回 pending 条目。两个信号都要挂——文件源是 sourceAdded（登记即带
     // datasetIds）；live 源是 connectLive 先登记源、解析器吐数据后才 addDataset，
     // 只有 datasetAdded 才能补上。
-    QObject::connect(&m_appCtx.sources(), &dataset::SourceHub::sourceAdded,
-                     this, [this](int) { onDatasetTopologyChanged(); });
-    QObject::connect(&m_appCtx.sources(), &dataset::SourceHub::sourceChanged,
-                     this, [this](int) { onDatasetTopologyChanged(); });
-    QObject::connect(&m_appCtx.data(), &dataset::DatasetHub::datasetAdded,
-                     this, [this](int) { onDatasetTopologyChanged(); });
+    m_sourceAddedSub =
+        m_appCtx.workspace().sources().onDidAddSource([this](const QString &) { onDatasetTopologyChanged(); });
+    m_sourceChangedSub =
+        m_appCtx.workspace().sources().onDidChangeSource([this](const QString &) { onDatasetTopologyChanged(); });
+    m_datasetAddedSub =
+        m_appCtx.workspace().dataset().onDidAddDocument([this](const QString &) { onDatasetTopologyChanged(); });
 
     registerViewActions();
     registerPropertyProviders();
@@ -235,7 +234,7 @@ PlotWorkspace::PlotWorkspace(AppContext &appCtx, IIntentExecutor &executor, QWid
     entry.restore = [self](const QJsonObject &doc) {
         if (!self)
             return;
-        self->applyDocumentSpec(plot::PlotDocumentSpec::fromJson(doc), self->m_appCtx.sources());
+        self->applyDocumentSpec(plot::PlotDocumentSpec::fromJson(doc), self->m_appCtx.workspace().sources());
     };
     m_appCtx.states().registerEntry(std::move(entry));
 
@@ -284,7 +283,7 @@ PlotWorkspace::~PlotWorkspace()
     hub.unregisterViewActionsWithPrefix(QStringLiteral("figure."));
     hub.unregisterViewActionsWithPrefix(QStringLiteral("plot."));
     hub.unregisterViewActionsWithPrefix(QStringLiteral("playback."));
-    // pending 条目持有的 demand 引用要释放，否则 SourceHub 的需求计数泄漏。
+    // pending 条目持有的 demand 引用要释放，否则 SourceRegistry 的需求计数泄漏。
     dropPendingBinds();
     // 页对象是裸指针（Page 里还持有 scroll/host 的父子关系），析构时显式释放。
     // cell 控件归 Qt 父子树管，随 scroll 一起销毁。
@@ -332,7 +331,7 @@ PlotWorkspace::Cell PlotWorkspace::makeCell(QWidget *parentForStack)
     auto *stack = new QStackedWidget(frame);
     auto *canvas = new AxesView(stack);
     canvas->setCanvasId(++m_canvasSeq);
-    auto *view = new ChannelView(m_appCtx.transforms(), m_executor, canvas, canvas);
+    auto *view = new ChannelView(m_appCtx.interactions().transforms(), m_executor, canvas, canvas);
 
     auto *instrument = new InstrumentView(m_executor, stack);
     instrument->setAppContext(&m_appCtx);
@@ -969,8 +968,8 @@ bool PlotWorkspace::createXyCanvasFor(dataset::DatasetId dsY, const QString &tY,
     if (!src || src->series().isEmpty())
         return false;
     const PlotSeries &x = src->series().first();
-    const dataset::Dataset *dx = m_appCtx.data().get(x.datasetId);
-    const dataset::Dataset *dy = m_appCtx.data().get(dsY);
+    const dataset::Dataset *dx = m_appCtx.workspace().dataset().get(x.datasetId);
+    const dataset::Dataset *dy = m_appCtx.workspace().dataset().get(dsY);
     if (!dx || !dy || !dx->table(x.table) || !dy->table(tY))
         return false;
 
@@ -1205,7 +1204,7 @@ void PlotWorkspace::syncPlaybackRange(int datasetId)
 {
     if (!m_playback || datasetId < 0)
         return;
-    const Dataset *ds = m_appCtx.data().get(datasetId);
+    const Dataset *ds = m_appCtx.workspace().dataset().get(datasetId);
     if (!ds)
         return;
     const double lo = ds->timeMin();
@@ -1233,11 +1232,11 @@ void PlotWorkspace::connectCanvasSignals(AxesView *canvas)
     if (!canvas)
         return;
     // 源级时间 offset provider：画布把 datasetId 经
-    // SourceHub 反查源 id，再取 AppContext 的源 offset。this 长生命周期，安全。
+    // SourceRegistry 反查源 id，再取 AppContext 的源 offset。this 长生命周期，安全。
     canvas->setSourceOffsetProvider([this](nextpilot::plotscope::dataset::DatasetId id) {
         if (id == nextpilot::plotscope::dataset::kInvalidDataset)
             return 0.0;
-        const int src = m_appCtx.sources().sourceOfDataset(id);
+        const int src = m_appCtx.workspace().sources().sourceOfDataset(id);
         return src >= 0 ? m_appCtx.sourceTimeOffset(src) : 0.0;
     });
     // 同页联动游标：任一画布时间变化 → 其它画布画联动竖线（只同步时间，不复制读数）。
@@ -1314,7 +1313,7 @@ void PlotWorkspace::connectCanvasSignals(AxesView *canvas)
         {
             TransformRequest req;
             req.descriptorId = s->yTransformId;
-            req.kind = m_appCtx.transforms().get(s->yTransformId).kind;
+            req.kind = m_appCtx.interactions().transforms().get(s->yTransformId).kind;
             req.params = QJsonDocument::fromJson(s->yTransformParamsJson.toUtf8()).object();
             initial = req.toJson();
         }
@@ -1394,8 +1393,8 @@ plot::PlotDocumentSpec PlotWorkspace::toDocumentSpec() const
             c.channels.append(s.legendName());
         if (!series.isEmpty())
         {
-            const int sourceId = m_appCtx.sources().sourceOfDataset(series.first().datasetId);
-            if (const DataSourceInfo *info = m_appCtx.sources().get(sourceId))
+            const int sourceId = m_appCtx.workspace().sources().sourceOfDataset(series.first().datasetId);
+            if (const DataSourceInfo *info = m_appCtx.workspace().sources().get(sourceId))
                 c.datasetOrigin = info->origin;
         }
 
@@ -1464,8 +1463,7 @@ plot::PlotDocumentSpec PlotWorkspace::toDocumentSpec() const
     return spec;
 }
 
-bool PlotWorkspace::applyDocumentSpec(const plot::PlotDocumentSpec &spec,
-                                      const dataset::SourceHub &sources)
+bool PlotWorkspace::applyDocumentSpec(const plot::PlotDocumentSpec &spec, const dataset::ISourceAccess &sources)
 {
     if (spec.pages.isEmpty())
         return false;
@@ -1479,7 +1477,7 @@ bool PlotWorkspace::applyDocumentSpec(const plot::PlotDocumentSpec &spec,
 
     // preflight 预检（2.8）：绑定前报告 origin/channel 可满足性。问题写诊断，
     // 不阻断——origin 缺失走 pending 晚到绑定，channel 缺失留空态。
-    const QStringList issues = preflightDocumentSpec(spec, sources, m_appCtx.data());
+    const QStringList issues = preflightDocumentSpec(spec, sources, m_appCtx.workspace().dataset());
     for (const QString &issue : issues)
         m_appCtx.messages().append(QStringLiteral("warn"), QStringLiteral("plot.document"), issue);
 
@@ -1597,7 +1595,7 @@ bool PlotWorkspace::applyDocumentSpec(const plot::PlotDocumentSpec &spec,
                 p.state = c.state;
                 p.title = c.title.isEmpty() ? c.id : c.title;
                 m_pendingBinds.append(p);
-                m_appCtx.sources().demandOrigin(c.datasetOrigin);
+                m_appCtx.workspace().sources().demandOrigin(c.datasetOrigin);
                 m_appCtx.messages().append(
                     QStringLiteral("info"), QStringLiteral("plot.document"),
                     QStringLiteral("画布 %1 的数据源未到：%2，已挂起等待晚到绑定").arg(p.title, c.datasetOrigin));
@@ -1643,8 +1641,8 @@ int scoreDatasetFit(const dataset::Dataset *ds, const QStringList &channels)
 } // namespace
 
 QStringList PlotWorkspace::preflightDocumentSpec(const plot::PlotDocumentSpec &spec,
-                                                 const dataset::SourceHub &sources,
-                                                 const dataset::DatasetHub &datasets)
+                                                 const dataset::ISourceAccess &sources,
+                                                 const dataset::IDatasetAccess &datasets)
 {
     QStringList issues;
 
@@ -1736,7 +1734,7 @@ QStringList PlotWorkspace::pendingBindOrigins() const
 void PlotWorkspace::dropPendingBinds()
 {
     for (const PendingBind &p : m_pendingBinds)
-        m_appCtx.sources().releaseOrigin(p.origin);
+        m_appCtx.workspace().sources().releaseOrigin(p.origin);
     m_pendingBinds.clear();
 }
 
@@ -1754,7 +1752,7 @@ void PlotWorkspace::tryBindPending()
         //（布局变化属于用户新意图，晚到数据不该强行复活已消失的画布）。
         if (p.page < 0 || p.page >= m_pages.size())
         {
-            m_appCtx.sources().releaseOrigin(p.origin);
+            m_appCtx.workspace().sources().releaseOrigin(p.origin);
             m_pendingBinds.removeAt(k);
             continue;
         }
@@ -1763,8 +1761,8 @@ void PlotWorkspace::tryBindPending()
         if (p.page != m_activePage || p.cell < 0 || p.cell >= m_cells.size())
             continue;
 
-        const int sourceId = m_appCtx.sources().sourceByOrigin(p.origin);
-        const DataSourceInfo *info = sourceId >= 0 ? m_appCtx.sources().get(sourceId) : nullptr;
+        const int sourceId = m_appCtx.workspace().sources().sourceByOrigin(p.origin);
+        const DataSourceInfo *info = sourceId >= 0 ? m_appCtx.workspace().sources().get(sourceId) : nullptr;
         if (info == nullptr || info->datasetIds.isEmpty())
             continue; // 源还没到/还没数据，继续等下一个信号
 
@@ -1801,7 +1799,7 @@ void PlotWorkspace::tryBindPending()
                                        .arg(p.title, p.origin)
                                        .arg(boundAny ? p.channels.size() : 0));
 
-        m_appCtx.sources().releaseOrigin(p.origin);
+        m_appCtx.workspace().sources().releaseOrigin(p.origin);
         m_pendingBinds.removeAt(k);
     }
 }
@@ -1815,12 +1813,12 @@ int PlotWorkspace::chooseDatasetFor(const dataset::DataSourceInfo &info, const Q
     // pinned, unasked"；并列且无法询问时 "takes the first loaded candidate
     // and says so"——我们取登记序第一个并写一条诊断。
     int best = info.datasetIds.first();
-    int bestScore = scoreDatasetFit(m_appCtx.data().get(best), channels);
+    int bestScore = scoreDatasetFit(m_appCtx.workspace().dataset().get(best), channels);
     bool tie = false;
     for (int k = 1; k < info.datasetIds.size(); ++k)
     {
         const int did = info.datasetIds.at(k);
-        const int score = scoreDatasetFit(m_appCtx.data().get(did), channels);
+        const int score = scoreDatasetFit(m_appCtx.workspace().dataset().get(did), channels);
         if (score > bestScore)
         {
             best = did;
@@ -1873,17 +1871,17 @@ int PlotWorkspace::resolveRebindTarget(int oldId, const QString &table, const QS
     // 1) 旧 datasetId 仍挂在某源上 → 不动；
     // 2) 旧 id 失效但 table.column 在唯一数据集 → 静默重绑；
     // 3) 多个数据集都携带 → 取第一个并报告。
-    if (oldId < 0 || m_appCtx.sources().sourceOfDataset(oldId) >= 0)
+    if (oldId < 0 || m_appCtx.workspace().sources().sourceOfDataset(oldId) >= 0)
         return oldId;
     QVector<int> carriers;
-    for (const int sid : m_appCtx.sources().ids())
+    for (const int sid : m_appCtx.workspace().sources().ids())
     {
-        const dataset::DataSourceInfo *info = m_appCtx.sources().get(sid);
+        const dataset::DataSourceInfo *info = m_appCtx.workspace().sources().get(sid);
         if (info == nullptr)
             continue;
         for (const int did : info->datasetIds)
         {
-            const dataset::Dataset *ds = m_appCtx.data().get(did);
+            const dataset::Dataset *ds = m_appCtx.workspace().dataset().get(did);
             const dataset::Table *t = ds ? ds->table(table) : nullptr;
             if (t && t->column(column))
                 carriers.append(did);

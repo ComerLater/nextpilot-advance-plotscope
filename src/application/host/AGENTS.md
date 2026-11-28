@@ -19,7 +19,7 @@
 - 运行态持有——host 只拿 `AppContext&` 引用，**禁止自建仓库/设置副本**（状态两处分叉 = 上帝类温床）
 - 任何对 shell/、gui/、modules/、toolbox/ 的依赖（含 include）
 - 纯机制工具的**新增**落地（应进 libs；存量 `XlsxBook` 属历史错位，已记录待迁，禁止模仿它新增同类）
-- 模块契约的定义（IModule/ModuleInfo 在 libs/module——host 只消费）
+- 扩展契约的定义（IWorkbenchContribution/IUiContext 在 libs/workbench——host 只消费；静态描述 ExtensionDescription 在 libs/registry）
 
 ## 意图处理器归属（硬判据，新增 op 必查）
 

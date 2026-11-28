@@ -1,14 +1,22 @@
 #include "MainWindow.h"
 #include "ShellBinder.h"
-#include "ExtensionActivationService.h"
+#include "ExtensionService.h"
 #include "BuiltinViewProviders.h"  // gui 侧：壳内置工作台视图 provider 注册半（复审必修 2）
 #include "BuiltinWorkbenchViews.h" // 装配层：壳内置工作台视图声明半（owner core.workbench，纯数据）
+#ifdef PS_HAS_DATA_GUI
 #include "DataViewFactories.h"     // data 模块视图装配（③）：datasetTree view + data.table editor
+#endif
+#ifdef PS_HAS_PLOT_GUI
 #include "PlotViewFactories.h"     // plot 模块视图装配（A2c）：plot.properties view + instrument/workspace editor
+#endif
+#ifdef PS_HAS_SCRIPT_GUI
 #include "ScriptViewFactories.h"   // script 模块视图装配（A2c）：files/console/debug view + editor/batchSummary editor
+#endif
+#ifdef PS_HAS_AUTOMOTIVE_GUI
 #include "AutomotiveViewFactories.h" // automotive 领域视图装配（A2c）：canBrowser view
-#ifdef PS_HAS_REPORT_GUI
+#endif
 #include "DialogLaunch.h"   // 装配层：对话框按 id 触发助手（A2d 第⑤步壳零 registry 引用）
+#ifdef PS_HAS_REPORT_GUI
 #include "ReportExporter.h" // 装配层：注册 report.export viewAction（业务在 report 模块）
 #endif
 
@@ -54,10 +62,7 @@
 //   --dump-diagnostics[=f]  就绪后输出诊断 JSON（无值走 stdout，有值写文件）
 namespace {
 // qPrintable 走系统 ANSI，和源码里的 UTF-8 字面量混流会乱码，这里统一按 UTF-8 输出
-const char *u8(const QString &s)
-{
-    return s.toUtf8().constData();
-}
+const char *u8(const QString &s) { return s.toUtf8().constData(); }
 
 // 完整产品的身份清单（装配层唯一事实源；壳代码不出现产品常量）。
 // moduleIds 为声明式清单：当前装配仍由组合根链接全部模块，后续按清单过滤装载。
@@ -88,6 +93,19 @@ int main(int argc, char *argv[])
 #endif
     const nextpilot::plotscope::registry::ProductSpec productSpec = plotscopeProductSpec();
 
+    // --smoke 是无人值守冒烟（A0 §七.5）：必须在 QApplication 之前把平台钉成
+    // offscreen，否则 CI 无显示环境时窗口起不来。用户显式给了平台则不覆盖。
+    bool smokeMode = false;
+    for (int i = 1; i < argc; ++i)
+    {
+        if (qstrcmp(argv[i], "--smoke") == 0)
+        {
+            smokeMode = true;
+            if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
+                qputenv("QT_QPA_PLATFORM", "offscreen");
+        }
+    }
+
     QApplication app(argc, argv);
     QApplication::setApplicationName(productSpec.id);
     QApplication::setApplicationVersion(productSpec.version);
@@ -97,14 +115,12 @@ int main(int argc, char *argv[])
     parser.addHelpOption();
     parser.addVersionOption();
 
-    QCommandLineOption openOpt(QStringLiteral("open"),
-                                QStringLiteral("启动时载入数据文件"), QStringLiteral("file"));
+    QCommandLineOption openOpt(QStringLiteral("open"), QStringLiteral("启动时载入数据文件"), QStringLiteral("file"));
     parser.addOption(openOpt);
     QCommandLineOption datafileOpt(QStringList{QStringLiteral("d"), QStringLiteral("datafile")},
                                    QStringLiteral("启动载入数据文件（可重复，对齐 PJ4）"), QStringLiteral("file"));
     parser.addOption(datafileOpt);
-    QCommandLineOption autoplayOpt(QStringLiteral("autoplay"),
-                                   QStringLiteral("载入完成后自动开始播放"));
+    QCommandLineOption autoplayOpt(QStringLiteral("autoplay"), QStringLiteral("载入完成后自动开始播放"));
     parser.addOption(autoplayOpt);
     QCommandLineOption layoutOpt(QStringLiteral("layout"),
                                  QStringLiteral("启动恢复工作区配方 JSON（data.workspace.save 产物）"),
@@ -117,8 +133,8 @@ int main(int argc, char *argv[])
                                           QStringLiteral("截屏前等待秒数（默认 2，等数据载入渲染）"),
                                           QStringLiteral("seconds"), QStringLiteral("2"));
     parser.addOption(screenshotDelayOpt);
-    QCommandLineOption screenshotOutOpt(QStringLiteral("screenshot-output"),
-                                        QStringLiteral("截图 PNG 输出路径"), QStringLiteral("file"));
+    QCommandLineOption screenshotOutOpt(QStringLiteral("screenshot-output"), QStringLiteral("截图 PNG 输出路径"),
+                                        QStringLiteral("file"));
     parser.addOption(screenshotOutOpt);
     QCommandLineOption dumpDiagOpt(QStringLiteral("dump-diagnostics"),
                                    QStringLiteral("就绪后输出诊断 JSON（无值走 stdout，有值写文件）"),
@@ -128,6 +144,9 @@ int main(int argc, char *argv[])
                                          QStringLiteral("窗口就绪并完成载入后退出（退出码 0=成功/1=有失败）"),
                                          QStringLiteral("seconds"), QStringLiteral("3"));
     parser.addOption(exitAfterStartOpt);
+    QCommandLineOption smokeOpt(QStringLiteral("smoke"),
+                                QStringLiteral("无人值守冒烟：offscreen 启动、就绪后退出（退出码 0=成功）"));
+    parser.addOption(smokeOpt);
     QCommandLineOption settingsOpt(
         QStringLiteral("settings"),
         QStringLiteral("设置文件路径（默认 <AppData>/%1/settings.json）").arg(productSpec.id), QStringLiteral("file"));
@@ -163,18 +182,26 @@ int main(int argc, char *argv[])
         reportAssemblyFailure(application.context(), "declareBuiltinWorkbenchViews");
     if (!nextpilot::plotscope::gui::installBuiltinWorkbenchViewProviders(application.host().services()))
         reportAssemblyFailure(application.context(), "installBuiltinWorkbenchViewProviders");
+#ifdef PS_HAS_DATA_GUI
     if (!nextpilot::plotscope::data::installDataViewFactories(application.host().services(), &application.context(),
                                                               &application.host()))
         reportAssemblyFailure(application.context(), "installDataViewFactories");
+#endif
+#ifdef PS_HAS_PLOT_GUI
     if (!nextpilot::plotscope::plot::installPlotViewFactories(application.host().services(), &application.context(),
                                                               &application.host()))
         reportAssemblyFailure(application.context(), "installPlotViewFactories");
+#endif
+#ifdef PS_HAS_SCRIPT_GUI
     if (!nextpilot::plotscope::script::installScriptViewFactories(application.host().services(), &application.context(),
                                                                   &application.host()))
         reportAssemblyFailure(application.context(), "installScriptViewFactories");
+#endif
+#ifdef PS_HAS_AUTOMOTIVE_GUI
     if (!nextpilot::plotscope::ext::automotive::installAutomotiveViewFactories(
             application.host().services(), &application.context(), &application.host()))
         reportAssemblyFailure(application.context(), "installAutomotiveViewFactories");
+#endif
 #ifdef PS_HAS_REPORT_GUI
     // 组合根注册 report.export 的 host；report 模块在 initialize 安装、onDetach 卸载。
     // 必须在 window.build（内部 host.activate）之前注册，模块 initialize 才取得到。
@@ -204,11 +231,10 @@ int main(int argc, char *argv[])
     });
 
     // A8b-M1：把扩展 contributes 的命令接进命令面板。MainWindow 零改动——
-    // 装配层用 public getter 拿 CommandRegistry*，激活服务只按声明摆放、不解释 id。
+    // 装配层用 public getter 拿 CommandRegistry*，扩展服务只按声明摆放、不解释 id。
     // 裁定 52441633 §四：只传 AppContext，扩展注册表的获取留在装配层，
     // gui 目录不再出现扩展注册表的获取路径（§9 e) 判据）。
-    nextpilot::plotscope::assembly::ExtensionActivationService extensionActivation(application.context());
-    extensionActivation.bind(window.commandRegistry(), application.host());
+    application.extensions().bindCommands(window.commandRegistry(), application.host());
 
     int loadFailures = 0;
     auto loadOneReported = [&](const QString &path) {
@@ -219,7 +245,7 @@ int main(int argc, char *argv[])
         if (!result)
         {
             ++loadFailures;
-            window.statusBar()->showMessage(QStringLiteral("载入失败: %1").arg(result.error().message));
+            window.statusbar()->showMessage(QStringLiteral("载入失败: %1").arg(result.error().message));
         }
     };
 
@@ -239,7 +265,7 @@ int main(int argc, char *argv[])
         if (!f.open(QIODevice::ReadOnly))
         {
             ++loadFailures;
-            window.statusBar()->showMessage(QStringLiteral("布局文件打不开: %1").arg(layoutPath));
+            window.statusbar()->showMessage(QStringLiteral("布局文件打不开: %1").arg(layoutPath));
         }
         else
         {
@@ -248,7 +274,7 @@ int main(int argc, char *argv[])
             if (doc.isNull())
             {
                 ++loadFailures;
-                window.statusBar()->showMessage(QStringLiteral("布局 JSON 解析失败: %1").arg(perr.errorString()));
+                window.statusbar()->showMessage(QStringLiteral("布局 JSON 解析失败: %1").arg(perr.errorString()));
             }
             else
             {
@@ -258,7 +284,7 @@ int main(int argc, char *argv[])
                 if (!cfg.save(application.context().settings(), &err))
                 {
                     ++loadFailures;
-                    window.statusBar()->showMessage(QStringLiteral("布局写入失败: %1").arg(err));
+                    window.statusbar()->showMessage(QStringLiteral("布局写入失败: %1").arg(err));
                 }
                 else
                 {
@@ -268,7 +294,7 @@ int main(int argc, char *argv[])
                     if (!rr)
                     {
                         ++loadFailures;
-                        window.statusBar()->showMessage(QStringLiteral("布局恢复失败: %1").arg(rr.error().message));
+                        window.statusbar()->showMessage(QStringLiteral("布局恢复失败: %1").arg(rr.error().message));
                     }
                 }
             }
@@ -296,14 +322,12 @@ int main(int argc, char *argv[])
         const QString outPath = parser.value(dumpDiagOpt);
         if (outPath.isEmpty())
         {
-            fprintf(stdout, "%s\n",
-                    QString::fromUtf8(doc.toJson(QJsonDocument::Indented)).toUtf8().constData());
+            fprintf(stdout, "%s\n", QString::fromUtf8(doc.toJson(QJsonDocument::Indented)).toUtf8().constData());
         }
         else
         {
             QFile out(outPath);
-            if (!out.open(QIODevice::WriteOnly | QIODevice::Text)
-                || out.write(doc.toJson(QJsonDocument::Indented)) < 0)
+            if (!out.open(QIODevice::WriteOnly | QIODevice::Text) || out.write(doc.toJson(QJsonDocument::Indented)) < 0)
             {
                 ++diagFailures;
                 fprintf(stderr, "[diagnostics] write failed: %s\n", u8(outPath));
@@ -348,6 +372,15 @@ int main(int argc, char *argv[])
         const int seconds = parser.value(exitAfterStartOpt).toInt(&ok);
         const int waitMs = (ok && seconds >= 0 ? seconds : 3) * 1000;
         QTimer::singleShot(waitMs, &window, [] { QApplication::quit(); });
+    }
+
+    // --smoke：窗口/区域/状态栏已建完（showMaximized 返回即第一帧就位），
+    // 跑一轮事件队列收尾后直接退出——offscreen 下不起嵌套循环，避免 CI 挂死。
+    if (smokeMode)
+    {
+        QApplication::processEvents(QEventLoop::AllEvents, 200);
+        fprintf(stdout, "[smoke] failures=%d rc=%d\n", loadFailures, loadFailures == 0 ? 0 : 1);
+        return loadFailures == 0 ? 0 : 1;
     }
 
     const int exitCode = app.exec();
