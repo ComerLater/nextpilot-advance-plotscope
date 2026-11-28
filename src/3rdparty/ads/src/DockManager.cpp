@@ -604,6 +604,12 @@ CDockManager::CDockManager(QWidget *parent) :
 //============================================================================
 CDockManager::~CDockManager()
 {
+	// This manager is also a dock container. Unbind it first: the base class
+	// destructor would otherwise resolve its own QPointer<CDockManager> after
+	// the derived vptr is gone, which is an undefined downcast (UBSan flags it
+	// as "downcast ... does not point to an object of type 'CDockManager'").
+	removeFromDockManager();
+
     // fix memory leaks, see https://github.com/githubuser0xFFFF/Qt-Advanced-Docking-System/issues/307
 	std::vector<QPointer<ads::CDockAreaWidget>> areas;
 	for (int i = 0; i != dockAreaCount(); ++i)
