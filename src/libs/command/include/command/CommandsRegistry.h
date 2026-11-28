@@ -12,10 +12,14 @@
 // 执行时由壳注入的回调按 localActionId（本地 Ribbon trigger）→ intentOp（意图 op）
 // 顺序派发。command 库因此保持纯契约：不认识 IIntentExecutor、不链 intent、无 Widgets。
 
+#include "Result.h"
+
 #include <QHash>
 #include <QList>
 #include <QString>
+#include <QStringList>
 #include <QVariant>
+#include <QVariantMap>
 
 #include <functional>
 #include <utility>
@@ -52,12 +56,28 @@ struct CommandDescriptor
 // 返回 false 表示执行失败，error 写原因。
 using CommandExecutor = std::function<bool(const CommandDescriptor &command, QString *error)>;
 
-class CommandRegistry
+// VSCode `CommandsRegistry.registerCommand` 的 handler 形态：入参即 args，返回结果。
+using CommandHandler = std::function<nextpilot::plotscope::foundation::Result<QVariant>(const QVariantMap &args)>;
+
+class CommandsRegistry
 {
 public:
     bool add(const CommandDescriptor &command);
     // 移除命令（owner 卸载时整批撤注册项，避免悬空引用）。命中返回 true。
     bool remove(const QString &id);
+    // VSCode `CommandsRegistry.registerCommand`：id → handler，先到者为准；
+    // 与描述表共用同一个 id 空间，不再有第二张执行表。
+    bool registerCommand(const QString &id, CommandHandler handler);
+    bool unregisterCommand(const QString &id);
+    bool hasHandler(const QString &id) const;
+
+    // 只按 handler 执行（VSCode 口径：没注册 handler 的命令不可执行）。
+    bool executeById(const QString &id, const QVariantMap &args,
+                     nextpilot::plotscope::foundation::Result<QVariant> *out, QString *error) const;
+
+    // 已登记 id（描述表 ∪ handler 表），排序后返回。
+    QStringList commandIds() const;
+
     bool contains(const QString &id) const;
     const CommandDescriptor *find(const QString &id) const;
     QList<CommandDescriptor> commands() const { return m_commands; }
@@ -100,6 +120,7 @@ private:
     void checkKey(const QString &key);
 
     QList<CommandDescriptor> m_commands;
+    QHash<QString, CommandHandler> m_handlers;
     ContextStack m_context;
     QHash<QString, WhenExpression> m_whenById;
     QHash<QString, WhenExpression> m_whenCache;

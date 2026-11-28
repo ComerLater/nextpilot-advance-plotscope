@@ -8,7 +8,7 @@
 //   1. 激活编排：内置扩展静态表 → 依赖拓扑排序 → 建实例 → initialize → mount contributes
 //      → installer 灌回 → onAttach；反激活对称撤销；
 //   2. contributes 灌写：经 ContributionsInstaller 写 StatusHub/ViewRegistry/MenuRegistry；
-//   3. 命令绑定：把 contributes.commands 落地到 CommandRegistry，并注册单一执行 handler。
+//   3. 命令绑定：把 contributes.commands 落地到 CommandsRegistry，并注册单一执行 handler。
 //
 // 设计约束：src/application/gui 不获取扩展注册表；命令表由壳在 MainWindow.build 后传入。
 
@@ -26,7 +26,7 @@
 #include <QString>
 
 namespace nextpilot::plotscope::command {
-class CommandRegistry;
+class CommandsRegistry;
 }
 namespace nextpilot::plotscope::host {
 class IWorkbenchContribution;
@@ -81,8 +81,8 @@ public:
     QList<registry::ExtensionDescription> getExtensions() const override;
 
     // 命令绑定：把当前挂载的贡献命令落地到命令表；handler 常驻注册一次。
-    void bindCommands(command::CommandRegistry *commands);
-    void unbind(const QString &owner, command::CommandRegistry *commands);
+    void bindCommands(command::CommandsRegistry *commands);
+    void unbind(const QString &owner, command::CommandsRegistry *commands);
     int triggeredCount(const QString &commandId) const;
     int boundCommandCount() const { return m_bound.size(); }
 

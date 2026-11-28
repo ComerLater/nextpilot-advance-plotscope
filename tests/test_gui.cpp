@@ -48,7 +48,7 @@
 #include "DockAreaWidget.h"
 #include "DockWidget.h"
 #include "ShellBinder.h"
-#include "command/CommandRegistry.h"
+#include "command/CommandsRegistry.h"
 #include "command/KeybindingRegistry.h"
 #include "FilterEditorDialog.h"
 
@@ -4076,7 +4076,7 @@ int main(int argc, char *argv[])
     }
 
     {
-        CommandRegistry registry;
+        CommandsRegistry registry;
         int hits = 0;
         registry.setExecutor([&hits](const CommandDescriptor &, QString *) {
             ++hits;
@@ -4105,8 +4105,8 @@ int main(int argc, char *argv[])
 
         registry.setContextValue(QStringLiteral("kind"), QStringLiteral("series"));
         bool ok = false;
-        CHECK(CommandRegistry::evaluateWhen(QStringLiteral("(ready == true || nope == false) && kind == \"series\""),
-                                            registry.contextValues(), &ok));
+        CHECK(CommandsRegistry::evaluateWhen(QStringLiteral("(ready == true || nope == false) && kind == \"series\""),
+                                             registry.contextValues(), &ok));
         CHECK(ok);
 
         KeybindingRegistry bindings;

@@ -1,13 +1,13 @@
 // A8b-M1 e2e cmd-ext：内置测试扩展一条命令 → 接到命令面板 → 执行成功 → 卸载撤回。
 //
 // 走与 gui_main 相同的装配路径：扩展 contributes（来自扫描/manifest）→
-// assembly::ExtensionService.bindCommands(CommandRegistry*, RuntimeHost&) → commands.execute(intent)。
-// 用真实 RuntimeHost 与 CommandRegistry，不 mock；不构造完整 MainWindow（保持测试稳定）。
+// assembly::ExtensionService.bindCommands(CommandsRegistry*, RuntimeHost&) → commands.execute(intent)。
+// 用真实 RuntimeHost 与 CommandsRegistry，不 mock；不构造完整 MainWindow（保持测试稳定）。
 
 #include "App.h"
 #include "AppContext.h"
 #include "ExtensionService.h"
-#include "command/CommandRegistry.h"
+#include "command/CommandsRegistry.h"
 #include "ContributionParser.h"
 #include "ContributionsFormat.h"
 #include "ViewRegistry.h"
@@ -100,7 +100,7 @@ int main(int argc, char *argv[])
               .mountContribution(doc));
 
     // 装配层同款接线：扩展服务把贡献命令灌进一个命令表 + 注册执行 handler。
-    CommandRegistry commands;
+    CommandsRegistry commands;
     auto &activation = application.extensions();
     activation.bindCommands(&commands);
 

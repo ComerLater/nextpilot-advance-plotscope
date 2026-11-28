@@ -13,8 +13,7 @@
 namespace nextpilot::plotscope::gui
 {
 
-KeybindingDialog::KeybindingDialog(CommandRegistry &commands, KeybindingRegistry &bindings,
-                                   QWidget *parent)
+KeybindingDialog::KeybindingDialog(CommandsRegistry &commands, KeybindingRegistry &bindings, QWidget *parent)
     : QDialog(parent), m_commands(commands), m_bindings(bindings)
 {
     setObjectName(QStringLiteral("keybindingDialog"));

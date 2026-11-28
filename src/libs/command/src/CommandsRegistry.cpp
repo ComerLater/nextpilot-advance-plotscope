@@ -1,11 +1,11 @@
-#include "command/CommandRegistry.h"
+#include "command/CommandsRegistry.h"
 
 #include <QDebug>
 
 namespace nextpilot::plotscope::command
 {
 
-bool CommandRegistry::add(const CommandDescriptor &command)
+bool CommandsRegistry::add(const CommandDescriptor &command)
 {
     // D7：命令必须携带可执行载荷（本地动作 id 或意图 op 至少其一），
     // 但载荷是数据不是代码——handler 已彻底移除。
@@ -25,7 +25,7 @@ bool CommandRegistry::add(const CommandDescriptor &command)
     return true;
 }
 
-bool CommandRegistry::remove(const QString &id)
+bool CommandsRegistry::remove(const QString &id)
 {
     for (int i = 0; i < m_commands.size(); ++i)
     {
@@ -33,13 +33,14 @@ bool CommandRegistry::remove(const QString &id)
         {
             m_commands.removeAt(i);
             m_whenById.remove(id);
+            m_handlers.remove(id);
             return true;
         }
     }
     return false;
 }
 
-WhenExpression CommandRegistry::compileCached(const QString &source, QString *error)
+WhenExpression CommandsRegistry::compileCached(const QString &source, QString *error)
 {
     const auto it = m_whenCache.constFind(source);
     if (it != m_whenCache.constEnd())
@@ -51,12 +52,54 @@ WhenExpression CommandRegistry::compileCached(const QString &source, QString *er
     return compiled;
 }
 
-bool CommandRegistry::contains(const QString &id) const
+bool CommandsRegistry::registerCommand(const QString &id, CommandHandler handler)
+{
+    if (id.isEmpty() || !handler || m_handlers.contains(id))
+        return false; // 先到者为准（VSCode CommandsRegistry 同口径）
+    m_handlers.insert(id, std::move(handler));
+    return true;
+}
+
+bool CommandsRegistry::unregisterCommand(const QString &id) { return m_handlers.remove(id) > 0; }
+
+bool CommandsRegistry::hasHandler(const QString &id) const { return m_handlers.contains(id); }
+
+bool CommandsRegistry::executeById(const QString &id, const QVariantMap &args,
+                                   nextpilot::plotscope::foundation::Result<QVariant> *out, QString *error) const
+{
+    const auto it = m_handlers.constFind(id);
+    if (it == m_handlers.constEnd())
+    {
+        if (error)
+            *error = QStringLiteral("命令未注册 handler: %1").arg(id);
+        return false;
+    }
+    const nextpilot::plotscope::foundation::Result<QVariant> result = (*it)(args);
+    if (out)
+        *out = result;
+    if (!result.ok() && error)
+        *error = result.error().message;
+    return result.ok();
+}
+
+QStringList CommandsRegistry::commandIds() const
+{
+    QStringList out;
+    for (const CommandDescriptor &c : m_commands)
+        out.append(c.id);
+    for (auto it = m_handlers.constBegin(); it != m_handlers.constEnd(); ++it)
+        if (!out.contains(it.key()))
+            out.append(it.key());
+    out.sort();
+    return out;
+}
+
+bool CommandsRegistry::contains(const QString &id) const
 {
     return find(id) != nullptr;
 }
 
-const CommandDescriptor *CommandRegistry::find(const QString &id) const
+const CommandDescriptor *CommandsRegistry::find(const QString &id) const
 {
     for (const CommandDescriptor &command : m_commands)
         if (command.id == id)
@@ -64,19 +107,19 @@ const CommandDescriptor *CommandRegistry::find(const QString &id) const
     return nullptr;
 }
 
-void CommandRegistry::setContextValue(const QString &key, const QVariant &value)
+void CommandsRegistry::setContextValue(const QString &key, const QVariant &value)
 {
     checkKey(key);
     m_context.set(ContextScope::Shell, key, value);
 }
 
-void CommandRegistry::setContextValue(ContextScope scope, const QString &key, const QVariant &value)
+void CommandsRegistry::setContextValue(ContextScope scope, const QString &key, const QVariant &value)
 {
     checkKey(key);
     m_context.set(scope, key, value);
 }
 
-void CommandRegistry::checkKey(const QString &key)
+void CommandsRegistry::checkKey(const QString &key)
 {
     // N3：键必须登记在 WhenKeys 唯一表。未知键警告 + 计数（不硬拒绝，兼容
     // 运行期扩展与测试），生产代码写入未知键时测试据 unknownKeyCount 断言为 0。
@@ -89,24 +132,24 @@ void CommandRegistry::checkKey(const QString &key)
              hint.isEmpty() ? "" : qPrintable(QStringLiteral("（应为 '%1'）").arg(hint)));
 }
 
-QVariant CommandRegistry::contextValue(const QString &key) const
+QVariant CommandsRegistry::contextValue(const QString &key) const
 {
     return m_context.value(key);
 }
 
-void CommandRegistry::clearContext()
+void CommandsRegistry::clearContext()
 {
     m_context.clearAll();
 }
 
-const WhenExpression &CommandRegistry::whenFor(const QString &id) const
+const WhenExpression &CommandsRegistry::whenFor(const QString &id) const
 {
     static const WhenExpression alwaysTrue;
     const auto it = m_whenById.constFind(id);
     return it == m_whenById.constEnd() ? alwaysTrue : it.value();
 }
 
-bool CommandRegistry::isAvailable(const QString &id, QString *reason) const
+bool CommandsRegistry::isAvailable(const QString &id, QString *reason) const
 {
     const CommandDescriptor *command = find(id);
     if (!command)
@@ -139,7 +182,7 @@ bool CommandRegistry::isAvailable(const QString &id, QString *reason) const
     return true;
 }
 
-bool CommandRegistry::execute(const QString &id, QString *error)
+bool CommandsRegistry::execute(const QString &id, QString *error)
 {
     if (!isAvailable(id, error))
         return false;
@@ -155,7 +198,7 @@ bool CommandRegistry::execute(const QString &id, QString *error)
     return m_executor(*command, error);
 }
 
-bool CommandRegistry::evaluateWhen(const QString &expression, const QHash<QString, QVariant> &context,
+bool CommandsRegistry::evaluateWhen(const QString &expression, const QHash<QString, QVariant> &context,
                                    bool *ok)
 {
     ContextStack stack;

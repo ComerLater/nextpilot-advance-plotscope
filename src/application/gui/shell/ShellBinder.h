@@ -44,7 +44,7 @@ class MenuRegistry;
 }
 
 namespace nextpilot::plotscope::command {
-class CommandRegistry;
+class CommandsRegistry;
 }
 
 namespace nextpilot::plotscope::gui {
@@ -102,7 +102,7 @@ public:
     QStringList visibleRibbonPageLabels() const;
 
     // 命令注册表借用：视图标题栏动作的标题/图标/执行路径归命令层。
-    void setCommandRegistry(nextpilot::plotscope::command::CommandRegistry *commands);
+    void setCommandsRegistry(nextpilot::plotscope::command::CommandsRegistry *commands);
     // 某视图已挂上的标题栏动作数（诊断/测试口径）。
     int viewTitleActionCount(const QString &viewId) const;
 

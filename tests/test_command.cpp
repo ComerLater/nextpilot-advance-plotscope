@@ -5,7 +5,7 @@
 //   · 同一 when 串启动期只解析 1 次（执行 100 次计数不变）
 //   · 三层作用域：View 层键覆盖 Shell 层同名键
 
-#include "command/CommandRegistry.h"
+#include "command/CommandsRegistry.h"
 #include "command/WhenKeys.h"
 #include "command/ContextStack.h"
 #include "command/KeybindingRegistry.h"
@@ -140,7 +140,7 @@ static void testThreeLayerScope()
 
 static void testCache()
 {
-    CommandRegistry registry;
+    CommandsRegistry registry;
     int hits = 0;
     registry.setExecutor([&hits](const CommandDescriptor &, QString *) {
         ++hits;
@@ -241,7 +241,7 @@ static void testWhenKeys()
     CHECK(!WhenKeys::isViewScoped(QStringLiteral("selection.kind")));
 
     // setContextValue 对未知键计数警告，对契约键不计。
-    CommandRegistry registry;
+    CommandsRegistry registry;
     registry.setContextValue(QStringLiteral("selection.kind"), QStringLiteral("series"));
     CHECK(registry.unknownKeyCount() == 0);
     registry.setContextValue(QStringLiteral("selectionKind"), QStringLiteral("series"));

@@ -4,7 +4,7 @@
 #include <QString>
 #include <QStringList>
 
-#include "command/CommandRegistry.h"
+#include "command/CommandsRegistry.h"
 #include "command/KeybindingRegistry.h"
 
 #include <functional>
@@ -16,7 +16,7 @@ namespace nextpilot::plotscope::gui
 {
 
 using command::CommandDescriptor;
-using command::CommandRegistry;
+using command::CommandsRegistry;
 using command::KeybindingConflict;
 using command::KeybindingRegistry;
 
@@ -26,8 +26,7 @@ class KeybindingDialog : public QDialog
 public:
     using SaveHandler = std::function<void()>;
 
-    KeybindingDialog(CommandRegistry &commands, KeybindingRegistry &bindings,
-                     QWidget *parent = nullptr);
+    KeybindingDialog(CommandsRegistry &commands, KeybindingRegistry &bindings, QWidget *parent = nullptr);
 
     void setSaveHandler(SaveHandler handler) { m_saveHandler = std::move(handler); }
     QStringList editedSequences() const;
@@ -36,7 +35,7 @@ public:
 private:
     void save();
 
-    CommandRegistry &m_commands;
+    CommandsRegistry &m_commands;
     KeybindingRegistry &m_bindings;
     SaveHandler m_saveHandler;
     QTableWidget *m_table = nullptr;

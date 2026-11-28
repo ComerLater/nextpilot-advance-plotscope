@@ -10,34 +10,42 @@ using nextpilot::plotscope::intent::IntentResult;
 
 void CommandService::registerCommand(const QString &id, Handler h)
 {
-    if (id.isEmpty() || !h || m_commands.contains(id))
-        return; // 先到者为准（VSCode CommandsRegistry 同口径）
-    m_commands.insert(id, std::move(h));
+    // 先到者为准由 CommandsRegistry 保证；这里只做门面转发。
+    m_registry.registerCommand(id, std::move(h));
 }
 
 Result<QVariant> CommandService::executeCommand(const QString &id, const QVariantMap &args)
 {
-    auto it = m_commands.constFind(id);
-    if (it == m_commands.end())
-        return nextpilot::plotscope::foundation::fail(QStringLiteral("E_NO_COMMAND"),
-                                                      QStringLiteral("未注册命令: %1").arg(id));
-    return (*it)(args);
+    Result<QVariant> out{QVariant()};
+    QString error;
+    if (!m_registry.executeById(id, args, &out, &error))
+    {
+        if (out.error().code.isEmpty())
+            return nextpilot::plotscope::foundation::fail(QStringLiteral("E_NO_COMMAND"), error);
+        return out;
+    }
+    return out;
 }
 
-void CommandService::unregisterCommand(const QString &id) { m_commands.remove(id); }
+void CommandService::unregisterCommand(const QString &id) { m_registry.unregisterCommand(id); }
 
 Result<IntentResult> CommandService::execute(const Intent &intent)
 {
     if (intent.op.isEmpty())
         return nextpilot::plotscope::foundation::fail(err::Unsupported, QStringLiteral("空命令 id"));
 
-    // 1) 命令表：commandId == Intent.op、args == Intent.params。
-    auto it = m_commands.constFind(intent.op);
-    if (it != m_commands.end())
+    // 1) 命令表：commandId == Intent.op、args == Intent.params（handler 表在 CommandsRegistry）。
+    if (m_registry.hasHandler(intent.op))
     {
-        Result<QVariant> r = (*it)(intent.params);
-        if (!r.ok())
-            return Result<IntentResult>(r.error());
+        Result<QVariant> r{QVariant()};
+        QString error;
+        const bool ok = m_registry.executeById(intent.op, intent.params, &r, &error);
+        if (!ok)
+        {
+            if (!r.ok())
+                return Result<IntentResult>(r.error());
+            return nextpilot::plotscope::foundation::fail(QStringLiteral("E_NO_COMMAND"), error);
+        }
         IntentResult out;
         out.payload = r.value();
         return Result<IntentResult>(out);
@@ -83,7 +91,7 @@ void CommandService::unregisterHandler(nextpilot::plotscope::intent::IIntentHand
 
 QStringList CommandService::commandIds() const
 {
-    QStringList out = m_commands.keys();
+    QStringList out = m_registry.commandIds();
     for (auto it = m_systemOps.constBegin(); it != m_systemOps.constEnd(); ++it)
         for (const QString &op : it.value())
             if (!out.contains(op))

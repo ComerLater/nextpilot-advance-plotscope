@@ -3,12 +3,12 @@
 # 纯数据 + 纯函数，无 Widgets、无上层依赖，headless 与 GUI 共用同一套命令语义。
 # 权威清单只在这里；Ribbon 组、命令面板、上下文菜单、键位、视图标题栏都只是挂载点。
 add_library(ps_command STATIC
-    src/CommandRegistry.cpp
+    src/CommandsRegistry.cpp
     src/ContextStack.cpp
     src/WhenExpression.cpp
     src/KeybindingRegistry.cpp
     src/CommandService.cpp
-    include/command/CommandRegistry.h
+    include/command/CommandsRegistry.h
     include/command/ContextStack.h
     include/command/WhenExpression.h
     include/command/WhenKeys.h

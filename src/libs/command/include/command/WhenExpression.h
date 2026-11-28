@@ -18,7 +18,7 @@
 //   - 字符串比较忽略大小写；数值比较在两侧都能转成数字时启用。
 //   - 解析失败不抛异常：得到一个恒假表达式 + error 文本，调用方负责进诊断。
 //
-// 性能约定：compile 只在装载期做一次（缓存由 CommandRegistry 持有），
+// 性能约定：compile 只在装载期做一次（缓存由 CommandsRegistry 持有），
 // 运行期 evaluate 只走已经建好的节点树，不再解析字符串。
 
 #include <QString>

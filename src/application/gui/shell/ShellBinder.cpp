@@ -637,9 +637,9 @@ void ShellBinder::updateActionStyle(const QString &actionId, const QIcon &icon, 
     }
 }
 
-void ShellBinder::setCommandRegistry(nextpilot::plotscope::command::CommandRegistry *commands)
+void ShellBinder::setCommandsRegistry(nextpilot::plotscope::command::CommandsRegistry *commands)
 {
-    m_parts.viewPane->setCommandRegistry(commands);
+    m_parts.viewPane->setCommandsRegistry(commands);
 }
 
 int ShellBinder::viewTitleActionCount(const QString &viewId) const

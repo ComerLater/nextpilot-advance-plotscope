@@ -11,7 +11,7 @@ namespace nextpilot::plotscope::registry {
 class MenuRegistry;
 }
 namespace nextpilot::plotscope::command {
-class CommandRegistry;
+class CommandsRegistry;
 }
 
 namespace nextpilot::plotscope::gui {
@@ -25,7 +25,7 @@ class ViewPane
 public:
     // 菜单注册表借用（VSCode MenuRegistry）；命令注册表借用（标题/图标/执行路径）。
     void setMenuRegistry(registry::MenuRegistry *registry) { m_menus = registry; }
-    void setCommandRegistry(command::CommandRegistry *commands) { m_commands = commands; }
+    void setCommandsRegistry(command::CommandsRegistry *commands) { m_commands = commands; }
 
     // 为某视图建标题栏动作；parent 是该视图的 dock。重复调用会重建（与旧口径一致）。
     QList<QAction *> titleActions(QWidget *parent, const QString &viewId);
@@ -33,7 +33,7 @@ public:
 
 private:
     registry::MenuRegistry *m_menus = nullptr;
-    command::CommandRegistry *m_commands = nullptr;
+    command::CommandsRegistry *m_commands = nullptr;
     QHash<QString, QList<QAction *>> m_titleActions;
 };
 

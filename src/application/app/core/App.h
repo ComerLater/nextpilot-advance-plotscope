@@ -3,6 +3,7 @@
 #include "AppContext.h"
 #include "AIToolsHandler.h"
 #include "command/CommandService.h"
+#include "command/CommandsRegistry.h"
 #include "DataCommandsHandler.h"
 #include "DataLoadHandler.h"
 #include "ExtensionService.h"
@@ -45,6 +46,8 @@ public:
 
     // 服务层（按 VSCode 名字/职责取用）。
     nextpilot::plotscope::command::CommandService &commands() { return m_commands; }
+    // 命令唯一表（描述 + handler 同一个 id 空间）：壳读描述/上下文、扩展服务登记命令都走它。
+    nextpilot::plotscope::command::CommandsRegistry &commandsRegistry() { return m_commandRegistry; }
     nextpilot::plotscope::assembly::ExtensionService &extensions() { return m_extensions; }
     nextpilot::plotscope::assembly::WorkbenchServices &workbench() { return m_workbench; }
     nextpilot::plotscope::instantiation::InstantiationService &services() { return m_workbench.services(); }
@@ -66,6 +69,8 @@ public:
 private:
     nextpilot::plotscope::context::AppContext m_ctx;
     // 注册表成员：构造即上树（AppContext 的注册树是唯一归属）。
+    // 顺序不能反：CommandService 只持引用，表要先于它构造、后于它析构。
+    nextpilot::plotscope::command::CommandsRegistry m_commandRegistry;
     nextpilot::plotscope::command::CommandService m_commands;
     nextpilot::plotscope::context::IngestPipeline m_ingest;
     // 系统命令 handler：不归属任何可卸载扩展，注册进 CommandService 的系统命令位。

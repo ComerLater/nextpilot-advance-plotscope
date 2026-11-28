@@ -3,7 +3,7 @@
 #include "MenuId.h"
 #include "MenuRegistry.h"
 #include "actions/ActionBar.h"
-#include "command/CommandRegistry.h"
+#include "command/CommandsRegistry.h"
 
 #include <QAction>
 #include <QHash>
@@ -34,7 +34,7 @@ QList<QAction *> ViewPane::titleActions(QWidget *parent, const QString &viewId)
             continue;
         QHash<QString, QVariant> ctx = m_commands ? m_commands->contextValues() : QHash<QString, QVariant>{};
         ctx.insert(QStringLiteral("view"), viewId);
-        if (!command::CommandRegistry::evaluateWhen(ua.when, ctx))
+        if (!command::CommandsRegistry::evaluateWhen(ua.when, ctx))
             continue;
 
         // 标签/图标取命令描述（同一个命令在 Ribbon、标题栏、命令面板显示一致）；

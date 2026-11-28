@@ -1,7 +1,7 @@
 #include "ExtensionService.h"
 #include "IWorkbenchContribution.h"
 
-#include "command/CommandRegistry.h"
+#include "command/CommandsRegistry.h"
 #include "command/CommandService.h"
 #include "Intent.h"
 
@@ -67,7 +67,7 @@ void ExtensionService::attachViewRegistry()
     m_views = m_services.getService<registry::ViewRegistry>(QStringLiteral("views.registry"));
 }
 
-void ExtensionService::bindCommands(CommandRegistry *commands)
+void ExtensionService::bindCommands(CommandsRegistry *commands)
 {
     if (!commands)
         return;
@@ -124,7 +124,7 @@ void ExtensionService::bindCommands(CommandRegistry *commands)
     }
 }
 
-void ExtensionService::unbind(const QString &owner, CommandRegistry *commands)
+void ExtensionService::unbind(const QString &owner, CommandsRegistry *commands)
 {
     if (!commands)
         return;

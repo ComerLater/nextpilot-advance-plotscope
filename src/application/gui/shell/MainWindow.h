@@ -4,7 +4,7 @@
 #include "CommandPalette.h"
 #include "ProductSpec.h"
 #include "parts/StatusbarPart.h"
-#include "command/CommandRegistry.h"
+#include "command/CommandsRegistry.h"
 #include "command/KeybindingRegistry.h"
 #include <QJsonObject>
 #include <QHash>
@@ -71,7 +71,7 @@ namespace nextpilot::plotscope::gui
 {
 
 using command::CommandDescriptor;
-using command::CommandRegistry;
+using command::CommandsRegistry;
 using command::ContextScope;
 using command::KeybindingConflict;
 using command::KeybindingRegistry;
@@ -136,7 +136,7 @@ public:
     StatusbarPart *statusbar() const { return m_statusbar; }
     GuiContext *context() const { return m_context; }
     ThemeManager *themeManager() const { return m_theme; }
-    CommandRegistry *commandRegistry() const { return m_commands.get(); }
+    CommandsRegistry *commandRegistry() const { return m_commands; }
     KeybindingRegistry *keybindingRegistry() const { return m_keybindings.get(); }
     CommandPalette *commandPalette() const { return m_commandPalette; }
     // 诊断/测试：启动期面板引用校验未命中清单（空 = 全部命中工厂表）。
@@ -221,7 +221,8 @@ private:
     ShellBinder *m_binder = nullptr;
     StatusbarPart *m_statusbar = nullptr; // 借用，归 ShellBinder
     QMenu *m_gridMenu = nullptr;   // 「网格」大按钮的下拉（X/Y 网格线开关）
-    std::unique_ptr<CommandRegistry> m_commands;
+    // 借用组合根的**唯一**命令表（CommandService 持有同一张）；壳不再自建第二张。
+    CommandsRegistry *m_commands = nullptr;
     std::unique_ptr<KeybindingRegistry> m_keybindings;
     CommandPalette *m_commandPalette = nullptr;
     QList<QAction *> m_keybindingActions;

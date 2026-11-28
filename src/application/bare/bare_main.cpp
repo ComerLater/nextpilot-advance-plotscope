@@ -13,6 +13,7 @@
 #include "MainWindow.h"
 #include "AppContext.h"
 #include "command/CommandService.h"
+#include "command/CommandsRegistry.h"
 #include "MenuRegistry.h"
 #include "ShellContributions.h"
 #include "ProductSpec.h"
@@ -108,7 +109,8 @@ int main(int argc, char *argv[])
     // 直接用 libs 层运行态：不走 ps_app（ps_app 会装配完整产品的模块与知识包）。
     nextpilot::plotscope::context::AppContext ctx; // 空路径 = 内存设置，不落盘
     // 裸壳零服务装配：只有壳自己的菜单面（骨架动作）与命令执行体。
-    nextpilot::plotscope::command::CommandService commands;
+    nextpilot::plotscope::command::CommandsRegistry commandRegistry;
+    nextpilot::plotscope::command::CommandService commands(commandRegistry);
     nextpilot::plotscope::registry::MenuRegistry menus;
     nextpilot::plotscope::host::declareShellActions(menus);
 

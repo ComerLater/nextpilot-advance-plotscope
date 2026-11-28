@@ -5,7 +5,7 @@
 
 #include "GuiContext.h"
 #include "CommandPalette.h"
-#include "command/CommandRegistry.h"
+#include "command/CommandsRegistry.h"
 #include "KeybindingDialog.h"
 #include "command/KeybindingRegistry.h"
 #include "PreferencesIntentHandler.h"
@@ -239,7 +239,7 @@ void MainWindow::build(nextpilot::plotscope::instantiation::InstantiationService
     m_binder->setWhenEvaluator([this](const QString &when) {
         if (!m_commands)
             return true;
-        return CommandRegistry::evaluateWhen(when, m_commands->contextValues());
+        return CommandsRegistry::evaluateWhen(when, m_commands->contextValues());
     });
     // 视图标题栏动作由 ViewPane 直接读 MenuRegistry 的 view/title 条目；
     // when 作用域注入 `view`=当前 viewId，标题/图标/执行路径归命令层。
@@ -634,7 +634,7 @@ void MainWindow::build(nextpilot::plotscope::instantiation::InstantiationService
     // 5) 命令层：统一命令、命令面板与键位（依赖 ribbon 动作已建好）
     buildCommandLayer();
     // 命令注册表注入视图标题栏部件：标题/图标/执行路径走命令层。
-    m_binder->setCommandRegistry(m_commands.get());
+    m_binder->setCommandsRegistry(m_commands);
 
     // 6) 恢复上次的窗口状态（首次运行则安全跳过）
     restoreState();
@@ -1009,10 +1009,11 @@ void MainWindow::toggleSideBar()
 
 void MainWindow::buildCommandLayer()
 {
-    if (m_commands || !m_binder)
+    if (m_commands || !m_binder || !m_commandService)
         return;
 
-    m_commands = std::make_unique<CommandRegistry>();
+    // 唯一命令表来自 CommandService（组合根持有）；壳只借用，不另建。
+    m_commands = &m_commandService->registry();
 
     // D7 收口：命令只带数据，执行交给注入的回调。回调先试本地 Ribbon 动作，
     // 再按 intentOp 走意图执行器（模块业务意图 + @system/shell 的 UI 意图）。
@@ -1039,7 +1040,7 @@ void MainWindow::buildCommandLayer()
             QHash<QString, QVariant> values = m_commands->contextValues();
             for (auto it = extra.constBegin(); it != extra.constEnd(); ++it)
                 values.insert(it.key(), it.value());
-            return CommandRegistry::evaluateWhen(when, values);
+            return CommandsRegistry::evaluateWhen(when, values);
         });
     m_keybindings = std::make_unique<KeybindingRegistry>();
 
@@ -1385,7 +1386,7 @@ QList<CommandPalette::Item> MainWindow::buildCommandItems()
         if (!command.when.isEmpty())
         {
             bool ok = true;
-            if (!CommandRegistry::evaluateWhen(command.when, m_commands->contextValues(), &ok) || !ok)
+            if (!CommandsRegistry::evaluateWhen(command.when, m_commands->contextValues(), &ok) || !ok)
                 item.reason = QStringLiteral("条件不满足：%1").arg(command.when);
         }
         if (item.reason.isEmpty() && command.disabledReason)

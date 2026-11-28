@@ -53,7 +53,7 @@ App::~App()
 }
 
 App::App(const QString &settingsPath, QObject *parent)
-    : QObject(parent), m_ctx(settingsPath, this), m_commands(),
+    : QObject(parent), m_ctx(settingsPath, this), m_commandRegistry(), m_commands(m_commandRegistry),
       // 摄取管道：读字节 → 扇出 → 落库，实例归组合根，服务面经 IngestAdapter 读。
       m_ingest(datasetHub(m_ctx)),
       // data.load 走统一摄取管道：格式驱动只声明 parserId，解析实现由 SPI 解析器提供。
