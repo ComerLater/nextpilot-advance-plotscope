@@ -42,12 +42,14 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Verify version (versions.env is the single source of truth)
+      - name: Read toolchain versions（toolchain.json 为唯一源）
         shell: bash
         run: |
           set -euo pipefail
-          source versions.env
-          echo "PS_QT_VER=${PS_QT_VERSION}" >> "$GITHUB_ENV"
+          {
+            echo "PS_QT_VER=$(node tools/ci/toolchain-ver.cjs qt)"
+            echo "PS_RUST_VER=$(node tools/ci/toolchain-ver.cjs rust)"
+          } >> "$GITHUB_ENV"
 
       - name: Install build dependencies
         run: |
@@ -60,7 +62,9 @@ jobs:
             python3 python3-numpy
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.93.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.PS_RUST_VER }}
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4

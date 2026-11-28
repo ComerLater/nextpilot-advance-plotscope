@@ -45,13 +45,16 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Verify version (versions.env is the single source of truth)
+      - name: Verify app version（versions.env）/ read toolchain versions（toolchain.json）
         shell: bash
         run: |
           set -euo pipefail
           source versions.env
           echo "PS_VER=${PS_APP_VERSION}" >> "$GITHUB_ENV"
-          echo "PS_QT_VER=${PS_QT_VERSION}" >> "$GITHUB_ENV"
+          {
+            echo "PS_QT_VER=$(node tools/ci/toolchain-ver.cjs qt)"
+            echo "PS_RUST_VER=$(node tools/ci/toolchain-ver.cjs rust)"
+          } >> "$GITHUB_ENV"
           grep -q "project(PlotScope VERSION ${PS_APP_VERSION}" CMakeLists.txt \
             || { echo "::error::CMakeLists project VERSION does not match versions.env"; exit 1; }
 
@@ -65,7 +68,9 @@ jobs:
             libxkbcommon-x11-0 libfontconfig1 libdbus-1-3
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.93.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.PS_RUST_VER }}
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4

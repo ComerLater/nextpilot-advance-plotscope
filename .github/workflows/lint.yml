@@ -295,11 +295,15 @@ jobs:
           sudo apt-get install -y clang-tidy ninja-build
           clang-tidy --version
 
-      - name: Read Qt version
+      - name: Read toolchain versions（toolchain.json 为唯一源）
         if: steps.changed.outputs.files != ''
+        shell: bash
         run: |
-          source versions.env
-          echo "PS_QT_VER=${PS_QT_VERSION}" >> "$GITHUB_ENV"
+          set -euo pipefail
+          {
+            echo "PS_QT_VER=$(node tools/ci/toolchain-ver.cjs qt)"
+            echo "PS_RUST_VER=$(node tools/ci/toolchain-ver.cjs rust)"
+          } >> "$GITHUB_ENV"
 
       - name: Install Qt
         if: steps.changed.outputs.files != ''
@@ -310,7 +314,9 @@ jobs:
 
       - name: Install Rust toolchain
         if: steps.changed.outputs.files != ''
-        uses: dtolnay/rust-toolchain@1.93.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.PS_RUST_VER }}
 
       - name: Generate compile_commands.json
         if: steps.changed.outputs.files != ''

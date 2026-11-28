@@ -23,12 +23,14 @@ Windows 的编译环境（MSVC、Qt、受管 PATH）只由 `ps-setup.py` 准备�
 - `bootstrap`：一键装齐
 - `install [组件…]`：补齐指定组件
 - `check` / `doctor`：体检，含落点与修法
+- `versions [--json]`：导出版本（CI / 打包取确切值）
+- `versions --update-hashes [组件…]`：重算受管产物的 sha256 并回写 `toolchain.json`
 - `resolve <组件>`：单组件解析
 - `prepare`：configure 门禁，输出一份 JSON 给 CMake
 - `mount`：生成 env 文件，并注册 Git hooks、PowerShell profile、Windows Terminal、VSCode 默认终端
 - `uninstall`：撤受管目录
 
-版本与下载源写在各 `Tool` 类里，没有外部清单文件。`ps-setup.bat` / `.ps1` / `.sh` 是薄壳，负责准备受管 Python 后转给内核。
+版本与哈希来自仓库根 `toolchain.json`（唯一声明处）；下载源（镜像）仍写在各 `Tool` 类里。`ps-setup.bat` / `.ps1` / `.sh` 是薄壳，负责准备受管 Python 后转给内核。
 
 ### format.sh
 

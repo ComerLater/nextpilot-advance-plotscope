@@ -1,0 +1,96 @@
+{
+  "schema": 2,
+  "toolchains": {
+    "gcc": {
+      "require": ">=9"
+    },
+    "cmake": {
+      "require": "3.31.6"
+    },
+    "ninja": {
+      "require": ">=1.10",
+      "artifacts": [
+        {
+          "os": "windows",
+          "arch": "x86_64",
+          "version": "1.12.1",
+          "sha256": "f550fec705b6d6ff58f2db3c374c2277a37691678d6aba463adcbb129108467a"
+        }
+      ]
+    },
+    "ccache": {
+      "require": ">=4.5",
+      "warm_min_mb": 12,
+      "artifacts": [
+        {
+          "os": "windows",
+          "arch": "x86_64",
+          "version": "4.9.1",
+          "sha256": "d0836518cfdb74cc765a6bc6c353009367d8fc15dbbec4899ebdbeb750a07f77"
+        }
+      ]
+    },
+    "python": {
+      "require": ">=3.10",
+      "requirements": "tools/requirements.txt",
+      "artifacts": [
+        {
+          "os": "linux",
+          "arch": "x86_64",
+          "version": "3.12.12+20251014",
+          "file": "cpython-3.12.12+20251014-x86_64-unknown-linux-gnu-install_only.tar.gz",
+          "sha256": "1ab2b6594d1c3d76cbebea09d6bc3e6ba68d8eb3b6322080375c4cc3dd188f34"
+        },
+        {
+          "os": "linux",
+          "arch": "aarch64",
+          "version": "3.12.12+20251014",
+          "file": "cpython-3.12.12+20251014-aarch64-unknown-linux-gnu-install_only.tar.gz",
+          "sha256": "d32487b853d6f5709019a471770be5e5d3e6bd2ac507e5629e2d6825565d3e71"
+        },
+        {
+          "os": "windows",
+          "arch": "x86_64",
+          "version": "3.12.12+20251014",
+          "file": "cpython-3.12.12+20251014-x86_64-pc-windows-msvc-install_only.tar.gz",
+          "sha256": "2d670beb3b930d30e3a13cc909923a001dbdfcb5537692d5da40b6b41643ce1c"
+        }
+      ]
+    },
+    "msvc": {
+      "require": ">=14.0"
+    },
+    "rust": {
+      "channel_from": "src/kernel/rust-toolchain.toml",
+      "artifacts": [
+        {
+          "os": "windows",
+          "arch": "x86_64",
+          "version": "1.29.0",
+          "sha256": "86478e53f769379d7f0ebfa7c9aa97cb76ca92233f79aa2cc0dbee2efaac73c7"
+        },
+        {
+          "os": "windows",
+          "arch": "aarch64",
+          "version": "1.29.0",
+          "sha256": "3af309e6c3062aa11df0e932954f69d13b734d8a431e593812f3ecd9ff9e6ef6"
+        },
+        {
+          "os": "linux",
+          "arch": "x86_64",
+          "version": "1.29.0",
+          "sha256": "4acc9acc76d507951b46346a485974457b5a79893cfb01112423c89aeb5aa10"
+        },
+        {
+          "os": "linux",
+          "arch": "aarch64",
+          "version": "1.29.0",
+          "sha256": "9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792"
+        }
+      ]
+    },
+    "qt": {
+      "require": "6.8.3"
+    }
+  }
+}

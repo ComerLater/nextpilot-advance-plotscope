@@ -120,6 +120,7 @@ class RepoPathLayout:
     def __init__(self, root: Path):
         self.root = root
         self.rust_toml = root / "src" / "kernel" / "rust-toolchain.toml"
+        self.toolchain_json = root / "toolchain.json"
         self.qt = root / "deps" / "Qt"  # 仓库自带的 Qt（免安装兜底）
         self.githooks = root / ".githooks"
         self.git = root / ".git"
@@ -132,16 +133,88 @@ class RepoPathLayout:
 REPO = RepoPathLayout(Path(__file__).resolve().parent.parent)
 
 
-# 清单结构（由各 Tool 类的 manifest 汇总而来，没有外部清单文件）：
+# ---------- 版本清单：仓库根 toolchain.json 是唯一声明处 ----------
+# 代码里不放版本号：缺文件、缺组件、缺字段一律直接报错，避免出现「第二份默认值」。
+
+
+def read_rust_channel(toml_path: Path) -> str:
+    """读 rust-toolchain.toml 的 channel（rustup 与 CI 的原生入口）。"""
+    if not toml_path.is_file():
+        raise RuntimeError(f"缺 Rust 工具链声明：{toml_path}")
+    m = re.search(r'channel\s*=\s*"([^"]+)"', toml_path.read_text(encoding="utf-8"))
+    if not m:
+        raise RuntimeError(f'{toml_path} 缺 channel = "..."')
+    return m.group(1)
+
+
+def load_toolchains() -> dict[str, dict]:
+    """读仓库根 toolchain.json，返回 toolchains 段。"""
+    path = REPO.toolchain_json
+    if not path.is_file():
+        raise RuntimeError(f"缺版本清单 {path}：工具链版本只从它读，代码内没有默认值")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"{path} 解析失败：{e}") from e
+    tc = data.get("toolchains")
+    if not isinstance(tc, dict) or not tc:
+        raise RuntimeError(f"{path} 缺 toolchains 段")
+    return tc
+
+
+TC = load_toolchains()
+
+
+def tool_entry(name: str) -> dict:
+    e = TC.get(name)
+    if not isinstance(e, dict):
+        raise RuntimeError(f"toolchain.json 缺组件 {name}")
+    if "require" not in e and "channel_from" not in e:
+        raise RuntimeError(f"toolchain.json 的 {name} 缺 require 或 channel_from")
+    return e
+
+
+def tool_version(name: str) -> str:
+    """门禁表达式（裸值默认按 >=）；rust 由 rust-toolchain.toml 的 channel 生成精确匹配。"""
+    e = tool_entry(name)
+    if "channel_from" in e:
+        return "=" + read_rust_channel(REPO.root / str(e["channel_from"]))
+    req = str(e.get("require", ""))
+    if not req:
+        raise RuntimeError(f"toolchain.json 的 {name} 缺 require")
+    return req
+
+
+def entry_artifacts(name: str, e: dict) -> list[dict]:
+    """该工具的可下载产物表；受管下载的工具必须有，系统组件可以没有。"""
+    arts = e.get("artifacts")
+    if not isinstance(arts, list) or not arts:
+        raise RuntimeError(f"toolchain.json 的 {name} 缺 artifacts（受管下载必须有具体产物）")
+    for a in arts:
+        for key in ("os", "arch", "version", "sha256"):
+            if not a.get(key):
+                raise RuntimeError(f"toolchain.json 的 {name}.artifacts 缺 {key}：{a}")
+    return arts
+
+
+def entry_artifact(name: str, e: dict, os_name: str, arch: str) -> dict:
+    """按 os/arch 取一条产物记录（版本、文件名、哈希同处一条）。"""
+    for a in entry_artifacts(name, e):
+        if a.get("os") == os_name and a.get("arch") == arch:
+            return a
+    raise RuntimeError(f"toolchain.json 的 {name} 缺 {os_name}/{arch} 产物")
+
+
+# 清单结构（由各 Tool 类的 manifest 汇总而来）：
 #   toolchains — 每个工具「装什么」：各 Tool.manifest 的 version/sha256/extra。
 #   sources    — 每个工具「从哪下」：各 Tool.manifest.urls。
 #   packages   — 第三方源码包（zlib/zstd 等）不在这里：由 cmake/Dependencies.cmake
 #                的 PS_VER_*/PS_MIRRORS_* 常量自管（CMake 自己的依赖，与工具链无关）。
-# 版本常量只写在各 Tool 子类里（改某个工具只动它的类），default_manifest() 汇总。
+# 版本/哈希来自仓库根 toolchain.json；下载源（urls）仍写在各 Tool 子类里。
 
 
 class DepsManifest:
-    """工具链版本清单：代码为源，无外部清单文件。
+    """工具链版本清单：仓库根 toolchain.json 为源，代码不含版本号。
 
     版本表达式语义与旧 bash 的 ver_split/ver_satisfy 一致：
         ">=3.24"  → (">=", "3.24")   按段比较
@@ -149,7 +222,7 @@ class DepsManifest:
         "3.24"    → (">=", "3.24")   无运算符默认 >=
     """
 
-    source = "tools/ps-setup.py（各 Tool 类内置默认）"
+    source = "toolchain.json（仓库根）"
 
     def __init__(self):
         self.data = default_manifest()
@@ -333,6 +406,44 @@ class ToolManifest:
     def spec(self) -> dict:
         """还原成清单 toolchains.<name> 段（保持既有外部格式与字段顺序）。"""
         return {"version": self.version, **self.extra, **({"sha256": self.sha256} if self.sha256 else {})}
+
+
+def tool_manifest(name: str, urls: dict) -> ToolManifest:
+    """按 toolchain.json 的条目构造 ToolManifest。
+
+    清单只管两件事：「门禁要几版」（require）与「实际下载哪份产物」（artifacts，
+    版本/文件名/哈希同处一条）。这里把 artifacts 摊成各 Tool 既有的消费形状，
+    免得下载逻辑到处按 os/arch 查表；urls（下载源）仍留在各自的 Tool 类里。
+    """
+    e = tool_entry(name)
+    extra = {k: v for k, v in e.items() if k not in ("require", "artifacts", "channel_from")}
+    sha: dict = {}
+    if name == "python":
+        pbs: dict[str, dict] = {}
+        tags: set[str] = set()
+        for a in entry_artifacts(name, e):
+            triple = f"{a['arch']}-pc-windows-msvc" if a["os"] == "windows" else f"{a['arch']}-unknown-linux-gnu"
+            pbs[triple] = {"file": a["file"], "sha256": a["sha256"]}
+            tags.add(str(a["version"]).split("+", 1)[-1])
+        if len(tags) != 1:
+            raise RuntimeError(f"toolchain.json 的 python 产物构建标识不一致：{sorted(tags)}")
+        extra["pbs_build"] = tags.pop()
+        extra["pbs"] = pbs
+    elif name in ("ninja", "ccache"):
+        a = entry_artifact(name, e, "windows", "x86_64")
+        extra["windows_version"] = a["version"]
+        sha = {"windows-x86_64": a["sha256"]}
+    elif name == "rust":
+        for a in entry_artifacts(name, e):
+            sha.setdefault(a["os"], {})[a["arch"]] = a["sha256"]
+        extra["rustup_version"] = entry_artifact(name, e, PLATFORM.name, machine_arch())["version"]
+    return ToolManifest(
+        name=name,
+        version=tool_version(name),
+        sha256=sha,
+        urls=urls,
+        extra=extra,
+    )
 
 
 # ---------- ToolBase 基类与组件注册表（一软件一 class）----------
@@ -632,7 +743,7 @@ class PipInstaller:
 
 class GccTool(ToolBase):
     name = "gcc"
-    manifest = ToolManifest(name="gcc", version=">=9")  # 系统组件，apt 源见 SystemTool
+    manifest = tool_manifest("gcc", urls={})  # 系统组件，apt 源见 SystemTool
     check_order = 0
 
     def applicable(self) -> bool:
@@ -653,9 +764,8 @@ class GccTool(ToolBase):
 
 class CmakeTool(ToolBase):
     name = "cmake"
-    manifest = ToolManifest(
-        name="cmake",
-        version=">=3.24",
+    manifest = tool_manifest(
+        "cmake",
         urls={
             "pypi": {
                 "official": "https://pypi.org/simple",
@@ -698,7 +808,7 @@ class CmakeTool(ToolBase):
         if vcm and DepsManifest.test_version(vcm, expr):
             return  # 受管/系统已达标
         if shutil.which("pip"):
-            pkg = f"cmake=={want}" if "=" in DepsManifest.split_expr(expr)[0] else "cmake"
+            pkg = f"cmake=={want}"  # 清单写确切版本：pip 就装这一版，避免「当下最新」漂移
             PipInstaller.install(m, pkg)
             src = shutil.which("cmake")
             if not src:
@@ -717,12 +827,9 @@ class CmakeTool(ToolBase):
 
 class NinjaTool(ToolBase):
     name = "ninja"
-    manifest = ToolManifest(
-        name="ninja",
-        version=">=1.10",
-        sha256={"windows-x86_64": "f550fec705b6d6ff58f2db3c374c2277a37691678d6aba463adcbb129108467a"},
+    manifest = tool_manifest(
+        "ninja",
         urls={"github": {"prefixes": ["https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/"]}},
-        extra={"windows_version": "1.12.1"},  # 平台专属钉版（Windows 下直接用二进制）
     )
     check_order = 2
 
@@ -751,7 +858,10 @@ class NinjaTool(ToolBase):
                 return
         if not PLATFORM.is_windows:
             raise RuntimeError("缺 ninja：sudo apt-get install -y ninja-build 后重跑")
-        ver = DepsManifest.split_expr(m.get("ninja", "version", default="1.12.1"))[1].lstrip("v")
+        ver = (
+            m.get("ninja", "windows_version", default="")
+            or DepsManifest.split_expr(m.get("ninja", "version", default=""))[1]
+        )
         url_gh = f"https://github.com/ninja-build/ninja/releases/download/v{ver}/ninja-win.zip"
         want = m.get("ninja", "sha256", "windows-x86_64", default="")
         z = p.download_path("ninja-win.zip")
@@ -778,29 +888,8 @@ class PythonTool(ToolBase):
     detect_name = "python" if PLATFORM.is_windows else "python3"
     # python-build-standalone（pbs）：CPython 官方独立构建，钉死构建标识跨机器一致。
     # 薄壳/内核直接下载解压（系统自带 tar），不碰系统 Python、可整体卸载。
-    manifest = ToolManifest(
-        name="python",
-        version=">=3.10",
-        # pbs 各平台 install_only 包：文件名 + sha256（平台名是 key，按 uname 映射）。
-        # 扁平结构放 extra，键名与清单 toolchains.python.pbs 一致。
-        extra={
-            "pbs_build": "20251014",
-            "pbs": {
-                "x86_64-unknown-linux-gnu": {
-                    "file": "cpython-3.12.12+20251014-x86_64-unknown-linux-gnu-install_only.tar.gz",
-                    "sha256": "1ab2b6594d1c3d76cbebea09d6bc3e6ba68d8eb3b6322080375c4cc3dd188f34",
-                },
-                "aarch64-unknown-linux-gnu": {
-                    "file": "cpython-3.12.12+20251014-aarch64-unknown-linux-gnu-install_only.tar.gz",
-                    "sha256": "d32487b853d6f5709019a471770be5e5d3e6bd2ac507e5629e2d6825565d3e71",
-                },
-                "x86_64-pc-windows-msvc": {
-                    "file": "cpython-3.12.12+20251014-x86_64-pc-windows-msvc-install_only.tar.gz",
-                    "sha256": "2d670beb3b930d30e3a13cc909923a001dbdfcb5537692d5da40b6b41643ce1c",
-                },
-            },
-            "requirements": "tools/requirements.txt",
-        },
+    manifest = tool_manifest(
+        "python",
         urls={
             # pbs 受管解释器下载：完整 base（拼 /<tag>/<file> 即最终 URL）
             "python": {
@@ -921,12 +1010,9 @@ class PythonTool(ToolBase):
 
 class CcacheTool(ToolBase):
     name = "ccache"
-    manifest = ToolManifest(
-        name="ccache",
-        version=">=4.5",
-        sha256={"windows-x86_64": "d0836518cfdb74cc765a6bc6c353009367d8fc15dbbec4899ebdbeb750a07f77"},
+    manifest = tool_manifest(
+        "ccache",
         urls={"github": {"prefixes": ["https://gh-proxy.com/", "https://ghfast.top/", "https://ghproxy.net/"]}},
-        extra={"warm_min_mb": 12, "windows_version": "4.9.1"},  # warm_min_mb 供预热阈值判断
     )
     check_order = 4
     uninstall_attr = "ccache"
@@ -1001,7 +1087,10 @@ class CcacheTool(ToolBase):
                 log(f"ccache {v} 已就位（沿用本机安装）：{exe}")
                 return
         if PLATFORM.is_windows:
-            ver = DepsManifest.split_expr(m.get("ccache", "version", default="4.9.1"))[1]
+            ver = (
+                m.get("ccache", "windows_version", default="")
+                or DepsManifest.split_expr(m.get("ccache", "version", default=""))[1]
+            )
             url_gh = f"https://github.com/ccache/ccache/releases/download/v{ver}/ccache-{ver}-windows-x86_64.zip"
             want = m.get("ccache", "sha256", "windows-x86_64", default="")
             z = p.download_path(f"ccache-{ver}-windows-x86_64.zip")
@@ -1060,23 +1149,11 @@ class CcacheTool(ToolBase):
 class RustTool(ToolBase):
     name = "rust"
     detect_name = "cargo"  # 版本探测与落点都走 cargo，命令名不叫 rust
-    manifest = ToolManifest(
-        name="rust",
-        version="=1.93",
-        extra={"configuration": "src/kernel/rust-toolchain.toml", "rustup_version": "1.29.0"},
-        # rustup 安装器只从 archive/<版本>/<目标>/ 取：那是不可变路径，能把 sha256 钉死。
-        # sh.rustup.rs / win.rustup.rs 是随版本滚动的短链，钉了哈希下次发版就必然失效，
-        # 而不钉哈希等于把任意下载物直接以用户权限执行（供应链投毒）。
-        sha256={
-            "windows": {
-                "x86_64": "86478e53f769379d7f0ebfa7c9aa97cb76ca92233f79aa2cc0dbee2efaac73c7",
-                "aarch64": "3af309e6c3062aa11df0e932954f69d13b734d8a431e593812f3ecd9ff9e6ef6",
-            },
-            "linux": {
-                "x86_64": "4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10",
-                "aarch64": "9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792",
-            },
-        },
+    # rustup 安装器只从 archive/<版本>/<目标>/ 取：那是不可变路径，能把 sha256 钉死。
+    # sh.rustup.rs / win.rustup.rs 是随版本滚动的短链，钉了哈希下次发版就必然失效，
+    # 而不钉哈希等于把任意下载物直接以用户权限执行（供应链投毒）。
+    manifest = tool_manifest(
+        "rust",
         urls={
             "rust": {
                 # update_root 是 archive 与发行站的共同根；dist_server 供工具链下载
@@ -1229,7 +1306,7 @@ class MsvcTool(ToolBase):
     """
 
     name = "msvc"
-    manifest = ToolManifest(name="msvc", version=">=14.0")  # VS2015 起的 VC 工具集都是 14.x
+    manifest = tool_manifest("msvc", urls={})  # VS2015 起的 VC 工具集都是 14.x
     check_order = 1.5
 
     def applicable(self) -> bool:
@@ -1309,9 +1386,8 @@ class MsvcTool(ToolBase):
 
 class QtTool(ToolBase):
     name = "qt"
-    manifest = ToolManifest(
-        name="qt",
-        version=">=6.8.3",
+    manifest = tool_manifest(
+        "qt",
         # aqt 的 arch 名随平台变：Linux 是 linux_gcc_64（6.8 起，落盘目录仍是 gcc_64），
         # Windows 是 win64_msvc2022_64。写成映射而不是单值，否则 Windows 会拿 Linux 名去装。
         # 版本写下限：install 取 6.8.3 去装，外部自备 Qt（实测 6.12）只要不低于它就算过。
@@ -2781,6 +2857,94 @@ LEGACY_INSTALL_ALIASES = {
 }
 
 
+# ---------- 只读导出口径：给 CI / 打包取确切版本 ----------
+
+
+def exact_versions() -> dict[str, str]:
+    """可交给 CI 使用的确切版本；带下限语义的组件（gcc/ninja/ccache/python）不在此列。"""
+    out: dict[str, str] = {}
+    for name in ("qt", "cmake", "rust"):
+        out[name] = DepsManifest.split_expr(tool_version(name))[1]
+    return out
+
+
+def _sha256_of(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _download_first(bases: list[str], rel: str, dest: Path) -> None:
+    last: Exception | None = None
+    for base in bases:
+        url = (base.rstrip("/") + "/" + rel) if base else rel
+        try:
+            download(url, dest)
+            return
+        except (OSError, ValueError, TimeoutError) as e:
+            last = e
+            log(f"  源失败（{base or 'direct'}）：{e}")
+    raise RuntimeError(f"全部源失败：{rel}（最后错误：{last}）")
+
+
+def update_hashes(targets: list[str]) -> int:
+    """重新下载受管产物并回写 toolchain.json 里各 artifacts 的 sha256。
+
+    哈希由本命令生成，人不手抄；改版本后 diff 里同一条记录的版本与新哈希一起出现。
+    """
+    m = DepsManifest()
+    path = REPO.toolchain_json
+    data = json.loads(path.read_text(encoding="utf-8"))
+    tc = data["toolchains"]
+    picked = targets or ["python", "ninja", "ccache", "rust"]
+    tmp = Path(tempfile.mkdtemp(prefix="ps-hash-"))
+    changed: list[str] = []
+    gh = [*m.sources("github").get("prefixes", []), ""]
+    py = [*m.sources("python").get("mirrors", []), m.sources("python").get("official", "")]
+    rust_roots = [m.sources("rust").get("official", {}).get("update_root", "https://static.rust-lang.org/rustup")]
+    rust_roots += [x.get("update_root") for x in m.sources("rust").get("mirrors", []) if x.get("update_root")]
+
+    def rel_of(name: str, a: dict) -> str:
+        """产物在下载源上的相对路径；由 artifacts 一条记录自身推出，不查第二张表。"""
+        ver = str(a["version"])
+        if name == "python":
+            # pbs 的 URL 是 <构建标识>/<文件>，构建标识即版本号 "+" 之后那段
+            return f"{ver.split('+', 1)[-1]}/{a['file']}"
+        if name == "ninja":
+            return f"https://github.com/ninja-build/ninja/releases/download/v{ver}/ninja-win.zip"
+        if name == "ccache":
+            return f"https://github.com/ccache/ccache/releases/download/v{ver}/ccache-{ver}-windows-x86_64.zip"
+        triple = f"{a['arch']}-pc-windows-msvc" if a["os"] == "windows" else f"{a['arch']}-unknown-linux-gnu"
+        fname = "rustup-init.exe" if a["os"] == "windows" else "rustup-init"
+        return f"archive/{ver}/{triple}/{fname}"
+
+    try:
+        for name in picked:
+            e = tc.get(name) or {}
+            bases = py if name == "python" else (rust_roots if name == "rust" else gh)
+            for a in e.get("artifacts") or []:
+                rel = rel_of(name, a)
+                f = tmp / f"{name}-{a['os']}-{a['arch']}-{rel.rsplit('/', 1)[-1]}"
+                _download_first(bases, rel, f)
+                digest = _sha256_of(f)
+                if digest != a.get("sha256"):
+                    a["sha256"] = digest
+                    changed.append(f"{name}.{a['os']}-{a['arch']}")
+                f.unlink(missing_ok=True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    if changed:
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        for c in changed:
+            log(f"已更新 {c}")
+    else:
+        log("哈希无变化")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="ps-setup", description="开发环境守卫内核（issue IKYGHE + Tool 化重构）")
     ap.add_argument(
@@ -2789,6 +2953,7 @@ def main(argv: list[str] | None = None) -> int:
         default="check",
         choices=[
             "check",
+            "versions",
             "resolve",
             "doctor",
             "prepare",
@@ -2801,7 +2966,8 @@ def main(argv: list[str] | None = None) -> int:
             *LEGACY_INSTALL_ALIASES,
         ],
         help=(
-            "check [name]：体检（默认）；resolve <name>：单项解析（给 CMake 门禁消费，含落点路径）；"
+            "check [name]：体检（默认）；versions [--json]：导出版本（CI/打包取确切值，--update-hashes 回写哈希）；"
+            "resolve <name>：单项解析（给 CMake 门禁消费，含落点路径）；"
             "doctor：全量自检（表 + 路径 + 修法）；prepare：configure 门禁一次算完（JSON，见 --out）；"
             "gen-env：生成 env.sh/env.ps1/env.bat；"
             "install [name ...]：全量/指定组件安装；uninstall [name|all]：卸载受管组件；"
@@ -2816,6 +2982,9 @@ def main(argv: list[str] | None = None) -> int:
         help="check/install/uninstall 的组件名，可给多个（如 cmake ninja ccache / qt / all）",
     )
     ap.add_argument("--json", action="store_true", help="以 JSON 输出体检结果（供门禁/CI 消费）")
+    ap.add_argument(
+        "--update-hashes", action="store_true", help="versions：重新下载受管产物并把 sha256/pbs 哈希回写 toolchain.json"
+    )
     ap.add_argument("--force", action="store_true", help="uninstall：跳过确认")
     ap.add_argument("--skip-system", action="store_true", help="install：跳过系统 apt 依赖")
     ap.add_argument("--cc", default="", help="prepare：CMake 选中的 C 编译器路径（ccache 实编验收用）")
@@ -2838,6 +3007,19 @@ def main(argv: list[str] | None = None) -> int:
     if cmd in LEGACY_INSTALL_ALIASES:
         names = [LEGACY_INSTALL_ALIASES[cmd]]
         cmd = "install"
+
+    # versions 只读清单：不碰 PS_DEPS_ROOT、不改 env，stdout 必须是纯数据。
+    if cmd == "versions":
+        if args.update_hashes:
+            return update_hashes(names)
+        vals = exact_versions()
+        if args.json:
+            print(json.dumps(vals, ensure_ascii=False, indent=2))
+        else:
+            print(f"{'tool':<6}版本")
+            for k, v in vals.items():
+                print(f"{k:<6}{v}")
+        return 0
 
     root = Path(args.root).expanduser() if args.root else get_deps_root()
     # -D 的下沉：命令行给出的值优先于环境变量，这里先落进本进程环境，

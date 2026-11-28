@@ -41,13 +41,16 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Verify version (versions.env is the single source of truth)
+      - name: Verify app version（versions.env）/ read toolchain versions（toolchain.json）
         shell: bash
         run: |
           set -euo pipefail
           source versions.env
           echo "PS_VER=${PS_APP_VERSION}" >> "$GITHUB_ENV"
-          echo "PS_QT_VER=${PS_QT_VERSION}" >> "$GITHUB_ENV"
+          {
+            echo "PS_QT_VER=$(node tools/ci/toolchain-ver.cjs qt)"
+            echo "PS_RUST_VER=$(node tools/ci/toolchain-ver.cjs rust)"
+          } >> "$GITHUB_ENV"
           grep -q "project(PlotScope VERSION ${PS_APP_VERSION}" CMakeLists.txt \
             || { echo "::error::CMakeLists project VERSION does not match versions.env"; exit 1; }
           if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
@@ -69,9 +72,11 @@ jobs:
             libxkbcommon-x11-0 libfontconfig1 libdbus-1-3
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.93.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.PS_RUST_VER }}
 
-      - name: Install Qt 6.8.3
+      - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.PS_QT_VER }}
@@ -180,13 +185,16 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Verify version (versions.env is the single source of truth)
+      - name: Verify app version（versions.env）/ read toolchain versions（toolchain.json）
         shell: bash
         run: |
           set -euo pipefail
           source versions.env
           echo "PS_VER=${PS_APP_VERSION}" >> "$GITHUB_ENV"
-          echo "PS_QT_VER=${PS_QT_VERSION}" >> "$GITHUB_ENV"
+          {
+            echo "PS_QT_VER=$(node tools/ci/toolchain-ver.cjs qt)"
+            echo "PS_RUST_VER=$(node tools/ci/toolchain-ver.cjs rust)"
+          } >> "$GITHUB_ENV"
           grep -q "project(PlotScope VERSION ${PS_APP_VERSION}" CMakeLists.txt \
             || { echo "::error::CMakeLists project VERSION does not match versions.env"; exit 1; }
           if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
@@ -199,11 +207,12 @@ jobs:
           fi
 
       - name: Install Rust toolchain (MSVC target)
-        uses: dtolnay/rust-toolchain@1.93.0
+        uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.PS_RUST_VER }}
           targets: x86_64-pc-windows-msvc
 
-      - name: Install Qt 6.8.3 (MSVC)
+      - name: Install Qt (MSVC)
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.PS_QT_VER }}
@@ -287,7 +296,7 @@ jobs:
   macos:
     # Two architectures in one matrix. An Intel Mac can only launch an x86_64 .app and an Apple
     # Silicon Mac an arm64 one, so each leg builds natively; macos-13/14 are retired in 2026,
-    # which makes macos-15-intel the only Intel label left. The Qt 6.8.3 clang_64 package is
+    # which makes macos-15-intel the only Intel label left. The Qt clang_64 package is
     # universal, so both legs install the same Qt.
     runs-on: ${{ matrix.os }}
     timeout-minutes: 150
@@ -306,13 +315,16 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Verify version (versions.env is the single source of truth)
+      - name: Verify app version（versions.env）/ read toolchain versions（toolchain.json）
         shell: bash
         run: |
           set -euo pipefail
           source versions.env
           echo "PS_VER=${PS_APP_VERSION}" >> "$GITHUB_ENV"
-          echo "PS_QT_VER=${PS_QT_VERSION}" >> "$GITHUB_ENV"
+          {
+            echo "PS_QT_VER=$(node tools/ci/toolchain-ver.cjs qt)"
+            echo "PS_RUST_VER=$(node tools/ci/toolchain-ver.cjs rust)"
+          } >> "$GITHUB_ENV"
           grep -q "project(PlotScope VERSION ${PS_APP_VERSION}" CMakeLists.txt \
             || { echo "::error::CMakeLists project VERSION does not match versions.env"; exit 1; }
           if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
@@ -325,14 +337,16 @@ jobs:
           fi
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@1.93.0
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.PS_RUST_VER }}
 
       - name: Install build tools (ninja, Xcode)
         run: |
           command -v ninja || HOMEBREW_NO_AUTO_UPDATE=1 brew install ninja
           xcodebuild -version
 
-      - name: Install Qt 6.8.3
+      - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.PS_QT_VER }}
