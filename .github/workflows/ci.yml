@@ -565,7 +565,8 @@ jobs:
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.PS_QT_VER }}
-          arch: 'win64_msvc2019_64'
+          # Qt 6.8.3 的 Windows 仓库只有 MSVC2022 构建，MSVC2019 的包已不存在。
+          arch: 'win64_msvc2022_64'
           modules: 'qtcharts'
 
       - name: Set up MSVC build environment
